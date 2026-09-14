@@ -181,32 +181,12 @@ the board beside the in-process scenarios.
 Nothing here starts on its own. Xmip provides its tests as suites, and the
 Playground is the first: a person starts a run of it (a roll), a set of
 emulated nodes or the web monitor, sees what is running, and stops it — Start,
-Get and Stop for each, from the estate's PowerShell module. `-Suite Playground`
-is the default while it is the only suite; a transport's or a contract's own
-suite joins as another value:
-
-    Import-Module -Name ./Xmip/Xmip.psd1
-
-    Start-XmipTest                                        # Playground, realistic, every test, until stopped
-    Start-XmipTest -Suite Playground -Test HeavyLoad, LowLatency -Stress Harsh -Rounds 20
-    Start-XmipTest -Suite Playground -Test HeavyLoad -Nodes alpha, beta, gamma -OnlineNodes alpha -PassThru | Start-XmipWeb
-    Start-XmipTest -Suite Playground -Duration 00:15:00 -TimeFactor 9.5e-6  # three simulated years
-
-    Get-XmipTestStatus                                    # what runs, at what, how it stands
-    Get-XmipTestResult | Where-Object -Property State -NE -Value fine   # every scope that is not green
-    Get-XmipTestResult -Test RoundTrip -Worst
-    Get-XmipHistory -Counted bytes
-
-    Start-XmipTestNode -Nodes alpha, beta -OnlineNodes alpha  # two emulated nodes, one online, no roll
-    Get-XmipTestNode
-    Get-XmipTestNode | Where-Object -Property Online -EQ -Value $true | Stop-XmipTestNode
-
-    Get-XmipWeb                                           # the monitor's address and surface
-    Stop-XmipTest                                         # nodes first, then the roll
-    Stop-XmipWeb
-
-    Start-XmipTest -Suite Estate                          # the estate's Pester suite, here and now
-    Start-XmipTest -Suite Estate -Test Rust.Style, XmipTest
+Get and Stop for each, from the estate's PowerShell module. The commands and
+what each one does are the estate's `README.md` (*Beginners*, *Operators* and
+*The estate module*), and `Get-Help Start-XmipTest -Full` documents every
+parameter; this document does not repeat them. `-Suite Playground` is the
+default while it is the only suite; a transport's or a contract's own suite
+joins as another value.
 
 The Playground's tests, by the name a person asks for and the scenario the roll
 drives: RoundTrip is pingpong, LowLatency is furious, HeavyLoad is load,

@@ -91,6 +91,8 @@ pub fn to_toml(node: &str, snapshot: &Snapshot) -> String {
         Counted::Messages,
         Counted::Journeys,
         Counted::Bytes,
+        Counted::Retrying,
+        Counted::Failed,
     ]
     .into_iter()
     .filter_map(|counted| {
@@ -258,6 +260,8 @@ fn counted_named(name: &str) -> Option<Counted> {
         Counted::Messages,
         Counted::Journeys,
         Counted::Bytes,
+        Counted::Retrying,
+        Counted::Failed,
     ]
     .into_iter()
     .find(|counted| counted_name(*counted) == name)
@@ -277,6 +281,8 @@ const fn counted_name(counted: Counted) -> &'static str {
         Counted::Messages => "messages",
         Counted::Journeys => "journeys",
         Counted::Bytes => "bytes",
+        Counted::Retrying => "retrying",
+        Counted::Failed => "failed",
     }
 }
 
