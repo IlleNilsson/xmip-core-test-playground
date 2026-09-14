@@ -55,13 +55,13 @@ use xmip_test_playground::Headroom;
 use xmip_test_playground::fleet::{Fleet, merge, node_binary};
 use xmip_test_playground::{
     Budget, Claim, Daily, FaultPlan, Filing, Furious, Load, Schedule, Secretary, Stress,
-    activity_toml, fleet_topology, history_toml, now_unix_nanos, to_toml_with, write_atomic,
+    activity_toml, cluster_name, cluster_root, fleet_topology, history_toml, now_unix_nanos,
+    to_toml_with, write_atomic,
 };
 
 fn main() {
-    let root = "xmip:///playground";
-    let base = std::env::temp_dir().join("playground");
-    std::fs::remove_dir_all(&base).ok();
+    let (cluster, root, base) = this_cluster();
+    let root = root.as_str();
     let stress = Stress::from_env();
     let chosen = chosen(std::env::var("XMIP_PLAYGROUND_SCENARIOS").ok().as_deref());
     let mut fleet = spawn_fleet(stress, &base);
@@ -91,9 +91,7 @@ fn main() {
     // so a week-long run does not grow. ADR-0029.
     let mut history = History::with_capacity(3600);
 
-    let snapshot_path = env_path("XMIP_PLAYGROUND_SNAPSHOT", "playground-snapshot.toml");
-    let history_path = env_path("XMIP_PLAYGROUND_HISTORY", "playground-history.toml");
-    let activity_path = env_path("XMIP_PLAYGROUND_ACTIVITY", "playground-activity.toml");
+    let (snapshot_path, history_path, activity_path) = publish_paths(&cluster);
     let limit: Option<u64> = std::env::args().nth(1).and_then(|arg| arg.parse().ok());
     let live = std::io::stdout().is_terminal();
     let real = Duration::from_millis(1000);
@@ -249,6 +247,36 @@ fn drives(chosen: &[String], scenario: &str) -> bool {
 
 /// A publish path: the environment override, or the well-known temp file the GUI
 /// defaults to as well. The variable is external, so it keeps the prefix.
+/// One cluster per roll (ADR-0028): its name, its scope root, and its own
+/// scratch directory, emptied now, so a second cluster beside it neither wipes
+/// nor shares this one's directories.
+fn this_cluster() -> (String, String, PathBuf) {
+    let cluster = cluster_name();
+    let base = std::env::temp_dir().join("playground").join(&cluster);
+    std::fs::remove_dir_all(&base).ok();
+    (cluster, cluster_root(), base)
+}
+
+/// Where the roll publishes its snapshot, history and activity: the three
+/// variables the cmdlet sets, else `<cluster>-snapshot.toml` and kin in the
+/// temp directory.
+fn publish_paths(cluster: &str) -> (PathBuf, PathBuf, PathBuf) {
+    (
+        env_path(
+            "XMIP_PLAYGROUND_SNAPSHOT",
+            &format!("{cluster}-snapshot.toml"),
+        ),
+        env_path(
+            "XMIP_PLAYGROUND_HISTORY",
+            &format!("{cluster}-history.toml"),
+        ),
+        env_path(
+            "XMIP_PLAYGROUND_ACTIVITY",
+            &format!("{cluster}-activity.toml"),
+        ),
+    )
+}
+
 fn env_path(variable: &str, default: &str) -> PathBuf {
     std::env::var_os(variable).map_or_else(|| std::env::temp_dir().join(default), PathBuf::from)
 }

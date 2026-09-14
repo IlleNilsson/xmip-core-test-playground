@@ -91,7 +91,7 @@ pub use roundtrip::{Exchange, FileRoundTrip, RoundTrip, TcpRoundTrip, UdpRoundTr
 pub use schedule::{CONTRACTS, Schedule};
 pub use secretary::Secretary;
 pub use stress::Stress;
-pub use support::now_unix_nanos;
+pub use support::{cluster_name, cluster_root, now_unix_nanos};
 pub use switch::Switches;
 pub use topology::{Topology, fleet_topology};
 pub use verdict::{Contract, Outcome, Stage, Verdict};

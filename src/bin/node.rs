@@ -26,8 +26,8 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use observe::Snapshot;
-use xmip_test_playground::fleet::{ROOT, merge};
-use xmip_test_playground::{Claim, Daily, Stress, Switches, to_toml, write_atomic};
+use xmip_test_playground::fleet::merge;
+use xmip_test_playground::{Claim, Daily, Stress, Switches, cluster_root, to_toml, write_atomic};
 
 /// What the command line said.
 struct Arguments {
@@ -55,7 +55,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let node = format!("{ROOT}/node/{}", arguments.name);
+    let node = format!("{}/node/{}", cluster_root(), arguments.name);
     let mut claim =
         Claim::shared(format!("{node}/claim"), arguments.shared.join("claim")).at(arguments.stress);
     let mut daily = Daily::shared(format!("{node}/daily"), arguments.shared.join("daily"));

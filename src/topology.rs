@@ -15,8 +15,8 @@
 use observe::{Counted, Health, HealthRecord, Snapshot};
 use serde::{Deserialize, Serialize};
 
-use crate::fleet::ROOT;
 use crate::report::state;
+use crate::support::cluster_root;
 
 /// The nodes and links a snapshot carries under `[topology]`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -72,6 +72,7 @@ pub fn fleet_topology<'a>(
     now: i64,
 ) -> Topology {
     let names: Vec<&str> = names.collect();
+    let root = cluster_root();
     let mut topology = Topology {
         source: "playground — the fleet".to_string(),
         observed_unix_nanos: now,
@@ -79,7 +80,7 @@ pub fn fleet_topology<'a>(
         links: Vec::new(),
     };
     for name in names {
-        let scope = format!("{ROOT}/node/{name}");
+        let scope = format!("{root}/node/{name}");
         topology.nodes.push(process_node(snapshot, name, &scope));
         topology.links.push(claim_link(snapshot, name, &scope));
         topology.links.push(daily_link(snapshot, name, &scope));
@@ -113,11 +114,12 @@ fn alive(snapshot: &Snapshot, scope: &str) -> bool {
 }
 
 fn fleet_node(snapshot: &Snapshot, names: &[&str]) -> TopologyNode {
-    let scope = format!("{ROOT}/{FLEET}");
+    let root = cluster_root();
+    let scope = format!("{root}/{FLEET}");
     let (state, evidence) = mood(worst(snapshot, &scope).as_ref());
     let running = names
         .iter()
-        .filter(|name| alive(snapshot, &format!("{ROOT}/node/{name}")))
+        .filter(|name| alive(snapshot, &format!("{root}/node/{name}")))
         .count();
     TopologyNode {
         id: FLEET.to_string(),
@@ -136,10 +138,11 @@ fn fleet_node(snapshot: &Snapshot, names: &[&str]) -> TopologyNode {
 /// The one directory every node claims from and drains: its mood is the worst
 /// any node reported over it.
 fn shared_node(snapshot: &Snapshot, names: &[&str]) -> TopologyNode {
+    let root = cluster_root();
     let over_store = names
         .iter()
         .flat_map(|name| {
-            let scope = format!("{ROOT}/node/{name}");
+            let scope = format!("{root}/node/{name}");
             [
                 worst(snapshot, &format!("{scope}/claim")),
                 worst(snapshot, &format!("{scope}/daily")),
@@ -153,7 +156,7 @@ fn shared_node(snapshot: &Snapshot, names: &[&str]) -> TopologyNode {
         parent: String::new(),
         label: "shared store".to_string(),
         kind: "location".to_string(),
-        scope: format!("{ROOT}/{FLEET}/{SHARED}"),
+        scope: format!("{root}/{FLEET}/{SHARED}"),
         state,
         origin: "configured".to_string(),
         load: 0.0,
@@ -282,6 +285,7 @@ fn fraction(part: usize, whole: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fleet::ROOT;
     use crate::report::{from_toml, to_toml_with};
     use observe::Count;
 

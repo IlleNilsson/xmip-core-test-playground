@@ -27,7 +27,7 @@ use observe::{Health, HealthRecord, Snapshot};
 
 use crate::report::from_toml;
 use crate::stress::Stress;
-use crate::support::now_unix_nanos;
+use crate::support::{cluster_root, now_unix_nanos};
 use crate::switch::Switches;
 
 /// Where every playground scenario publishes.
@@ -337,7 +337,7 @@ impl Node {
             (None, _) => (Health::Stressed, 60, format!("alive; {restarted}")),
         };
         HealthRecord {
-            scope: format!("{ROOT}/node/{}/process", self.name),
+            scope: format!("{}/node/{}/process", cluster_root(), self.name),
             health,
             severity,
             evidence,
@@ -349,7 +349,7 @@ impl Node {
 /// The cluster rollup the surface owes: the worst leaf across every node, and
 /// which node carries it.
 fn rollup(snapshot: &Snapshot, count: usize, now: i64) -> HealthRecord {
-    let records = snapshot.health(&format!("{ROOT}/node"));
+    let records = snapshot.health(&format!("{}/node", cluster_root()));
     let worst = records.first();
     let fine = records
         .iter()
@@ -362,7 +362,9 @@ fn rollup(snapshot: &Snapshot, count: usize, now: i64) -> HealthRecord {
             format!(
                 "{count} nodes, {fine} of {} leaves fine; worst {}: {}",
                 records.len(),
-                record.scope.trim_start_matches(&format!("{ROOT}/node/")),
+                record
+                    .scope
+                    .trim_start_matches(&format!("{}/node/", cluster_root())),
                 record.evidence
             ),
         ),
@@ -378,7 +380,7 @@ fn rollup(snapshot: &Snapshot, count: usize, now: i64) -> HealthRecord {
         ),
     };
     HealthRecord {
-        scope: format!("{ROOT}/fleet"),
+        scope: format!("{}/fleet", cluster_root()),
         health,
         severity,
         evidence,

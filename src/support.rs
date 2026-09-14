@@ -7,6 +7,24 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// The cluster a roll is (ADR-0028): `XMIP_PLAYGROUND_CLUSTER` names it, else
+/// it is the playground cluster. A roll's nodes inherit the variable, so the
+/// fleet and every node agree on the root without being told twice.
+#[must_use]
+pub fn cluster_name() -> String {
+    std::env::var("XMIP_PLAYGROUND_CLUSTER")
+        .ok()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "playground".to_string())
+}
+
+/// The scope root every record in this cluster hangs under.
+#[must_use]
+pub fn cluster_root() -> String {
+    format!("xmip:///{}", cluster_name())
+}
+
 /// Now, in unix nanoseconds, saturating rather than failing before the epoch or
 /// past `i64`.
 #[must_use]
