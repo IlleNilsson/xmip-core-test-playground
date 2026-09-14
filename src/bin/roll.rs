@@ -55,7 +55,7 @@ use xmip_test_playground::Headroom;
 use xmip_test_playground::fleet::{Fleet, merge, node_binary};
 use xmip_test_playground::{
     Budget, Claim, Daily, FaultPlan, Filing, Furious, Load, Schedule, Secretary, Stress,
-    activity_toml, history_toml, to_toml, write_atomic,
+    activity_toml, fleet_topology, history_toml, now_unix_nanos, to_toml_with, write_atomic,
 };
 
 fn main() {
@@ -140,7 +140,14 @@ fn main() {
 
         history.record(&snapshot);
 
-        write(&snapshot_path, &to_toml(root, &snapshot), "snapshot");
+        let topology = fleet
+            .as_ref()
+            .map(|fleet| fleet_topology(&snapshot, fleet.names(), now_unix_nanos()));
+        write(
+            &snapshot_path,
+            &to_toml_with(root, &snapshot, topology),
+            "snapshot",
+        );
         write(&history_path, &history_toml(root, &history), "history");
         write(
             &activity_path,

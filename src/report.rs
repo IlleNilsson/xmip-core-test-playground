@@ -18,12 +18,18 @@ use std::path::Path;
 use observe::{Activity, Count, Counted, Health, HealthRecord, History, ItemKind, Snapshot};
 use serde::{Deserialize, Serialize};
 
+use crate::topology::Topology;
+
 #[derive(Serialize, Deserialize)]
 struct SnapshotReport {
     source: String,
     node: String,
     records: Vec<RecordReport>,
     counts: Vec<CountReport>,
+    /// The fleet's communication, when a roll has one to publish (ADR-0052,
+    /// amendment 2026-09-14); a node writes none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    topology: Option<Topology>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -74,6 +80,13 @@ struct PointReport {
 /// records and the node's throughput counts.
 #[must_use]
 pub fn to_toml(node: &str, snapshot: &Snapshot) -> String {
+    to_toml_with(node, snapshot, None)
+}
+
+/// [`to_toml`] with the communication topology a roll publishes beside the
+/// snapshot: the fleet's nodes and links, under `[topology]`.
+#[must_use]
+pub fn to_toml_with(node: &str, snapshot: &Snapshot, topology: Option<Topology>) -> String {
     let records = snapshot
         .health(node)
         .into_iter()
@@ -108,6 +121,7 @@ pub fn to_toml(node: &str, snapshot: &Snapshot) -> String {
         node: node.to_string(),
         records,
         counts,
+        topology,
     };
 
     toml::to_string(&report).unwrap_or_default()
@@ -227,7 +241,7 @@ pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     std::fs::rename(&temp, path)
 }
 
-const fn state(health: Health) -> &'static str {
+pub(crate) const fn state(health: Health) -> &'static str {
     // The mood, not a colour — the surface reading this paints it (ADR-0041).
     match health {
         Health::Fine => "fine",
