@@ -209,8 +209,9 @@ and `-LoadBytes` is `XMIP_PLAYGROUND_LOAD_BYTES`. A roll started by hand —
 and `Get-XmipTestStatus` lists it too.
 
 Everything a run writes on this machine goes under `.local-work/playground`
-at the repository root: `playground-snapshot.toml`, `playground-history.toml`
-and `playground-activity.toml` for the monitors, `roll-<pid>.toml` saying what
+at the repository root: `<cluster>-snapshot.toml`, `<cluster>-history.toml`
+and `<cluster>-activity.toml` for the monitors, named for the cluster the roll
+was started as (`-Cluster`, required: the owner names the cluster), `roll-<pid>.toml` saying what
 each roll was started with, the roll's own lines in `roll-<start time>.log`,
 and under `node/` each hand-started node's snapshot and log. The folder is
 device-local and ignored by git.

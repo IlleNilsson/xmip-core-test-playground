@@ -251,7 +251,13 @@ fn drives(chosen: &[String], scenario: &str) -> bool {
 /// scratch directory, emptied now, so a second cluster beside it neither wipes
 /// nor shares this one's directories.
 fn this_cluster() -> (String, String, PathBuf) {
-    let cluster = cluster_name();
+    let Some(cluster) = cluster_name() else {
+        eprintln!(
+            "REFUSED: a roll is a cluster and the owner names it; set XMIP_PLAYGROUND_CLUSTER \
+             (Start-XmipTest -Cluster <name>). A test spawns nodes, never a cluster."
+        );
+        std::process::exit(2);
+    };
     let base = std::env::temp_dir().join("playground").join(&cluster);
     std::fs::remove_dir_all(&base).ok();
     (cluster, cluster_root(), base)

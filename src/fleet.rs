@@ -30,7 +30,8 @@ use crate::stress::Stress;
 use crate::support::{cluster_root, now_unix_nanos};
 use crate::switch::Switches;
 
-/// Where every playground scenario publishes.
+/// The fixture root this crate's tests publish under. A roll is a cluster the
+/// owner named; a test spawns nodes, never a cluster (ADR-0052, 2026-09-14).
 pub const ROOT: &str = "xmip:///playground";
 /// Rounds a node may stay silent before it is hung.
 const SILENT_ROUNDS: u32 = 3;

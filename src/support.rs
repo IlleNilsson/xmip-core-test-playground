@@ -7,22 +7,29 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// The cluster a roll is (ADR-0028): `XMIP_PLAYGROUND_CLUSTER` names it, else
-/// it is the playground cluster. A roll's nodes inherit the variable, so the
-/// fleet and every node agree on the root without being told twice.
+/// The cluster a roll is (ADR-0028), by the name the owner gave it in
+/// `XMIP_PLAYGROUND_CLUSTER`; `None` when nobody named one. A test may spawn
+/// nodes, never a cluster (the owner, 2026-09-14; ADR-0052), so the binaries
+/// refuse to start without a name rather than inventing one. A roll's nodes
+/// inherit the variable, so the fleet and every node agree on the root without
+/// being told twice.
 #[must_use]
-pub fn cluster_name() -> String {
+pub fn cluster_name() -> Option<String> {
     std::env::var("XMIP_PLAYGROUND_CLUSTER")
         .ok()
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "playground".to_string())
 }
 
-/// The scope root every record in this cluster hangs under.
+/// The scope root every record in this cluster hangs under. Unnamed, it is the
+/// crate's own fixture root, which only this crate's tests reach: a binary has
+/// refused by then.
 #[must_use]
 pub fn cluster_root() -> String {
-    format!("xmip:///{}", cluster_name())
+    cluster_name().map_or_else(
+        || crate::fleet::ROOT.to_string(),
+        |name| format!("xmip:///{name}"),
+    )
 }
 
 /// Now, in unix nanoseconds, saturating rather than failing before the epoch or
