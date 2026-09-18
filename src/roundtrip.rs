@@ -154,6 +154,7 @@ fn internet() -> Vec<Box<dyn RoundTrip>> {
         Box::new(Looped(transport_websocket::WebSocketTransport::loopback())),
         Box::new(Looped(transport_mllp::MllpTransport::loopback())),
         Box::new(Looped(transport_ftp::FtpTransport::loopback())),
+        Box::new(Looped(transport_sftp::SftpTransport::loopback())),
         Box::new(Looped(transport_pop3::Pop3Transport::loopback())),
         Box::new(Looped(transport_imap::ImapTransport::loopback())),
         Box::new(Looped(transport_syslog::SyslogTransport::loopback())),
@@ -168,6 +169,7 @@ fn internet() -> Vec<Box<dyn RoundTrip>> {
         Box::new(Looped(transport_smb::SmbTransport::loopback())),
         Box::new(Looped(transport_as2::As2Transport::loopback())),
         Box::new(Looped(transport_as4::As4Transport::loopback())),
+        Box::new(Looped(transport_peppol::PeppolTransport::loopback())),
         Box::new(Looped(transport_dicom::DicomTransport::loopback())),
     ]
 }
