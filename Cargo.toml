@@ -37,6 +37,8 @@ path = "src/bin/node.rs"
 # The transports it ping-pongs over, and the snapshot it publishes verdicts
 # into. observe carries Health; transport carries the Transport trait whose
 # send/receive is the round trip.
+# The declaration every System Process Xmip owns makes of itself (ADR-0053).
+node = { package = "xmip-core-node", git = "https://github.com/IlleNilsson/xmip-core-node", branch = "main" }
 observe = { package = "xmip-core-observe", git = "https://github.com/IlleNilsson/xmip-core-observe", branch = "main" }
 transport = { package = "xmip-core-transport", git = "https://github.com/IlleNilsson/xmip-core-transport", branch = "main" }
 

@@ -56,6 +56,11 @@ fn main() -> ExitCode {
     };
 
     let node = format!("{}/node/{}", cluster_root(), arguments.name);
+
+    // What this process says of itself while it runs (ADR-0053).
+    let _declared = ::node::Declaration::new("xmip-playground-node", &node, ::node::Purpose::Test)
+        .declare()
+        .map_err(|error| eprintln!("node {}: could not declare itself: {error}", arguments.name));
     let mut claim =
         Claim::shared(format!("{node}/claim"), arguments.shared.join("claim")).at(arguments.stress);
     let mut daily = Daily::shared(format!("{node}/daily"), arguments.shared.join("daily"));

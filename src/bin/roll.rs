@@ -62,6 +62,12 @@ use xmip_test_playground::{
 fn main() {
     let (cluster, root, base) = this_cluster();
     let root = root.as_str();
+
+    // What this process says of itself while it runs (ADR-0053): the roll is
+    // the cluster it emulates, and everything the Playground runs is test.
+    let _declared = ::node::Declaration::new("xmip-playground-roll", root, ::node::Purpose::Test)
+        .declare()
+        .map_err(|error| eprintln!("roll: could not declare itself: {error}"));
     let stress = Stress::from_env();
     let chosen = chosen(std::env::var("XMIP_PLAYGROUND_SCENARIOS").ok().as_deref());
     let mut fleet = spawn_fleet(stress, &base);
