@@ -205,7 +205,7 @@ level's own numbered fleet), `-OnlineNodes` is `XMIP_PLAYGROUND_ONLINE_NODES`
 reads `XMIP_ONLINE`), `-Duration` is
 `XMIP_PLAYGROUND_MAX_SECONDS`, `-TimeFactor` is `XMIP_PLAYGROUND_TIME_FACTOR`
 and `-LoadBytes` is `XMIP_PLAYGROUND_LOAD_BYTES`. A roll started by hand —
-`cargo run --bin roll [rounds]` with those variables set — is the same roll,
+`cargo run --bin xmip-playground-roll [rounds]` with those variables set — is the same roll,
 and `Get-XmipTestStatus` lists it too.
 
 Everything a run writes on this machine goes under `.local-work/playground`

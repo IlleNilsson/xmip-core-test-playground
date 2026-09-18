@@ -157,7 +157,7 @@ mod sample {
             .nth(1)
             .and_then(|rest| rest.split(')').next())
             .unwrap_or_default();
-        instance == "roll" || instance.starts_with("node")
+        instance.starts_with("xmip-playground-")
     }
 
     /// One CSV line of `typeperf` into its quoted fields.

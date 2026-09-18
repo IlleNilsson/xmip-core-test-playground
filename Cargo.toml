@@ -21,6 +21,18 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+# Every System Process Xmip owns is named xmip-<what> (ADR-0053), so one line
+# finds them all and none is mistaken for another product's: `node` was
+# Node.js's name before it was this one's. The files keep the names of what
+# they define.
+[[bin]]
+name = "xmip-playground-roll"
+path = "src/bin/roll.rs"
+
+[[bin]]
+name = "xmip-playground-node"
+path = "src/bin/node.rs"
+
 [dependencies]
 # The transports it ping-pongs over, and the snapshot it publishes verdicts
 # into. observe carries Health; transport carries the Transport trait whose

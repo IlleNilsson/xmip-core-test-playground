@@ -83,7 +83,7 @@ impl Fleet {
     }
 
     /// The same with the binary named and the count chosen — a test names
-    /// `env!("CARGO_BIN_EXE_node")`, and a roll may override the count.
+    /// `env!("CARGO_BIN_EXE_xmip-playground-node")`, and a roll may override the count.
     ///
     /// # Errors
     ///
@@ -411,7 +411,7 @@ pub fn node_binary() -> io::Result<PathBuf> {
         return Ok(PathBuf::from(named));
     }
     let current = std::env::current_exe()?;
-    let file = format!("node{}", std::env::consts::EXE_SUFFIX);
+    let file = format!("xmip-playground-node{}", std::env::consts::EXE_SUFFIX);
     let beside = current.parent().map(|dir| dir.join(&file));
     let above = current
         .parent()
@@ -436,7 +436,7 @@ pub fn node_binary() -> io::Result<PathBuf> {
 #[cfg(test)]
 pub(crate) fn built_node_binary() -> PathBuf {
     let status = Command::new(env!("CARGO"))
-        .args(["build", "-q", "--bin", "node"])
+        .args(["build", "-q", "--bin", "xmip-playground-node"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .status()
         .expect("cargo runs");
