@@ -2,8 +2,8 @@
 //!
 //! The playground and the readers (the GUI, the CLI) are separate processes;
 //! the bridge between them is a file. It is written **atomically** — a temp file
-//! renamed over the target — so a reader never catches a half-written file even
-//! after a week of ticks.
+//! flushed to the device and renamed over the target — so a reader never
+//! catches a half-written file, or an empty one, even after a week of ticks.
 //!
 //! **TOML, not JSON.** On disk the estate is TOML — the owner's rule, the same
 //! reason `architecture.json` was deleted for `architecture.toml`; JSON is
@@ -12,7 +12,7 @@
 //! a different thing entirely — that is data being carried, not a file the
 //! estate configures itself from.)
 
-use std::io;
+use std::io::{self, Write};
 use std::path::Path;
 
 use observe::{Activity, Count, Counted, Health, HealthRecord, History, ItemKind, Snapshot};
@@ -223,21 +223,28 @@ pub fn activity_toml(node: &str, activity: &Activity) -> String {
     toml::to_string(&report).unwrap_or_default()
 }
 
-/// Write `contents` to `path` atomically: a sibling temp file, then a rename
-/// over the target. A reader either sees the previous file or this one, never a
-/// torn write.
+/// Write `contents` to `path` atomically: a sibling temp file, flushed to the
+/// device, then a rename over the target. A reader either sees the previous
+/// file or this one, never a torn write — and never an empty one: the rename
+/// is journaled and the data is not, so a hard stop between the write and the
+/// flush left a snapshot, a history and an activity file of the right length
+/// and nothing but zeros in them, and the prompt said unavailable for two
+/// days (2026-09-16).
 ///
 /// # Errors
 ///
-/// Where the parent could not be created, or the file could not be written or
-/// renamed.
+/// Where the parent could not be created, or the file could not be written,
+/// flushed or renamed.
 pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
     let temp = path.with_extension("toml.writing");
-    std::fs::write(&temp, contents)?;
+    let mut file = std::fs::File::create(&temp)?;
+    file.write_all(contents.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
     std::fs::rename(&temp, path)
 }
 
