@@ -47,10 +47,12 @@
 //! What it can do grows with the runtime and the transports. Created
 //! 2026-09-05; named by the owner.
 
+pub mod board;
 pub mod budget;
 pub mod cabinet;
 pub mod capability;
 pub mod cluster;
+pub mod complement;
 pub mod contracts;
 pub mod daily_backlog;
 pub mod database;
@@ -81,6 +83,7 @@ pub mod switch;
 pub mod topology;
 pub mod verdict;
 
+pub use board::{redraw, summarise};
 pub use budget::Budget;
 pub use cabinet::{Cabinet, Filed, all_cabinets};
 pub use capability::Capability;

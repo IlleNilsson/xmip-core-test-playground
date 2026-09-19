@@ -115,8 +115,23 @@ break on — a datagram's MTU either side, the UDP maximum, sixty-four kibibytes
 plus one, a mebibyte), how many pairs run at once (one, one, four, every core),
 how many rounds a test drives, and how many node processes a roll spawns (one,
 three, ten, forty). `realistic` is what the runner ran at before the axis
-existed and is the default, so nothing changed quietly; `XMIP_PLAYGROUND_STRESS`
-sets it for a roll.
+existed and is the level a hand-started roll takes when
+`XMIP_PLAYGROUND_STRESS` is unset, so nothing changed quietly for one.
+`Start-XmipTest` has said `brutal` since 2026-09-19, because an omitted
+selector there means the most the rig can give (ADR-0059, amendment).
+
+### The full complement a level brings
+
+Told no nodes at all — neither `XMIP_PLAYGROUND_NODE_NAMES` nor
+`XMIP_PLAYGROUND_NODES` — a roll brings the level's own count of them,
+`node-01` up, dealt receive, process and send in message-path order and round
+again (`complement.rs`). Twenty nodes are seven receiving, seven processing
+and six sending, and `RoundTrip` runs between the processes rather than whole
+in the roll. A level with fewer than three cannot cover the path; those nodes
+declare no stage, each runs whole tests itself, and both the roll's first line
+and `Start-XmipTest` say so. `roll --roster <level>` prints the complement and
+starts nothing, which is how the cmdlet resolves an omitted `-Nodes` at its
+own door and records what an operator got.
 
 ### Every transport declares its ceiling
 
@@ -340,8 +355,9 @@ own environment, never yours: `-Stress` is `XMIP_PLAYGROUND_STRESS`
 (`calm`, `realistic`, `harsh`, `brutal`), `-Test` is
 `XMIP_PLAYGROUND_SCENARIOS` (the scope segments above; unset means all),
 `-Nodes` is `XMIP_PLAYGROUND_NODE_NAMES` (the nodes to simulate, by name, one
-process each; an empty list is `XMIP_PLAYGROUND_NODES=0`,
-no nodes; omitted, the level's own numbered nodes), `-NodeCapability` is
+process each; an empty list is `XMIP_PLAYGROUND_NODES=0`, no nodes; omitted,
+the cmdlet resolves the level's full complement and sets those names, so the
+run record says what an operator got), `-NodeCapability` is
 `XMIP_PLAYGROUND_NODE_CAPABILITIES` (what each declares it can do,
 `alpha=receive,beta=process+send`; a node it does not name declares nothing —
 and this is where the `R`/`P`/`S` shorthand of `-Nodes` has already been

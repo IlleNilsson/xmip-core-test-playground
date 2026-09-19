@@ -37,18 +37,22 @@
 //! overridable with `XMIP_PLAYGROUND_SNAPSHOT`, `_HISTORY`, `_ACTIVITY`. Every
 //! variable is read in one place, `environment.rs`.
 //!
-//! **The cluster is a process too** (the owner, 2026-09-19). When
-//! `XMIP_PLAYGROUND_NODES` is set — a count, or empty for the level's own — or
-//! `XMIP_PLAYGROUND_STRESS` is `harsh` or `brutal`, the roll spawns exactly
-//! one `xmip-playground-cluster` process, and that process spawns and
+//! **The cluster is a process too** (the owner, 2026-09-19). The roll spawns
+//! exactly one `xmip-playground-cluster` process, and that process spawns and
 //! supervises one `xmip-playground-node` per node (ADR-0028 clause 2). The
 //! roll merges the one file the cluster publishes into its own snapshot each
 //! round; the board shows the nodes' rollup row, and a node's leaf only when
-//! it is not fine. Unset, no process is spawned and the roll is what it was.
-//! `XMIP_PLAYGROUND_NODE_NAMES` names the nodes instead, comma separated, one
-//! process each, at any level; `XMIP_PLAYGROUND_ONLINE_NODES` names the ones
-//! among them that may assume the internet (ADR-0045); unset, every node
-//! reads `XMIP_ONLINE`.
+//! it is not fine. `XMIP_PLAYGROUND_NODE_NAMES` names the nodes, comma
+//! separated, one process each, at any level; `XMIP_PLAYGROUND_NODES` names a
+//! count instead, numbered `node-01` up, of which `0` is none at all;
+//! `XMIP_PLAYGROUND_ONLINE_NODES` names the ones among them that may assume
+//! the internet (ADR-0045); unset, every node reads `XMIP_ONLINE`.
+//!
+//! **Told neither, the level brings its full complement** — `complement.rs`,
+//! and the owner's rule of 2026-09-19 that an omitted selector means the most
+//! the rig can give (ADR-0059). `roll --roster <level>` prints that
+//! complement and starts nothing, which is how `Start-XmipTest` resolves an
+//! omitted `-Nodes` at its own door.
 //!
 //! **A node declares what it can do** (ADR-0056).
 //! `XMIP_PLAYGROUND_NODE_CAPABILITIES` says which stages of the message path
@@ -64,20 +68,28 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use observe::{Activity, Health, History, Snapshot};
-use xmip_test_playground::Headroom;
+use observe::{Activity, History, Snapshot};
 use xmip_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
 use xmip_test_playground::environment::{
     self, load_bytes, max_seconds, publish_paths, time_factor,
 };
 use xmip_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_test_playground::{
-    Budget, DailyBacklog, ExclusiveClaim, FaultPlan, Filing, HeavyLoad, LowLatency, Retention,
-    Roster, Run, Schedule, Stress, Topology, activity_toml, cluster_name, cluster_root,
-    cluster_topology, history_toml, now_unix_nanos, to_toml_run, write_atomic,
+    Budget, DailyBacklog, ExclusiveClaim, FaultPlan, Filing, Headroom, HeavyLoad, LowLatency,
+    Retention, Roster, Run, Schedule, Stress, Topology, activity_toml, cluster_name, cluster_root,
+    cluster_topology, complement, history_toml, now_unix_nanos, redraw, summarise, to_toml_run,
+    write_atomic,
 };
 
 fn main() {
+    // Asked what a level brings, this process answers and starts nothing:
+    // `Start-XmipTest` asks before it spawns, so an omitted `-Nodes` is
+    // resolved once, at the operator's door, by the rig that owns the numbers.
+    if std::env::args().nth(1).as_deref() == Some("--roster") {
+        say_the_complement(std::env::args().nth(2).as_deref());
+        return;
+    }
+
     let (cluster, root, base) = this_cluster();
     let root = root.as_str();
 
@@ -92,6 +104,8 @@ fn main() {
     let roster = or_refuse(environment::roster(stress));
     let relayed = relayed_or_refuse(&chosen, &roster);
     let run = Run::of(&cluster, &chosen, &roster, stress);
+
+    announce(&cluster, stress, &roster);
 
     // Each scenario under its own subtree, each with faults or pressure on, so
     // the board is realistic rather than uniformly green. `file` stays clean in
@@ -261,6 +275,42 @@ fn or_refuse<T>(told: Result<T, String>) -> T {
     })
 }
 
+/// The first lines of a run: the level, the cluster and the roster it
+/// resolved to. A run nobody gave switches to is still told from the one
+/// before it (ADR-0059, amendment 2026-09-19), and where an omitted `-Nodes`
+/// brought a complement too small for the message path, that is said here
+/// rather than left to be noticed. The board clears a live terminal every
+/// round; a redirected log keeps these lines, and the `[run]` table of every
+/// snapshot carries the same answer.
+fn announce(cluster: &str, stress: Stress, roster: &Roster) {
+    println!(
+        "roll at {} as cluster {cluster}: {}",
+        stress.name(),
+        complement::describe(roster)
+    );
+    if !roster.is_empty() {
+        println!("  roster: {}", roster.text());
+    }
+}
+
+/// What a level brings when nobody names nodes, printed as `--nodes` takes it
+/// back: `node-01=receive,node-02=process,…`. The level is the argument and
+/// the environment is not read, so the answer is the level's alone; an unknown
+/// one is REFUSED naming the four (ADR-0055). `Start-XmipTest` asks this, sets
+/// the names it gets, and records them, so the operator's door and the roll
+/// agree on one roster and the numbers stay in `stress.rs` alone.
+fn say_the_complement(level: Option<&str>) {
+    let Some(stress) = level.and_then(Stress::parse) else {
+        eprintln!(
+            "REFUSED: --roster takes a stress level; '{}' is none. The levels are {}.",
+            level.unwrap_or_default(),
+            Stress::NAMES.join(", ")
+        );
+        std::process::exit(2);
+    };
+    println!("{}", complement::full(stress).text());
+}
+
 /// Whether `RoundTrip` runs across the cluster's nodes rather than in this
 /// process: it was chosen, and some node declared a stage of the path. A stage
 /// no node declares is REFUSED before anything is spawned, naming the
@@ -325,73 +375,6 @@ fn this_cluster() -> (String, String, PathBuf) {
 fn write(path: &Path, contents: &str, what: &str) {
     if let Err(error) = write_atomic(path, contents) {
         eprintln!("could not write the {what} to {}: {error}", path.display());
-    }
-}
-
-/// The full board, cleared and reprinted in place — a live terminal view.
-fn redraw(node: &str, round: u64, snapshot: &Snapshot) {
-    print!("\x1b[2J\x1b[H");
-    println!("Xmip Playground — rolling every scenario   (round {round})");
-    println!("{:-<86}", "");
-
-    for record in pairs(node, snapshot) {
-        let leaf = record
-            .scope
-            .strip_prefix(&format!("{node}/"))
-            .unwrap_or(&record.scope);
-        println!(
-            "  {:<44} {:<7} sev {:>3}   {}",
-            leaf,
-            word(record.health),
-            record.severity,
-            record.evidence
-        );
-    }
-
-    println!("{:-<86}", "");
-    println!(
-        "  rollup at {node}: {}",
-        word(snapshot.worst(node).unwrap_or(Health::Fine))
-    );
-    println!("\n  ctrl-c to stop");
-}
-
-/// One line per round, for a piped run: the rollup, and the worst leaf when it is
-/// not green.
-fn summarise(node: &str, round: u64, snapshot: &Snapshot) {
-    let worst = snapshot.worst(node).map_or("NONE", word);
-    let count = pairs(node, snapshot).len();
-
-    let trouble = pairs(node, snapshot)
-        .into_iter()
-        .find(|record| record.health != Health::Fine)
-        .map_or_else(String::new, |record| {
-            format!("  — worst {}: {}", record.scope, record.evidence)
-        });
-
-    println!("round {round:>4}: {worst}  ({count} leaves){trouble}");
-}
-
-/// The rows the board shows: every leaf, except that a node's leaves appear
-/// only when not fine — the nodes' rollup row always does, and an operator
-/// drills into a node from there.
-fn pairs(node: &str, snapshot: &Snapshot) -> Vec<observe::HealthRecord> {
-    let nodes = format!("{node}/node/");
-    let mut records = snapshot.health(node);
-    records.retain(|record| !record.scope.starts_with(&nodes) || record.health != Health::Fine);
-    records.sort_by(|left, right| left.scope.cmp(&right.scope));
-    records
-}
-
-fn word(health: Health) -> &'static str {
-    match health {
-        Health::Fine => "FINE",
-        Health::Paused => "PAUSED",
-        Health::Working => "WORKING",
-        Health::Stressed => "STRESSED",
-        Health::Exhausted => "EXHAUSTED",
-        Health::Holding => "HOLDING",
-        Health::Done => "DONE",
     }
 }
 

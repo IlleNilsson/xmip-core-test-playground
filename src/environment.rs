@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::complement;
 use crate::roster::Roster;
 use crate::scenario;
 use crate::stress::Stress;
@@ -23,44 +24,46 @@ pub fn scenarios() -> Result<Vec<String>, String> {
     scenario::chosen(raw.as_deref())
 }
 
-/// The nodes a roll wants, if any: `XMIP_PLAYGROUND_NODE_NAMES` names them
-/// outright; else `XMIP_PLAYGROUND_NODES` names a count (or, empty, the
-/// level's own; `0` means none at any level), numbered `node-01` up, and
-/// `harsh` or `brutal` spawn the level's count unasked.
+/// The nodes a roll was **told** to spawn, if it was told at all:
+/// `XMIP_PLAYGROUND_NODE_NAMES` names them outright; else
+/// `XMIP_PLAYGROUND_NODES` names a count, numbered `node-01` up, of which `0`
+/// is none at any level. `None` when neither is set, and when the count is
+/// set but empty — nothing was said, which is the level's full complement
+/// (ADR-0059, amendment 2026-09-19), and [`roster`] deals it.
 #[must_use]
-pub fn node_names(stress: Stress) -> Vec<String> {
-    let listed = std::env::var("XMIP_PLAYGROUND_NODE_NAMES")
-        .ok()
-        .map(|raw| names(&raw));
-    let count = std::env::var("XMIP_PLAYGROUND_NODES").ok();
-    if listed.is_none() && count.is_none() && stress < Stress::Harsh {
-        return Vec::new();
+pub fn node_names() -> Option<Vec<String>> {
+    if let Ok(raw) = std::env::var("XMIP_PLAYGROUND_NODE_NAMES") {
+        return Some(names(&raw));
     }
-    listed.unwrap_or_else(|| {
-        let count = count
-            .and_then(|raw| raw.trim().parse::<usize>().ok())
-            .unwrap_or_else(|| stress.nodes());
+    let count = std::env::var("XMIP_PLAYGROUND_NODES").ok()?;
+    let count = count.trim().parse::<usize>().ok()?;
+    Some(
         (1..=count)
             .map(|index| format!("node-{index:02}"))
-            .collect()
-    })
+            .collect(),
+    )
 }
 
-/// The roster a roll spawns: the nodes [`node_names`] gives, each declaring
+/// The roster a roll spawns: the nodes [`node_names`] was told, each declaring
 /// what `XMIP_PLAYGROUND_NODE_CAPABILITIES` gives it — `R1=receive,
 /// P1=process+send`, comma separated, a node it does not name declaring
-/// nothing — and each carrying the online capability the environment says
-/// (ADR-0045, ADR-0056). Nothing is read out of a node's name.
+/// nothing — or, told nothing, the level's full complement dealt over the
+/// message path (`complement.rs`). Every node carries the online capability
+/// the environment says (ADR-0045, ADR-0056). Nothing is read out of a node's
+/// name.
 ///
 /// # Errors
 ///
 /// When a word is no capability, or a capability was given to a node that is
 /// no node of this roll: REFUSED, naming both sides (ADR-0055).
 pub fn roster(stress: Stress) -> Result<Roster, String> {
-    let named = node_names(stress);
     let declared = std::env::var("XMIP_PLAYGROUND_NODE_CAPABILITIES").unwrap_or_default();
-    let mut roster = Roster::declaring(&named, &declared)?;
-    for node in &named {
+    let mut roster = match node_names() {
+        Some(named) => Roster::declaring(&named, &declared)?,
+        None => complement::full(stress),
+    };
+    let nodes: Vec<String> = roster.names().into_iter().map(str::to_string).collect();
+    for node in &nodes {
         let capability = roster.capability(node).with_online(node_is_online(node));
         roster = roster.declared(node, capability);
     }
