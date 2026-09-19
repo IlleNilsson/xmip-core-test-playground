@@ -1,4 +1,4 @@
-//! The load's payloads: a large, valid document of each contract's shape, a
+//! The `HeavyLoad` test's payloads: a large, valid document of each contract's shape, a
 //! plain byte pattern for sizes past the parse ceiling, and the Stream an
 //! arrived payload is rebuilt into for the contract check.
 //!

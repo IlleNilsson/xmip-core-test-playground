@@ -93,7 +93,7 @@ pub(crate) fn carries_the_edges(rt: &dyn crate::roundtrip::RoundTrip) {
             rt.transport()
         );
         // A declared refusal must be true: the bytes really do not survive.
-        // The scenarios never send a refused payload (pingpong judges it
+        // The scenarios never send a refused payload (RoundTrip judges it
         // one-sided first); here it is sent so an over-broad refusal shows.
         if let Some(why) = refused {
             assert!(

@@ -1,4 +1,4 @@
-//! The pickup the claim scenario runs over: a lane of items on disk, the locks
+//! The pickup the `ExclusiveClaim` test runs over: a lane of items on disk, the locks
 //! a reader takes, the ledger every holder signs, and the reader itself.
 //!
 //! Split from `claim.rs` on 2026-09-09 when sharing across processes made the

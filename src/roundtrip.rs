@@ -1,4 +1,4 @@
-//! One shape the pingpong test drives, and the transport's own far end behind it.
+//! One shape the `RoundTrip` test drives, and the transport's own far end behind it.
 //!
 //! The transports do not share a round-trip shape: file sends into a directory
 //! and reads it back from the same place; tcp, http and smtp bind a listener,
@@ -38,7 +38,7 @@ pub enum Exchange {
 /// and the playground agree.
 pub const TIMEOUT: Duration = LOOPBACK_TIMEOUT;
 
-/// A transport the pingpong scenario can drive, behind one method. `Send`
+/// A transport the `RoundTrip` test can drive, behind one method. `Send`
 /// and `Sync` so a schedule can drive pairs from several threads at once —
 /// an adapter holds a directory or nothing, never a live socket.
 pub trait RoundTrip: Send + Sync {
@@ -115,7 +115,7 @@ impl<L: Loopback> RoundTrip for Looped<L> {
 /// Every transport that is its own far end, each behind the one adapter —
 /// the one list the scenarios share, so a new transport is wired in a single
 /// place rather than in each scenario, under the family it belongs to.
-/// `file_dir` is where the file transport ping-pongs and where sqlite keeps
+/// `file_dir` is where the file transport round-trips and where sqlite keeps
 /// its queue.
 #[must_use]
 pub fn all_transports(file_dir: impl Into<std::path::PathBuf>) -> Vec<Box<dyn RoundTrip>> {

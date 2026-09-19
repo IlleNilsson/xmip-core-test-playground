@@ -34,7 +34,7 @@ name = "xmip-playground-node"
 path = "src/bin/node.rs"
 
 [dependencies]
-# The transports it ping-pongs over, and the snapshot it publishes verdicts
+# The transports it round-trips over, and the snapshot it publishes verdicts
 # into. observe carries Health; transport carries the Transport trait whose
 # send/receive is the round trip.
 # The declaration every System Process Xmip owns makes of itself (ADR-0053).
@@ -43,7 +43,7 @@ observe = { package = "xmip-core-observe", git = "https://github.com/IlleNilsson
 transport = { package = "xmip-core-transport", git = "https://github.com/IlleNilsson/xmip-core-transport", branch = "main" }
 
 # One technology repository per protocol (ADR-0010), each mounted under the
-# transport capability. The pingpong adapters drive these.
+# transport capability. The RoundTrip adapters drive these.
 transport_file = { package = "xmip-core-transport-file", git = "https://github.com/IlleNilsson/xmip-core-transport-file", branch = "main" }
 transport_tcp = { package = "xmip-core-transport-tcp", git = "https://github.com/IlleNilsson/xmip-core-transport-tcp", branch = "main" }
 transport_udp = { package = "xmip-core-transport-udp", git = "https://github.com/IlleNilsson/xmip-core-transport-udp", branch = "main" }
@@ -148,7 +148,7 @@ authenticate = { package = "xmip-core-authenticate", git = "https://github.com/I
 authorize = { package = "xmip-core-authorize", git = "https://github.com/IlleNilsson/xmip-core-authorize", branch = "main" }
 context = { package = "xmip-core-context", git = "https://github.com/IlleNilsson/xmip-core-context", branch = "main" }
 
-# The retention and archiving axis: the methodical-secretary scenario drives the
+# The retention and archiving axis: the Retention test drives the
 # real retention policy (keep, archive, delete by age) and the real archive store
 # over a logical clock, so an item's lifecycle is exercised, not mocked.
 retain = { package = "xmip-core-retain", git = "https://github.com/IlleNilsson/xmip-core-retain", branch = "main" }

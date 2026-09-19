@@ -1,4 +1,4 @@
-//! The content contracts the pingpong test validates, over actual Streams.
+//! The content contracts the `RoundTrip` test validates, over actual Streams.
 //!
 //! ADR-0028's contract axis, made real: a probe does not just send bytes and
 //! compare them back, it sends an actual [`Stream`] and, on arrival, a real
@@ -65,7 +65,7 @@ impl Contract {
 }
 
 /// A content contract the playground exercises. Implements the estate's
-/// [`ContractTrait`], so the pingpong validates an arrived Stream exactly as a
+/// [`ContractTrait`], so the `RoundTrip` test validates an arrived Stream exactly as a
 /// Journey would.
 pub struct ContentContract {
     descriptor: ContractDescriptor,
@@ -77,7 +77,7 @@ impl ContentContract {
     pub fn new(contract: Contract) -> Self {
         Self {
             descriptor: ContractDescriptor {
-                id: ContractId(format!("pingpong-{}", contract.name())),
+                id: ContractId(format!("round-trip-{}", contract.name())),
                 version: "1".to_string(),
                 representation: contract.representation().to_string(),
             },
@@ -196,13 +196,13 @@ mod tests {
 
     #[test]
     fn valid_json_holds_and_broken_json_does_not() {
-        assert!(holds(Contract::Json, br#"{"probe":"ping-pong","n":1}"#));
+        assert!(holds(Contract::Json, br#"{"probe":"round-trip","n":1}"#));
         assert!(!holds(Contract::Json, b"{not json"));
     }
 
     #[test]
     fn well_formed_xml_holds_and_a_dangling_tag_does_not() {
-        assert!(holds(Contract::Xml, b"<probe><n>1</n>ping-pong</probe>"));
+        assert!(holds(Contract::Xml, b"<probe><n>1</n>round-trip</probe>"));
         assert!(!holds(Contract::Xml, b"<probe><n>1</probe>"));
         assert!(!holds(Contract::Xml, b"<probe>never closed"));
     }

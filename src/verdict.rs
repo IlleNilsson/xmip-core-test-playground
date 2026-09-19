@@ -1,4 +1,4 @@
-//! What one round of ping-pong concluded, and how it becomes health.
+//! What one `RoundTrip` round concluded, and how it becomes health.
 //!
 //! ADR-0028 clause 4: a verdict per (transport, contract) pair, published as
 //! health on `xmip:///<node>/exercise/<transport>/<contract>`. Green when the
@@ -96,7 +96,7 @@ pub fn protobuf_message(n: usize, text: &str) -> Vec<u8> {
     use contract_protobuf::wire::{encode_delimited, encode_tag, encode_varint};
     let mut out = encode_tag(1, 0);
     out.extend(encode_varint(1));
-    out.extend(encode_delimited(2, b"ping-pong"));
+    out.extend(encode_delimited(2, b"round-trip"));
     for _ in 0..n {
         out.extend(encode_delimited(3, text.as_bytes()));
     }
@@ -180,27 +180,27 @@ impl Contract {
     pub fn payload(self) -> Vec<u8> {
         match self {
             Contract::Bytes => vec![0x00, 0x01, 0x02, 0xfd, 0xfe, 0xff],
-            Contract::Text => b"xmip ping-pong".to_vec(),
-            Contract::Json => br#"{"probe":"ping-pong","n":1}"#.to_vec(),
-            Contract::Xml => b"<probe><n>1</n>ping-pong</probe>".to_vec(),
-            Contract::Html => b"<!doctype html><title>xmip</title><p>ping-pong".to_vec(),
+            Contract::Text => b"xmip round-trip".to_vec(),
+            Contract::Json => br#"{"probe":"round-trip","n":1}"#.to_vec(),
+            Contract::Xml => b"<probe><n>1</n>round-trip</probe>".to_vec(),
+            Contract::Html => b"<!doctype html><title>xmip</title><p>round-trip".to_vec(),
             // CRLF and no trailing break: mail carries lines, and a bare LF or
             // a final newline would not survive SMTP byte for byte.
             Contract::Csv => b"probe,n\r\n\"ping,pong\",1".to_vec(),
             Contract::FixedWidth => b"A00001ACME      02\r\nA00002BOLT      01".to_vec(),
             Contract::Edifact => EDIFACT_PROBE.to_vec(),
-            Contract::Regex => b"PROBE-4711 ping-pong".to_vec(),
+            Contract::Regex => b"PROBE-4711 round-trip".to_vec(),
             Contract::Schematron => b"<probe xmlns=\"urn:xmip:probe\"><n>1</n></probe>".to_vec(),
             Contract::Hl7v2 => HL7_PROBE.to_vec(),
             Contract::Fhir => br#"{"resourceType":"Patient","id":"probe-1"}"#.to_vec(),
             Contract::X12 => X12_PROBE.to_vec(),
-            Contract::Avro => avro_container(1, "ping-pong"),
+            Contract::Avro => avro_container(1, "round-trip"),
             Contract::GraphqlSchema => b"query Probe { probe(n: 1) { id ping } }".to_vec(),
-            Contract::Protobuf => protobuf_message(1, "ping-pong"),
+            Contract::Protobuf => protobuf_message(1, "round-trip"),
             Contract::Wsdl => WSDL_PROBE.to_vec(),
             Contract::OpenApi => OPENAPI_PROBE.to_vec(),
             Contract::AsyncApi => ASYNCAPI_PROBE.to_vec(),
-            Contract::Sql => b"INSERT INTO probe (n, ping) VALUES (1, 'ping-pong');".to_vec(),
+            Contract::Sql => b"INSERT INTO probe (n, ping) VALUES (1, 'round-trip');".to_vec(),
         }
     }
 
@@ -241,7 +241,7 @@ impl Contract {
     }
 }
 
-/// A stage of the message path, the axis an operator drills first. A pingpong
+/// A stage of the message path, the axis an operator drills first. A `RoundTrip`
 /// round drives all three: Receive takes the Stream in, Process holds the
 /// contract over it, Send delivers it back out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

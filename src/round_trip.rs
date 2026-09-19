@@ -1,4 +1,4 @@
-//! The pingpong scenario: one round over one transport, judged.
+//! The `RoundTrip` test: one round over one transport, judged.
 //!
 //! A scenario, not a protocol — it runs over any [`RoundTrip`] adapter, so the
 //! transport is the variable and the scenario is the constant. Send the
@@ -16,21 +16,21 @@ use xcore::StreamId;
 use crate::roundtrip::{Exchange, RoundTrip};
 use crate::verdict::{Contract, Outcome};
 
-/// Run one pingpong round for one transport and one contract, and judge it.
+/// Run one `RoundTrip` round for one transport and one contract, and judge it.
 ///
 /// The probe sends an actual Stream; on a clean round trip the arrived bytes are
 /// rebuilt into a Stream and the real contract is run over it. Returns the base
 /// outcome and the bytes that moved (zero unless delivered).
 #[must_use]
-pub fn ping_pong(transport: &dyn RoundTrip, contract: Contract) -> (Outcome, u64) {
-    ping_pong_with(transport, contract, contract.stream().bytes())
+pub fn round_trip(transport: &dyn RoundTrip, contract: Contract) -> (Outcome, u64) {
+    round_trip_with(transport, contract, contract.stream().bytes())
 }
 
 /// The same round with a chosen probe — a stress level's payload at the size
 /// protocols break on, still holding `contract` — judged the same way: what
 /// came back must equal what went out, and the contract must hold over it.
 #[must_use]
-pub fn ping_pong_with(
+pub fn round_trip_with(
     transport: &dyn RoundTrip,
     contract: Contract,
     payload: &[u8],
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn a_payload_that_makes_the_round_trip_over_file_is_delivered() {
         let dir = scratch("delivered");
-        let (outcome, bytes) = ping_pong(&FileRoundTrip::new(&dir), Contract::Text);
+        let (outcome, bytes) = round_trip(&FileRoundTrip::new(&dir), Contract::Text);
 
         assert_eq!(outcome, Outcome::Delivered);
         assert_eq!(bytes, Contract::Text.payload().len() as u64);
@@ -91,7 +91,7 @@ mod tests {
     fn the_same_scenario_runs_over_tcp() {
         // The point of the RoundTrip adapter: one scenario, a different
         // transport underneath, no change here.
-        let (outcome, _) = ping_pong(&TcpRoundTrip, Contract::Bytes);
+        let (outcome, _) = round_trip(&TcpRoundTrip, Contract::Bytes);
 
         assert_eq!(outcome, Outcome::Delivered);
     }
@@ -111,7 +111,7 @@ mod tests {
             let judged = drive_pairs(transports, stress.workers(), |transport, contract| {
                 let payload = crate::stress::payload(contract, size);
                 let started = Instant::now();
-                let (outcome, bytes) = ping_pong_with(transport, contract, &payload);
+                let (outcome, bytes) = round_trip_with(transport, contract, &payload);
                 let ceiling = transport
                     .ceiling()
                     .or((transport.transport() == "udp").then_some(65_507));
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn harsh_sizes_are_carried_or_refused_with_a_reason() {
-        let dir = scratch("pingpong-harsh");
+        let dir = scratch("round-trip-harsh");
         let transports: Vec<Box<dyn RoundTrip>> = vec![
             Box::new(FileRoundTrip::new(&dir)),
             Box::new(TcpRoundTrip),
@@ -169,7 +169,7 @@ mod tests {
     #[test]
     #[ignore = "brutal: every transport at every edge size, for the runner"]
     fn brutal_sizes_over_every_transport() {
-        let dir = scratch("pingpong-brutal");
+        let dir = scratch("round-trip-brutal");
         let (_, unexplained) = drive(&all_transports(&dir), Stress::Brutal);
         std::fs::remove_dir_all(&dir).ok();
         assert!(

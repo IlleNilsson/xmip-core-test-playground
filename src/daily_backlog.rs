@@ -1,4 +1,4 @@
-//! The daily scenario: drain a backlog as fast as the estate can, and escalate
+//! The `DailyBacklog` test: drain a backlog as fast as the estate can, and escalate
 //! when one node cannot keep up.
 //!
 //! ADR-0028. A day's work lands at once — many files to process, all going out as
@@ -6,7 +6,7 @@
 //! it the backlog climbs, and the scenario escalates the way an operator would:
 //! first a **tweak** — raise the node's concurrency — and, if that only slows the
 //! rise, **add a node** so a second drainer shares the same backlog through the
-//! claim (ADR-0024, proven exactly-once by the `claim` scenario; here it is the
+//! claim (ADR-0024, proven exactly-once by the `ExclusiveClaim` test; here it is the
 //! throughput a second node buys). The board shows the backlog climb, the action
 //! taken, and the backlog fall.
 //!
@@ -14,7 +14,7 @@
 //! removes up to the current capacity, so the queue depth an operator watches is
 //! a real count on disk, not a number in memory.
 //!
-//! **Across processes, 2026-09-09.** A [`Daily::shared`] drain works a directory
+//! **Across processes, 2026-09-09.** A [`DailyBacklog::shared`] drain works a directory
 //! other node processes drop into and drain from at the same time. Its own
 //! arrivals carry its process id, so the directory tells how many nodes are
 //! feeding it, and the node judges its *share* of the backlog — the depth
@@ -45,7 +45,7 @@ const CEILING: usize = 150;
 
 /// A day's drain: a real file backlog, a capacity that escalates when it cannot
 /// keep up.
-pub struct Daily {
+pub struct DailyBacklog {
     node: String,
     dir: PathBuf,
     tag: String,
@@ -63,7 +63,7 @@ pub struct Daily {
     standing: Standing,
 }
 
-impl Daily {
+impl DailyBacklog {
     /// A drain publishing under `node`, using `dir` for the backlog, starting at
     /// one node with the base concurrency. The directory is this drain's own
     /// and starts empty.
@@ -227,16 +227,24 @@ mod tests {
     #[test]
     fn a_backlog_escalates_through_a_tweak_then_a_node_and_clears() {
         let dir = scratch("escalate");
-        let mut daily = Daily::new("xmip:///playground/daily", &dir);
+        let mut daily_backlog = DailyBacklog::new("xmip:///playground/daily-backlog", &dir);
         let mut cleared = false;
         for _ in 0..30 {
-            let snapshot = daily.tick();
-            if snapshot.worst("xmip:///playground/daily") == Some(Health::Fine) && daily.scaled {
+            let snapshot = daily_backlog.tick();
+            if snapshot.worst("xmip:///playground/daily-backlog") == Some(Health::Fine)
+                && daily_backlog.scaled
+            {
                 cleared = true;
             }
         }
-        assert!(daily.tweaked, "one node falling behind should tweak first");
-        assert!(daily.scaled, "a tweak that is not enough should add a node");
+        assert!(
+            daily_backlog.tweaked,
+            "one node falling behind should tweak first"
+        );
+        assert!(
+            daily_backlog.scaled,
+            "a tweak that is not enough should add a node"
+        );
         assert!(
             cleared,
             "the added node should bring the backlog back to green"
@@ -247,10 +255,10 @@ mod tests {
     #[test]
     fn the_backlog_is_real_files_and_a_tweak_alone_does_not_clear_it() {
         let dir = scratch("files");
-        let mut daily = Daily::new("xmip:///playground/daily", &dir);
+        let mut daily_backlog = DailyBacklog::new("xmip:///playground/daily-backlog", &dir);
         // A few rounds in, the backlog is real files on disk and rising.
         for _ in 0..3 {
-            daily.tick();
+            daily_backlog.tick();
         }
         assert!(
             measure(&dir).0 > 0,
@@ -261,21 +269,21 @@ mod tests {
 
     #[test]
     fn a_shared_drain_judges_its_share_and_leaves_others_files_alone_at_start() {
-        let dir = scratch("shared-daily");
+        let dir = scratch("shared-daily-backlog");
         std::fs::create_dir_all(&dir).expect("dir");
         for n in 0..40 {
             std::fs::write(dir.join(format!("daily_other_{n:08}")), b"x").expect("a file");
         }
-        let mut daily = Daily::shared("xmip:///playground/daily", &dir);
+        let mut daily_backlog = DailyBacklog::shared("xmip:///playground/daily-backlog", &dir);
         assert_eq!(
             measure(&dir),
             (40, 1),
             "the other feeder's files survive start"
         );
 
-        let snapshot = daily.tick();
-        let record = &snapshot.health("xmip:///playground/daily")[0];
-        assert_eq!(daily.feeders, 2, "two feeders are seen");
+        let snapshot = daily_backlog.tick();
+        let record = &snapshot.health("xmip:///playground/daily-backlog")[0];
+        assert_eq!(daily_backlog.feeders, 2, "two feeders are seen");
         assert!(
             record.evidence.contains("over 2 feeders"),
             "the evidence names the feeders: {}",

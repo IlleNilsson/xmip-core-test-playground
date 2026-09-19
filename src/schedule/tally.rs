@@ -1,10 +1,10 @@
 //! A pair's record over the rounds it has run, and the health it publishes.
 //!
-//! The pingpong test is judged over time (ADR-0028 clause 3): not the last
+//! The `RoundTrip` test is judged over time (ADR-0028 clause 3): not the last
 //! round but the record — how many rounds passed, whether the pair fails now.
 //! This is that record and the one way it becomes a health record, kept
 //! beside the schedule that folds into it. The severity scales with the
-//! failure rate, which is why pingpong keeps this rather than the shared
+//! failure rate, which is why `RoundTrip` keeps this rather than the shared
 //! [`Standing`](crate::standing::Standing).
 
 use observe::{Health, HealthRecord};

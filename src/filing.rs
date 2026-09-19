@@ -1,7 +1,7 @@
 //! The filing scenario: every archive technology, by every contract, files a
 //! probe item and gets it back whole.
 //!
-//! ADR-0028; ADR-0040 sets the boundary. The secretary watches an item age
+//! ADR-0028; ADR-0040 sets the boundary. The Retention test watches an item age
 //! and cross into the archive; the filing watches what the archive does with
 //! it. Each tick files one probe item per (technology, contract) through the
 //! real store — a Parquet file, a `SQLite` row, a `PostgreSQL` row over the

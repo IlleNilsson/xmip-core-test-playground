@@ -1,8 +1,8 @@
-//! The load scenario: a large payload round-trips whole, and the contract
+//! The `HeavyLoad` test: a large payload round-trips whole, and the contract
 //! still holds at size.
 //!
-//! ADR-0028. Pingpong sends a handful of bytes; load sends a large payload — a
-//! megabyte by default, gigabytes on demand ([`Load::with_bytes`]) — and asks
+//! ADR-0028. `RoundTrip` sends a handful of bytes; `HeavyLoad` sends a large payload — a
+//! megabyte by default, gigabytes on demand ([`HeavyLoad::with_bytes`]) — and asks
 //! whether it comes back byte-for-byte and still validates. **Green** when it
 //! does, with the throughput; **red** when it is truncated, corrupted, or the
 //! transport cannot carry it — a UDP datagram cannot hold a megabyte, and that
@@ -16,7 +16,7 @@
 //!
 //! At a [`Stress`] level the drop rate scales with it and the payload follows
 //! it: the load's own size leads each cycle — the megabyte, or what
-//! [`Load::with_bytes`] set — and the level's edge sizes follow, so a hard
+//! [`HeavyLoad::with_bytes`] set — and the level's edge sizes follow, so a hard
 //! round proves the transport at the sizes protocols break on as well as at
 //! scale. Pairs still run one at a time: peak memory is twice the payload,
 //! and at gigabytes that is not a thing to multiply by the cores.
@@ -46,7 +46,7 @@ const DROP_RATE: u8 = 4;
 /// The default size of one load, in bytes. A megabyte: large enough that a UDP
 /// datagram cannot carry it and a real transfer is measurable, small enough that
 /// a loopback round trip stays quick. The runner raises it — gigabytes, on a box
-/// with the memory for it — with [`Load::with_bytes`].
+/// with the memory for it — with [`HeavyLoad::with_bytes`].
 const TARGET_BYTES: usize = 1024 * 1024;
 
 /// Above this size the structural contract is not parsed. Proving a JSON or XML
@@ -59,7 +59,7 @@ const VALIDATE_CEILING: usize = 16 * 1024 * 1024;
 /// A scheduled size exercise: every transport by every contract, a payload each
 /// round (a megabyte by default, up to gigabytes), judged on whether it survived
 /// whole and how fast it moved.
-pub struct Load {
+pub struct HeavyLoad {
     node: String,
     transports: Vec<Box<dyn RoundTrip>>,
     bytes: usize,
@@ -76,7 +76,7 @@ pub struct Load {
     cursor: usize,
 }
 
-impl Load {
+impl HeavyLoad {
     /// A size exercise publishing under `node`, with no injected drops.
     #[must_use]
     pub fn new(node: impl Into<String>, file_dir: impl Into<std::path::PathBuf>) -> Self {
@@ -106,7 +106,7 @@ impl Load {
     }
 
     /// The same exercise, dropping the occasional transfer mid-flight:
-    /// [`Load::at`] `Realistic`.
+    /// [`HeavyLoad::at`] `Realistic`.
     #[must_use]
     pub fn under_pressure(self) -> Self {
         self.at(Stress::Realistic)
@@ -361,15 +361,15 @@ mod tests {
     #[test]
     fn a_large_payload_round_trips_over_file_and_tcp() {
         let dir = scratch("carry");
-        let mut hl = Load::new("xmip:///playground/load", &dir).over(sample(&dir));
+        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir).over(sample(&dir));
         let snapshot = hl.tick();
         assert_eq!(
-            snapshot.worst("xmip:///playground/load/file"),
+            snapshot.worst("xmip:///playground/heavy-load/file"),
             Some(Health::Fine),
             "file carries a megabyte"
         );
         assert_eq!(
-            snapshot.worst("xmip:///playground/load/tcp"),
+            snapshot.worst("xmip:///playground/heavy-load/tcp"),
             Some(Health::Fine),
             "tcp carries a megabyte"
         );
@@ -379,10 +379,10 @@ mod tests {
     #[test]
     fn udp_cannot_carry_a_megabyte_and_says_so() {
         let dir = scratch("udp");
-        let mut hl = Load::new("xmip:///playground/load", &dir).over(sample(&dir));
+        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir).over(sample(&dir));
         let snapshot = hl.tick();
         assert_ne!(
-            snapshot.worst("xmip:///playground/load/udp"),
+            snapshot.worst("xmip:///playground/heavy-load/udp"),
             Some(Health::Fine),
             "a datagram cannot hold a megabyte"
         );
@@ -407,12 +407,12 @@ mod tests {
         // Just over the ceiling: a byte pattern, checked whole, no structural
         // parse. Over file only would be ideal, but a tick runs all transports;
         // the size is kept just past the ceiling so the test stays quick.
-        let mut hl = Load::new("xmip:///playground/load", &dir)
+        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir)
             .over(sample(&dir))
             .with_bytes(VALIDATE_CEILING + 1);
         let snapshot = hl.tick();
         let file = snapshot
-            .health("xmip:///playground/load/file")
+            .health("xmip:///playground/heavy-load/file")
             .into_iter()
             .next()
             .expect("a file record");
@@ -441,11 +441,11 @@ mod tests {
     #[test]
     fn bytes_moved_accumulates() {
         let dir = scratch("bytes");
-        let mut hl = Load::new("xmip:///playground/load", &dir).over(sample(&dir));
+        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir).over(sample(&dir));
         hl.tick();
         let snapshot = hl.tick();
         let moved = snapshot
-            .measure("xmip:///playground/load", Counted::Bytes)
+            .measure("xmip:///playground/heavy-load", Counted::Bytes)
             .map_or(0, |c| c.value);
         assert!(
             moved > 1024 * 1024,
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn at_a_level_the_load_leads_a_cycle_of_the_edge_sizes() {
         let dir = scratch("sizes");
-        let mut hl = Load::new("xmip:///playground/load", &dir)
+        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir)
             .at(Stress::Harsh)
             .over(Vec::new());
         // Harsh's zero — the probe — is not a load and is left out.
@@ -481,7 +481,7 @@ mod tests {
     /// Drive `hl` for `rounds` at a level: every round within the storm's
     /// budget, every record a whole delivery or a reason, the rollup honest,
     /// and `file` — no drops, no ceiling — whole every round.
-    fn stress_rounds(hl: &mut Load, rounds: u64) -> Snapshot {
+    fn stress_rounds(hl: &mut HeavyLoad, rounds: u64) -> Snapshot {
         let mut snapshot = Snapshot::new();
         for round in 1..=rounds {
             let started = Instant::now();
@@ -489,9 +489,9 @@ mod tests {
             let took = started.elapsed();
             let budget = crate::roundtrip::TIMEOUT * 3 * 20 * 3;
             assert!(took <= budget, "round {round} took {took:?}");
-            let lying = violations(&snapshot, "xmip:///playground/load");
+            let lying = violations(&snapshot, "xmip:///playground/heavy-load");
             assert!(lying.is_empty(), "round {round}: {}", lying.join("; "));
-            for record in snapshot.health("xmip:///playground/load/file") {
+            for record in snapshot.health("xmip:///playground/heavy-load/file") {
                 assert_eq!(record.health, Health::Fine, "round {round}: {record:?}");
             }
         }
@@ -505,8 +505,8 @@ mod tests {
     /// cycle; udp takes the rounds that prove the refusal and the carry.
     #[test]
     fn harsh_sizes_arrive_whole_over_file_and_tcp() {
-        let dir = scratch("load-harsh");
-        let mut hl = Load::new("xmip:///playground/load", &dir)
+        let dir = scratch("heavy-load-harsh");
+        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir)
             .at(Stress::Harsh)
             .over(vec![
                 Box::new(FileRoundTrip::new(&dir)),
@@ -516,7 +516,7 @@ mod tests {
         let snapshot = stress_rounds(&mut hl, cycle);
         // tcp is dropped now and then at three times the rate; every red
         // says so, and nothing is truncated or corrupted.
-        for record in snapshot.health("xmip:///playground/load/tcp") {
+        for record in snapshot.health("xmip:///playground/heavy-load/tcp") {
             assert!(
                 matches!(record.health, Health::Fine | Health::Stressed)
                     || record.evidence.contains("dropped"),
@@ -528,13 +528,13 @@ mod tests {
 
     #[test]
     fn harsh_udp_refuses_above_a_datagram_with_a_reason_and_carries_below() {
-        let dir = scratch("load-harsh-udp");
-        let mut hl = Load::new("xmip:///playground/load", &dir)
+        let dir = scratch("heavy-load-harsh-udp");
+        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir)
             .at(Stress::Harsh)
             .over(vec![Box::new(UdpRoundTrip)]);
         // The megabyte, then one byte and the MTU minus one.
         let snapshot = stress_rounds(&mut hl, 3);
-        let udp = snapshot.health("xmip:///playground/load/udp");
+        let udp = snapshot.health("xmip:///playground/heavy-load/udp");
         assert!(udp.iter().all(|r| !r.evidence.is_empty()));
         assert!(
             udp.iter().all(|r| r.health == Health::Stressed),
@@ -546,8 +546,8 @@ mod tests {
     #[test]
     #[ignore = "brutal: every transport at every size, for the runner"]
     fn brutal_sizes_over_every_transport() {
-        let dir = scratch("load-brutal");
-        let mut hl = Load::new("xmip:///playground/load", &dir).at(Stress::Brutal);
+        let dir = scratch("heavy-load-brutal");
+        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir).at(Stress::Brutal);
         stress_rounds(&mut hl, Stress::Brutal.rounds());
         std::fs::remove_dir_all(&dir).ok();
     }

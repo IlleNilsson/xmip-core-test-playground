@@ -1,6 +1,6 @@
 # xmip-test-playground
 
-**The Xmip Playground.** One integration test — the **pingpong test** — over
+**The Xmip Playground.** One integration test — the **RoundTrip test** — over
 the whole estate, over time.
 
 Its scenario is a round trip: send a payload, catch it, check it came back
@@ -11,7 +11,7 @@ visible until a round passes again. Every pair rolls up to one state at
 `xmip:///<node>/exercise`, so an operator sees one green or the one pair that
 broke. ADR-0028.
 
-Ping-pong is the scenario, not a protocol; the transport is what varies under
+RoundTrip is the scenario, not a protocol; the transport is what varies under
 it. Xmip's own transports are both ends, so nothing external is stood up.
 
 ## The scenarios
@@ -19,16 +19,19 @@ it. Xmip's own transports are both ends, so nothing external is stood up.
 Moved here from ADR-0028 on 2026-09-12; the record keeps the decisions.
 
 
-Pingpong is the first scenario, not the only one. Each scenario asks a different
+RoundTrip is the first test, not the only one. Each scenario asks a different
 question of the same estate over the same [`RoundTrip`] adapters, and publishes
 under its own subtree of `xmip:///playground`, merged into one snapshot so the
 rollup covers them all and an operator drills scenario → detail → the failing
-leaf. Named in the shortest singular form, the owner's convention:
+leaf. 2026-09-19, the owner: the old scenario wording is replaced by the test
+names everywhere; the scope segment is the name in kebab case (`round-trip`,
+`low-latency`, `heavy-load`, `retention`, `filing`, `exclusive-claim`,
+`daily-backlog`):
 
-- **pingpong** — did it arrive whole and hold its contract, across the stages.
-- **furious** — did it arrive in time: round-trip latency against a per-transport
+- **RoundTrip** — did it arrive whole and hold its contract, across the stages.
+- **LowLatency** — did it arrive in time: round-trip latency against a per-transport
   budget, judged on the p50/p99 of recent rounds (cold-start rounds skipped).
-- **load** — a large payload per pair (a megabyte by default, **gigabytes** on
+- **HeavyLoad** — a large payload per pair (a megabyte by default, **gigabytes** on
   demand): did it arrive byte-for-byte and, below a parse ceiling, still validate
   at size; and at what throughput. Above the ceiling the structural contract is
   not parsed — a gigabyte parse allocates a second copy and proves nothing the
@@ -36,16 +39,16 @@ leaf. Named in the shortest singular form, the owner's convention:
   cannot hold a megabyte, and that real ceiling shows as red with no injection.
   Peak memory is roughly twice the size per pair, pairs run one at a time; true
   multi-gigabyte without that doubling wants a streaming round trip, queued.
-- **secretary** — retention and archiving: retain, then archive by age, driving
+- **Retention** — retention and archiving: retain, then archive by age, driving
   the estate's real `RetentionPolicy` and `ArchiveStore` over a logical clock; a
   missed sweep under pressure surfaces as a retention leak. There is no third
   act — Xmip retains and archives, it does not delete (ADR-0040).
-- **filing** — *added 2026-09-09.* Does the archive hold what it was handed:
+- **Filing** — *added 2026-09-09.* Does the archive hold what it was handed:
   one probe item per contract filed through every archive technology on main
   — parquet, sqlite, file, sql, postgresql, mssql, mysql, s3, azure-blob, gcs —
   archived and restored, judged equal or not, under
-  `xmip:///playground/filing/<technology>/<contract>`. The secretary proves the
-  lifecycle over one store; filing proves every store. Each technology gets a
+  `xmip:///playground/filing/<technology>/<contract>`. Retention proves the
+  lifecycle over one store; Filing proves every store. Each technology gets a
   `Cabinet` adapter the way each transport gets a `RoundTrip`, so a new archive
   technology is a new adapter, not a new scenario. Under pressure a filing is
   skipped now and then and reported as a fault.
@@ -53,9 +56,9 @@ leaf. Named in the shortest singular form, the owner's convention:
   level, many pairs at once, harsh faults, the level's payloads cycling by
   round — and its subject is the invariants that must survive that: a tick
   finishes within its bound, every failure carries a reason, a red leaf
-  reaches the root, nothing panics. Pingpong proves the pair; storm proves the
+  reaches the root, nothing panics. RoundTrip proves the pair; storm proves the
   playground and the estate under it do not lie when leaned on.
-- **claim** — exclusive pickup: a dropped item is read by exactly one holder,
+- **ExclusiveClaim** — exclusive pickup: a dropped item is read by exactly one holder,
   under real thread contention, across the **execution style** it declares —
   Sequential, Parallel, Concurrent (runtime-model.md). Sequential additionally
   keeps order per key. The claim is the estate's (ADR-0024), taken by atomically
@@ -65,7 +68,7 @@ leaf. Named in the shortest singular form, the owner's convention:
   duplicate-pickup bug. It runs over the file substrate; **no protocol is named
   in the code** (the owner's rule) — any other pollable transport joins by adding
   a `RoundTrip` adapter, which is when SFTP, FTPS and FTP get this exercise.
-- **daily** — a day's backlog drained as fast as possible: many files arrive at
+- **DailyBacklog** — a day's backlog drained as fast as possible: many files arrive at
   once and a node clears what its capacity allows. When arrivals outpace it the
   backlog climbs and the scenario escalates as an operator would — first a
   **tweak** (raise the node's concurrency), then, if that only slows the rise,
@@ -93,7 +96,7 @@ a short run. Fifteen real minutes over three simulated years is `MAX_SECONDS=900
 with `TIME_FACTOR ≈ 9.5e-6` (900 real seconds ÷ three years) —
 `XMIP_PLAYGROUND_TIME_FACTOR`. The round cadence stays real; the factor stretches
 *simulated* time, not the wait between rounds. Scenarios that age on a clock —
-the secretary's retention lifecycle, retained 90 days then archived — read
+the Retention test's lifecycle, retained 90 days then archived — read
 simulated elapsed from the `Budget`, so an operator watches records born, live
 out their retention, and cross into the archive over a horizon far longer than
 the run. Rate- and latency-based scenarios ignore it; they answer in real time.
@@ -164,7 +167,8 @@ becomes "a new transport is its own loopback, and a line in the list".
 
 Decision 2 said nodes run as System Processes, and until this day no scenario
 spawned one. The **fleet** does: `node`, a second binary, is one emulated node
-that runs the claim and daily scenarios over a directory the whole fleet shares
+that runs the ExclusiveClaim and DailyBacklog tests over a directory the whole
+fleet shares
 and publishes its own snapshot under `xmip:///playground/node/<name>`; the
 fleet spawns the level's count of them, merges their snapshots each round, adds
 the cluster rollup the surface owes (ADR-0027 decision 8), and kills and
@@ -188,16 +192,16 @@ parameter; this document does not repeat them. `-Suite Playground` is the
 default while it is the only suite; a transport's or a contract's own suite
 joins as another value.
 
-The Playground's tests, by the name a person asks for and the scenario the roll
-drives: RoundTrip is pingpong, LowLatency is furious, HeavyLoad is load,
-Retention is secretary, Filing is filing, ExclusiveClaim is claim, DailyBacklog
-is daily. `-Test` tab-completes them, and the estate's Pester files when the
-suite is Estate.
+The Playground's tests, by the name a person asks for and the scope segment the
+roll publishes under: RoundTrip is `round-trip`, LowLatency is `low-latency`,
+HeavyLoad is `heavy-load`, Retention is `retention`, Filing is `filing`,
+ExclusiveClaim is `exclusive-claim`, DailyBacklog is `daily-backlog`. `-Test`
+tab-completes them, and the estate's Pester files when the suite is Estate.
 
 Every Start and Stop takes `-WhatIf`. A roll's switches reach it through its
 own environment, never yours: `-Stress` is `XMIP_PLAYGROUND_STRESS`
 (`calm`, `realistic`, `harsh`, `brutal`), `-Test` is
-`XMIP_PLAYGROUND_SCENARIOS` (the scenario names above; unset means all),
+`XMIP_PLAYGROUND_SCENARIOS` (the scope segments above; unset means all),
 `-Nodes` is `XMIP_PLAYGROUND_NODE_NAMES` (the nodes to simulate, by name, one
 process each; an empty list is `XMIP_PLAYGROUND_NODES=0`, no fleet; omitted, the
 level's own numbered fleet), `-OnlineNodes` is `XMIP_PLAYGROUND_ONLINE_NODES`

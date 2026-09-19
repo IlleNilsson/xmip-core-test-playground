@@ -1,6 +1,6 @@
-//! The furious scenario: round-trip latency under a budget.
+//! The `LowLatency` test: round-trip latency under a budget.
 //!
-//! ADR-0028. Pingpong asks *did it arrive whole*; furious asks *did it
+//! ADR-0028. `RoundTrip` asks *did it arrive whole*; `LowLatency` asks *did it
 //! arrive in time*. One small message per (transport, contract) each round,
 //! timed end to end, kept in a bounded ring so the health is a percentile over
 //! recent rounds, not one lucky tick: **green** while p99 is within the
@@ -89,7 +89,7 @@ fn budget_micros(transport: &str) -> u64 {
 
 /// A scheduled latency exercise: every transport by every contract, timed each
 /// round, judged on the percentile of recent rounds.
-pub struct Furious {
+pub struct LowLatency {
     node: String,
     transports: Vec<Box<dyn RoundTrip>>,
     /// The level, when one was set: its spike rate. `None` never spikes.
@@ -103,7 +103,7 @@ pub struct Furious {
     cursor: usize,
 }
 
-impl Furious {
+impl LowLatency {
     /// A latency exercise publishing under `node`, with no injected spikes.
     #[must_use]
     pub fn new(node: impl Into<String>, file_dir: impl Into<std::path::PathBuf>) -> Self {
@@ -121,7 +121,7 @@ impl Furious {
         }
     }
 
-    /// The same exercise, injecting realistic latency spikes: [`Furious::at`]
+    /// The same exercise, injecting realistic latency spikes: [`LowLatency::at`]
     /// `Realistic`. The runner uses it; the tests use the spike-free default.
     #[must_use]
     pub fn under_pressure(self) -> Self {
@@ -311,13 +311,13 @@ mod tests {
     #[test]
     fn a_clean_run_stays_within_budget_and_is_green() {
         let dir = scratch("clean");
-        let mut ff = Furious::new("xmip:///playground/furious", &dir).over(sample(&dir));
+        let mut ff = LowLatency::new("xmip:///playground/low-latency", &dir).over(sample(&dir));
         let mut snapshot = ff.tick();
         for _ in 0..15 {
             snapshot = ff.tick();
         }
         assert_eq!(
-            snapshot.worst("xmip:///playground/furious"),
+            snapshot.worst("xmip:///playground/low-latency"),
             Some(Health::Fine),
             "loopback beats every budget with no spikes"
         );
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn spikes_push_a_pair_over_its_budget() {
         let dir = scratch("spikes");
-        let mut ff = Furious::new("xmip:///playground/furious", &dir)
+        let mut ff = LowLatency::new("xmip:///playground/low-latency", &dir)
             .over(sample(&dir))
             .under_pressure();
         let mut snapshot = ff.tick();
@@ -335,14 +335,14 @@ mod tests {
             snapshot = ff.tick();
         }
         assert_eq!(
-            snapshot.worst("xmip:///playground/furious"),
+            snapshot.worst("xmip:///playground/low-latency"),
             Some(Health::Holding),
             "injected spikes should drive p99 past a budget — a Done rolls up to Holding \
              (ADR-0041)"
         );
         // file never spikes: it stays green.
         assert_eq!(
-            snapshot.worst("xmip:///playground/furious/file"),
+            snapshot.worst("xmip:///playground/low-latency/file"),
             Some(Health::Fine),
             "file is left fast"
         );
@@ -352,13 +352,13 @@ mod tests {
     /// Drive `ff` for `rounds` at a level: every record green, or its p99
     /// reported against the budget, or a failure with its reason; the rollup
     /// honest; `file` never spiking. Returns the last snapshot.
-    fn stress_rounds(ff: &mut Furious, rounds: u64) -> Snapshot {
+    fn stress_rounds(ff: &mut LowLatency, rounds: u64) -> Snapshot {
         let mut snapshot = Snapshot::new();
         for round in 1..=rounds {
             snapshot = ff.tick();
-            let lying = violations(&snapshot, "xmip:///playground/furious");
+            let lying = violations(&snapshot, "xmip:///playground/low-latency");
             assert!(lying.is_empty(), "round {round}: {}", lying.join("; "));
-            for record in snapshot.health("xmip:///playground/furious") {
+            for record in snapshot.health("xmip:///playground/low-latency") {
                 let reported = record.evidence.contains("p99") || record.health == Health::Done;
                 assert!(
                     record.health == Health::Fine || reported,
@@ -371,18 +371,18 @@ mod tests {
 
     #[test]
     fn harsh_spikes_are_reported_against_the_budget_and_file_stays_fast() {
-        let dir = scratch("furious-harsh");
-        let mut ff = Furious::new("xmip:///playground/furious", &dir)
+        let dir = scratch("low-latency-harsh");
+        let mut ff = LowLatency::new("xmip:///playground/low-latency", &dir)
             .at(Stress::Harsh)
             .over(sample(&dir));
         let snapshot = stress_rounds(&mut ff, Stress::Harsh.rounds());
         assert_ne!(
-            snapshot.worst("xmip:///playground/furious"),
+            snapshot.worst("xmip:///playground/low-latency"),
             Some(Health::Fine),
             "at three times the spike rate, a p99 blows its budget within the rounds"
         );
         assert_eq!(
-            snapshot.worst("xmip:///playground/furious/file"),
+            snapshot.worst("xmip:///playground/low-latency/file"),
             Some(Health::Fine),
             "file is left fast"
         );
@@ -392,8 +392,8 @@ mod tests {
     #[test]
     #[ignore = "brutal: every transport at the ceiling spike rate, for the runner"]
     fn brutal_spikes_over_every_transport() {
-        let dir = scratch("furious-brutal");
-        let mut ff = Furious::new("xmip:///playground/furious", &dir).at(Stress::Brutal);
+        let dir = scratch("low-latency-brutal");
+        let mut ff = LowLatency::new("xmip:///playground/low-latency", &dir).at(Stress::Brutal);
         stress_rounds(&mut ff, Stress::Brutal.rounds());
         std::fs::remove_dir_all(&dir).ok();
     }

@@ -1,8 +1,8 @@
-//! The secretary scenario: retention and archiving, done methodically over a
+//! The Retention test: retention and archiving, done methodically over a
 //! **simulated clock** so a long records horizon plays out in a short run.
 //!
 //! ADR-0028; ADR-0013 and the observability model own retention; ADR-0040 sets
-//! the boundary. Where pingpong watches a message cross the wire, the secretary
+//! the boundary. Where `RoundTrip` watches a message cross the wire, Retention
 //! watches it age: an item is **retained** while it is young, and **archived**
 //! once it passes its retention window. There is no third act — **Xmip retains
 //! and archives, it does not delete** (ADR-0040). Once archived, what becomes of
@@ -18,7 +18,7 @@
 //! Two stages, per content class: **retain** and **archive**. Green while every
 //! item is in the bucket its age dictates; **red** on a leak — an item past its
 //! retention window still live (retain), or an archive the store refused
-//! (archive). Under pressure the secretary misses a sweep now and then,
+//! (archive). Under pressure the test misses a sweep now and then,
 //! deterministically, so the leaks it is meant to catch actually occur.
 
 use std::collections::BTreeMap;
@@ -38,7 +38,7 @@ use crate::verdict::Contract;
 /// Seconds in a day — the unit the simulated clock is quantised to for creation.
 const SECONDS_PER_DAY: u64 = 86_400;
 
-/// How often, in percent of rounds at `Realistic`, a pressured secretary
+/// How often, in percent of rounds at `Realistic`, a pressured Retention test
 /// misses a sweep of one class.
 const MISS_RATE: u8 = 5;
 
@@ -51,7 +51,7 @@ const KEEP_DAYS: u64 = 90;
 const MAX_DAYS_PER_TICK: u64 = 60;
 
 /// The retention window as a real [`RetentionPolicy`]: keep while young, then
-/// archive. Never delete (ADR-0040). The one the secretary consults and the
+/// archive. Never delete (ADR-0040). The one the test consults and the
 /// verdict checks.
 struct Windows;
 
@@ -97,7 +97,7 @@ impl ArchiveStore for MemoryArchive {
     }
 }
 
-/// One item the secretary is looking after, stamped with the simulated second it
+/// One item the test is looking after, stamped with the simulated second it
 /// was created so its age is simulated, not real.
 struct Item {
     contract: Contract,
@@ -123,11 +123,11 @@ impl Sweep {
     }
 }
 
-/// The secretary: it creates an item per class each simulated day, ages the lot
+/// The Retention test: it creates an item per class each simulated day, ages the lot
 /// against the window, and sweeps them from retained to archived, driving the
 /// real policy and store. Archived items accumulate — Xmip hands them off and
 /// never deletes them.
-pub struct Secretary {
+pub struct Retention {
     node: String,
     policy: Windows,
     store: MemoryArchive,
@@ -141,8 +141,8 @@ pub struct Secretary {
     standings: BTreeMap<String, Standing>,
 }
 
-impl Secretary {
-    /// A secretary publishing under `node`, missing no sweeps.
+impl Retention {
+    /// A Retention test publishing under `node`, missing no sweeps.
     #[must_use]
     pub fn new(node: impl Into<String>) -> Self {
         Self {
@@ -159,14 +159,14 @@ impl Secretary {
         }
     }
 
-    /// The same secretary, occasionally missing a sweep so leaks occur:
-    /// [`Secretary::at`] `Realistic`.
+    /// The same test, occasionally missing a sweep so leaks occur:
+    /// [`Retention::at`] `Realistic`.
     #[must_use]
     pub fn under_pressure(self) -> Self {
         self.at(Stress::Realistic)
     }
 
-    /// The same secretary at a level: sweeps missed at the level's rate.
+    /// The same test at a level: sweeps missed at the level's rate.
     #[must_use]
     pub fn at(mut self, stress: Stress) -> Self {
         self.stress = Some(stress);
@@ -340,29 +340,29 @@ mod tests {
     use super::*;
     use observe::Health;
 
-    /// Drive the secretary across `ticks` rounds, advancing simulated time by
+    /// Drive the test across `ticks` rounds, advancing simulated time by
     /// `days_per_tick` each round.
-    fn run(secretary: &mut Secretary, days_per_tick: u64, ticks: u64) -> Snapshot {
+    fn run(retention: &mut Retention, days_per_tick: u64, ticks: u64) -> Snapshot {
         let mut snapshot = Snapshot::new();
         for round in 1..=ticks {
             let simulated = Duration::from_secs(round * days_per_tick * SECONDS_PER_DAY);
-            snapshot = secretary.tick(simulated);
+            snapshot = retention.tick(simulated);
         }
         snapshot
     }
 
     #[test]
     fn a_methodical_run_retains_then_archives_without_a_leak() {
-        let mut secretary = Secretary::new("xmip:///playground/secretary");
+        let mut retention = Retention::new("xmip:///playground/retention");
         // Three simulated years at ten days a tick — long past the retention window.
-        let snapshot = run(&mut secretary, 10, 120);
+        let snapshot = run(&mut retention, 10, 120);
         assert_eq!(
-            snapshot.worst("xmip:///playground/secretary"),
+            snapshot.worst("xmip:///playground/retention"),
             Some(Health::Fine),
-            "a clean secretary never leaks"
+            "a clean run never leaks"
         );
         assert!(
-            !secretary.archived.is_empty(),
+            !retention.archived.is_empty(),
             "items past the window are archived, not deleted"
         );
     }
@@ -390,63 +390,63 @@ mod tests {
     fn items_age_on_the_simulated_clock_not_the_round_count() {
         // Many rounds, but simulated time barely moves: nothing ages out of the
         // window, so nothing is archived. Round count alone would have archived them.
-        let mut secretary = Secretary::new("xmip:///playground/secretary");
+        let mut retention = Retention::new("xmip:///playground/retention");
         for _ in 0..50 {
-            secretary.tick(Duration::from_secs(SECONDS_PER_DAY)); // one simulated day, held
+            retention.tick(Duration::from_secs(SECONDS_PER_DAY)); // one simulated day, held
         }
         assert!(
-            secretary.archived.is_empty(),
+            retention.archived.is_empty(),
             "at one simulated day, nothing has passed the 90-day retention window"
         );
     }
 
     #[test]
     fn the_live_set_stays_bounded_and_the_archive_only_grows() {
-        let mut secretary = Secretary::new("xmip:///playground/secretary");
-        run(&mut secretary, 5, 200);
-        let archived_first = secretary.archived.len();
+        let mut retention = Retention::new("xmip:///playground/retention");
+        run(&mut retention, 5, 200);
+        let archived_first = retention.archived.len();
         // Live is items younger than KEEP_DAYS — bounded by the window regardless
         // of how long it runs.
-        assert!(secretary.live.len() as u64 <= (KEEP_DAYS + 1) * CONTRACTS.len() as u64);
+        assert!(retention.live.len() as u64 <= (KEEP_DAYS + 1) * CONTRACTS.len() as u64);
         // The archive only ever grows; Xmip never deletes from it.
-        run(&mut secretary, 5, 100);
+        run(&mut retention, 5, 100);
         assert!(
-            secretary.archived.len() >= archived_first,
+            retention.archived.len() >= archived_first,
             "the archive is never purged"
         );
     }
 
     #[test]
     fn under_pressure_a_leak_surfaces() {
-        let mut secretary = Secretary::new("xmip:///playground/secretary").under_pressure();
+        let mut retention = Retention::new("xmip:///playground/retention").under_pressure();
         // A leak is red on the round it happens and fades to yellow after, so the
         // proof is that some round went red, not the state of the last one.
         let mut ever_red = false;
         for round in 1..=130 {
             let simulated = Duration::from_secs(round * 10 * SECONDS_PER_DAY);
-            let snapshot = secretary.tick(simulated);
+            let snapshot = retention.tick(simulated);
             // A Done leaf rolls up to Holding at the node (ADR-0041).
-            if snapshot.worst("xmip:///playground/secretary") == Some(Health::Holding) {
+            if snapshot.worst("xmip:///playground/retention") == Some(Health::Holding) {
                 ever_red = true;
             }
         }
         assert!(ever_red, "missed sweeps must surface as a leak");
     }
 
-    /// Drive a secretary at a level for `rounds` at `days_per_tick`, every
+    /// Drive the test at a level for `rounds` at `days_per_tick`, every
     /// round's rollup honest and every leak carrying its line; returns
     /// whether a leak ever surfaced.
-    fn stress_rounds(secretary: &mut Secretary, days_per_tick: u64, rounds: u64) -> bool {
+    fn stress_rounds(retention: &mut Retention, days_per_tick: u64, rounds: u64) -> bool {
         let mut ever_red = false;
         for round in 1..=rounds {
             let simulated = Duration::from_secs(round * days_per_tick * SECONDS_PER_DAY);
-            let snapshot = secretary.tick(simulated);
-            let lying = crate::storm::violations(&snapshot, "xmip:///playground/secretary");
+            let snapshot = retention.tick(simulated);
+            let lying = crate::storm::violations(&snapshot, "xmip:///playground/retention");
             assert!(lying.is_empty(), "round {round}: {}", lying.join("; "));
-            if snapshot.worst("xmip:///playground/secretary") == Some(Health::Holding) {
+            if snapshot.worst("xmip:///playground/retention") == Some(Health::Holding) {
                 ever_red = true;
                 let leaks: Vec<_> = snapshot
-                    .health("xmip:///playground/secretary")
+                    .health("xmip:///playground/retention")
                     .into_iter()
                     .filter(|r| r.health == Health::Done)
                     .collect();
@@ -466,16 +466,16 @@ mod tests {
         // Thirty days a tick: the first items cross the ninety-day window on
         // the fourth round, leaving most of Harsh's rounds for sweeps to miss
         // at three times the rate.
-        let mut secretary = Secretary::new("xmip:///playground/secretary").at(Stress::Harsh);
-        let leaked = stress_rounds(&mut secretary, 30, Stress::Harsh.rounds());
+        let mut retention = Retention::new("xmip:///playground/retention").at(Stress::Harsh);
+        let leaked = stress_rounds(&mut retention, 30, Stress::Harsh.rounds());
         assert!(leaked, "at Harsh a leak surfaces within the level's rounds");
-        assert!(!secretary.archived.is_empty(), "and the rest was archived");
+        assert!(!retention.archived.is_empty(), "and the rest was archived");
     }
 
     #[test]
     #[ignore = "brutal: the ceiling miss rate over the level's rounds, for the runner"]
     fn brutal_missed_sweeps_over_the_rounds() {
-        let mut secretary = Secretary::new("xmip:///playground/secretary").at(Stress::Brutal);
-        assert!(stress_rounds(&mut secretary, 10, Stress::Brutal.rounds()));
+        let mut retention = Retention::new("xmip:///playground/retention").at(Stress::Brutal);
+        assert!(stress_rounds(&mut retention, 10, Stress::Brutal.rounds()));
     }
 }

@@ -5,8 +5,8 @@
 //!      [--interval-ms <ms>] [--online true|false]
 //! ```
 //!
-//! It runs, in-process, the **claim** and **daily** scenarios over a directory
-//! the whole fleet shares — `<shared>/claim` and `<shared>/daily` — so exclusive
+//! It runs, in-process, the **`ExclusiveClaim`** and **`DailyBacklog`** tests over a directory
+//! the whole fleet shares — `<shared>/exclusive-claim` and `<shared>/daily-backlog` — so exclusive
 //! pickup and backlog draining are contended by real processes, not threads:
 //! the property ADR-0024's claim exists to prove (`create_new`, `O_EXCL`,
 //! across processes). Each round it publishes its own snapshot, under
@@ -27,7 +27,9 @@ use std::time::Duration;
 
 use observe::Snapshot;
 use xmip_test_playground::fleet::merge;
-use xmip_test_playground::{Claim, Daily, Stress, Switches, cluster_root, to_toml, write_atomic};
+use xmip_test_playground::{
+    DailyBacklog, ExclusiveClaim, Stress, Switches, cluster_root, to_toml, write_atomic,
+};
 
 /// What the command line said.
 struct Arguments {
@@ -61,9 +63,15 @@ fn main() -> ExitCode {
     let _declared = ::node::Declaration::new("xmip-playground-node", &node, ::node::Purpose::Test)
         .declare()
         .map_err(|error| eprintln!("node {}: could not declare itself: {error}", arguments.name));
-    let mut claim =
-        Claim::shared(format!("{node}/claim"), arguments.shared.join("claim")).at(arguments.stress);
-    let mut daily = Daily::shared(format!("{node}/daily"), arguments.shared.join("daily"));
+    let mut exclusive_claim = ExclusiveClaim::shared(
+        format!("{node}/exclusive-claim"),
+        arguments.shared.join("exclusive-claim"),
+    )
+    .at(arguments.stress);
+    let mut daily_backlog = DailyBacklog::shared(
+        format!("{node}/daily-backlog"),
+        arguments.shared.join("daily-backlog"),
+    );
     let stop = arguments.shared.join("stop");
 
     let mut round = 0;
@@ -74,8 +82,8 @@ fn main() -> ExitCode {
         round += 1;
 
         let mut snapshot = Snapshot::new();
-        merge(&mut snapshot, &claim.tick());
-        merge(&mut snapshot, &daily.tick());
+        merge(&mut snapshot, &exclusive_claim.tick());
+        merge(&mut snapshot, &daily_backlog.tick());
         snapshot.record_health(switch_record(&node, arguments.online));
 
         if let Err(error) = write_atomic(&arguments.snapshot, &to_toml(&node, &snapshot)) {

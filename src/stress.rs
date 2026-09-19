@@ -196,15 +196,15 @@ pub fn patterned(len: usize) -> Vec<u8> {
         .collect()
 }
 
-/// A payload of about `size` bytes that still holds `contract` — the load
-/// scenario's large payloads at the level's sizes — so a hard round proves
+/// A payload of about `size` bytes that still holds `contract` — the `HeavyLoad`
+/// test's large payloads at the level's sizes — so a hard round proves
 /// the contract at size as well as the bytes.
 #[must_use]
 pub fn payload(contract: Contract, size: usize) -> Vec<u8> {
     if size == 0 {
         return contract.payload();
     }
-    crate::load::large_payload(contract, size)
+    crate::heavy_load::large_payload(contract, size)
 }
 
 #[cfg(test)]

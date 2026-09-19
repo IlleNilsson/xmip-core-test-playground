@@ -4,17 +4,17 @@
 //! board each round — the tests as ADR-0028 means them, over time and never
 //! stopping:
 //!
-//!   - **pingpong** — every transport by every contract round-trips and holds
+//!   - **`RoundTrip`** — every transport by every contract round-trips and holds
 //!     its contract; the message-path stages, with injected faults.
-//!   - **furious** — the same pairs, timed against a latency budget (p50/p99).
-//!   - **load** — a megabyte per pair; does it arrive whole and still validate.
-//!   - **secretary** — retention and archiving: retain, then archive by age
+//!   - **`LowLatency`** — the same pairs, timed against a latency budget (p50/p99).
+//!   - **`HeavyLoad`** — a megabyte per pair; does it arrive whole and validate.
+//!   - **Retention** — retention and archiving: retain, then archive by age
 //!     (Xmip does not delete, ADR-0040).
-//!   - **filing** — every archive technology by every contract: file a probe
+//!   - **Filing** — every archive technology by every contract: file a probe
 //!     item through the real store and restore it whole.
-//!   - **claim** — exclusive pickup: one holder per item under contention, per
-//!     execution style (sequential, parallel, concurrent).
-//!   - **daily** — drain a backlog as fast as possible; tweak, then add a node.
+//!   - **`ExclusiveClaim`** — exclusive pickup: one holder per item under contention,
+//!     per execution style (sequential, parallel, concurrent).
+//!   - **`DailyBacklog`** — drain a backlog as fast as possible; tweak, add a node.
 //!
 //! Each publishes under its own subtree of `xmip:///playground`, merged into one
 //! snapshot so the rollup covers all four and an operator drills scenario →
@@ -22,14 +22,14 @@
 //!
 //! Pass a number to run that many rounds and stop; omit it to roll until
 //! interrupted. `XMIP_PLAYGROUND_SCENARIOS` names the scenarios to drive, comma
-//! separated (`pingpong,load`); unset, every one rolls, so nothing changed
+//! separated (`round-trip,heavy-load`); unset, every one rolls, so nothing changed
 //! quietly. Two time limits bound any roll (ADR-0028): a maximum wall-clock
 //! time, `XMIP_PLAYGROUND_MAX_SECONDS`, and a factor on time,
 //! `XMIP_PLAYGROUND_TIME_FACTOR`, which stretches a **simulated clock** — `1.0`
 //! mimics real time, retracted below one runs simulated time faster, so a long
 //! horizon plays out in a short run (three simulated years in fifteen real
 //! minutes is `MAX_SECONDS=900` with `TIME_FACTOR≈9.5e-6`). The round cadence
-//! stays real; the factor stretches simulated time, which the secretary ages on.
+//! stays real; the factor stretches simulated time, which the Retention test ages on.
 //!
 //! When stdout is a terminal the board is redrawn in place; when it is piped,
 //! one summary line per round is appended. After every tick the snapshot,
@@ -54,9 +54,9 @@ use observe::{Health, History, Snapshot};
 use xmip_test_playground::Headroom;
 use xmip_test_playground::fleet::{Fleet, merge, node_binary};
 use xmip_test_playground::{
-    Budget, Claim, Daily, FaultPlan, Filing, Furious, Load, Schedule, Secretary, Stress,
-    activity_toml, cluster_name, cluster_root, fleet_topology, history_toml, now_unix_nanos,
-    to_toml_with, write_atomic,
+    Budget, DailyBacklog, ExclusiveClaim, FaultPlan, Filing, HeavyLoad, LowLatency, Retention,
+    Schedule, Stress, activity_toml, cluster_name, cluster_root, fleet_topology, history_toml,
+    now_unix_nanos, to_toml_with, write_atomic,
 };
 
 fn main() {
@@ -78,20 +78,25 @@ fn main() {
     // Bounded rounds: a slice of the matrix per round, rotating, so a round
     // lands in seconds and the counters an operator watches keep moving.
     let slice = stress.workers() * 16;
-    let mut pingpong = Schedule::new(format!("{root}/pingpong"), base.join("pingpong"))
+    let mut round_trip = Schedule::new(format!("{root}/round-trip"), base.join("round-trip"))
         .with_faults(FaultPlan::realistic())
         .pairs_per_round(slice);
-    let mut furious = Furious::new(format!("{root}/furious"), base.join("furious"))
+    let mut low_latency = LowLatency::new(format!("{root}/low-latency"), base.join("low-latency"))
         .under_pressure()
         .pairs_per_round(slice);
-    let mut load = Load::new(format!("{root}/load"), base.join("load"))
+    let mut heavy_load = HeavyLoad::new(format!("{root}/heavy-load"), base.join("heavy-load"))
         .under_pressure()
         .with_bytes(load_bytes())
         .pairs_per_round(stress.workers() * 8);
-    let mut secretary = Secretary::new(format!("{root}/secretary")).under_pressure();
+    let mut retention = Retention::new(format!("{root}/retention")).under_pressure();
     let mut filing = Filing::new(format!("{root}/filing"), base.join("filing")).under_pressure();
-    let mut claim = Claim::new(format!("{root}/claim"), base.join("claim")).under_pressure();
-    let mut daily = Daily::new(format!("{root}/daily"), base.join("daily"));
+    let mut exclusive_claim = ExclusiveClaim::new(
+        format!("{root}/exclusive-claim"),
+        base.join("exclusive-claim"),
+    )
+    .under_pressure();
+    let mut daily_backlog =
+        DailyBacklog::new(format!("{root}/daily-backlog"), base.join("daily-backlog"));
 
     // An hour of history at one point a second: enough to watch a shift, bounded
     // so a week-long run does not grow. ADR-0029.
@@ -117,26 +122,26 @@ fn main() {
         let headroom = Headroom::refresh();
 
         let mut snapshot = Snapshot::new();
-        if drives(&chosen, "pingpong") {
-            merge(&mut snapshot, &pingpong.tick());
+        if drives(&chosen, "round-trip") {
+            merge(&mut snapshot, &round_trip.tick());
         }
-        if drives(&chosen, "furious") {
-            merge(&mut snapshot, &furious.tick());
+        if drives(&chosen, "low-latency") {
+            merge(&mut snapshot, &low_latency.tick());
         }
-        if drives(&chosen, "load") {
-            merge(&mut snapshot, &load.tick());
+        if drives(&chosen, "heavy-load") {
+            merge(&mut snapshot, &heavy_load.tick());
         }
-        if drives(&chosen, "secretary") {
-            merge(&mut snapshot, &secretary.tick(budget.simulated_elapsed()));
+        if drives(&chosen, "retention") {
+            merge(&mut snapshot, &retention.tick(budget.simulated_elapsed()));
         }
         if drives(&chosen, "filing") {
             merge(&mut snapshot, &filing.tick());
         }
-        if drives(&chosen, "claim") {
-            merge(&mut snapshot, &claim.tick());
+        if drives(&chosen, "exclusive-claim") {
+            merge(&mut snapshot, &exclusive_claim.tick());
         }
-        if drives(&chosen, "daily") {
-            merge(&mut snapshot, &daily.tick());
+        if drives(&chosen, "daily-backlog") {
+            merge(&mut snapshot, &daily_backlog.tick());
         }
         if let Some(fleet) = fleet.as_mut() {
             merge(&mut snapshot, &fleet.tick());
@@ -155,7 +160,7 @@ fn main() {
         write(&history_path, &history_toml(root, &history), "history");
         write(
             &activity_path,
-            &activity_toml(root, pingpong.activity()),
+            &activity_toml(root, round_trip.activity()),
             "activity",
         );
 
@@ -237,13 +242,13 @@ fn chosen(raw: Option<&str>) -> Vec<String> {
 
 /// Every scenario a roll can drive, by the name `XMIP_PLAYGROUND_SCENARIOS` uses.
 const SCENARIOS: [&str; 7] = [
-    "pingpong",
-    "furious",
-    "load",
-    "secretary",
+    "round-trip",
+    "low-latency",
+    "heavy-load",
+    "retention",
     "filing",
-    "claim",
-    "daily",
+    "exclusive-claim",
+    "daily-backlog",
 ];
 
 /// Whether this roll drives the named scenario: every one when nothing was chosen.
@@ -293,7 +298,7 @@ fn env_path(variable: &str, default: &str) -> PathBuf {
     std::env::var_os(variable).map_or_else(|| std::env::temp_dir().join(default), PathBuf::from)
 }
 
-/// The load payload size: `XMIP_PLAYGROUND_LOAD_BYTES` if set — a plain number or
+/// The `HeavyLoad` payload size: `XMIP_PLAYGROUND_LOAD_BYTES` if set — a plain number or
 /// a human size like `512mb` or `2gb` — else a megabyte. The variable is
 /// external, so it keeps the prefix. Note the memory: peak is roughly twice this
 /// per pair, so a gigabyte wants a few free.
@@ -426,18 +431,18 @@ mod tests {
 
     #[test]
     fn a_list_drives_only_what_it_names() {
-        let picked = chosen(Some(" PingPong, load "));
-        assert_eq!(picked, ["pingpong", "load"]);
-        assert!(drives(&picked, "pingpong"));
-        assert!(drives(&picked, "load"));
-        assert!(!drives(&picked, "furious"));
+        let picked = chosen(Some(" Round-Trip, heavy-load "));
+        assert_eq!(picked, ["round-trip", "heavy-load"]);
+        assert!(drives(&picked, "round-trip"));
+        assert!(drives(&picked, "heavy-load"));
+        assert!(!drives(&picked, "low-latency"));
     }
 
     #[test]
     fn an_unknown_name_is_dropped_and_the_rest_kept() {
-        let picked = chosen(Some("pingpong,typo"));
-        assert_eq!(picked, ["pingpong"]);
+        let picked = chosen(Some("round-trip,typo"));
+        assert_eq!(picked, ["round-trip"]);
         assert!(!drives(&picked, "typo"));
-        assert!(!drives(&picked, "daily"));
+        assert!(!drives(&picked, "daily-backlog"));
     }
 }

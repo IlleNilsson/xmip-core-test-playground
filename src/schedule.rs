@@ -1,6 +1,6 @@
-//! The Schedule: what drives the pingpong test, and how it accumulates.
+//! The Schedule: what drives the `RoundTrip` test, and how it accumulates.
 //!
-//! The owner's shape, 2026-09-05: the pingpong test is an **integration test
+//! The owner's shape, 2026-09-05: the `RoundTrip` test is an **integration test
 //! over time** across the message path — Receive, Process, Send. A Schedule
 //! ticks; each tick runs one round over every transport, for every contract, and
 //! expands it into a verdict per stage. Loopback itself never fails, so the
@@ -25,7 +25,7 @@ use observe::{Activity, Count, Counted, Item, ItemKind, Snapshot};
 
 use crate::fault::FaultPlan;
 use crate::identity::{self, IdentityFaults};
-use crate::pingpong::{ping_pong, ping_pong_with};
+use crate::round_trip::{round_trip, round_trip_with};
 use crate::roundtrip::{RoundTrip, all_transports};
 use crate::stress::{self, Stress};
 use crate::support::now_unix_nanos;
@@ -91,9 +91,9 @@ pub struct Schedule {
 }
 
 impl Schedule {
-    /// A schedule publishing under `node`, running the pingpong test over every
+    /// A schedule publishing under `node`, running the `RoundTrip` test over every
     /// wired transport with no injected faults. `file_dir` is where the file
-    /// transport ping-pongs.
+    /// transport round-trips.
     #[must_use]
     pub fn new(node: impl Into<String>, file_dir: impl Into<std::path::PathBuf>) -> Self {
         let transports = all_transports(file_dir);
@@ -295,8 +295,8 @@ impl Schedule {
     ) -> Vec<Verdict> {
         let name = transport.transport();
         let (base, bytes) = match size {
-            Some(size) => ping_pong_with(transport, contract, &stress::payload(contract, size)),
-            None => ping_pong(transport, contract),
+            Some(size) => round_trip_with(transport, contract, &stress::payload(contract, size)),
+            None => round_trip(transport, contract),
         };
 
         let mut verdicts = Vec::with_capacity(Stage::ALL.len() + 4);

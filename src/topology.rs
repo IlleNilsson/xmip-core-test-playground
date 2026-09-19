@@ -7,8 +7,8 @@
 //! The picture is the fleet's: the fleet as the service, each node as the
 //! System Process it is (ADR-0028 clause 2), the shared directory every node
 //! claims from and drains as the one location they meet at, and three links
-//! per node — the exclusive pickup over `claim`, the backlog drained over
-//! `daily`, and the snapshot the node publishes each round for the fleet to
+//! per node — the exclusive pickup over `exclusive-claim`, the backlog drained
+//! over `daily-backlog`, and the snapshot the node publishes each round for the fleet to
 //! merge. The surface reads the words this file writes (`Xmip.Surface`,
 //! `SnapshotOperator`), so they are the surface's, not chosen here.
 
@@ -82,8 +82,12 @@ pub fn fleet_topology<'a>(
     for name in names {
         let scope = format!("{root}/node/{name}");
         topology.nodes.push(process_node(snapshot, name, &scope));
-        topology.links.push(claim_link(snapshot, name, &scope));
-        topology.links.push(daily_link(snapshot, name, &scope));
+        topology
+            .links
+            .push(exclusive_claim_link(snapshot, name, &scope));
+        topology
+            .links
+            .push(daily_backlog_link(snapshot, name, &scope));
         topology.links.push(snapshot_link(snapshot, name, &scope));
     }
     topology
@@ -144,8 +148,8 @@ fn shared_node(snapshot: &Snapshot, names: &[&str]) -> TopologyNode {
         .flat_map(|name| {
             let scope = format!("{root}/node/{name}");
             [
-                worst(snapshot, &format!("{scope}/claim")),
-                worst(snapshot, &format!("{scope}/daily")),
+                worst(snapshot, &format!("{scope}/exclusive-claim")),
+                worst(snapshot, &format!("{scope}/daily-backlog")),
             ]
         })
         .flatten()
@@ -174,20 +178,20 @@ fn process_node(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyNode {
         kind: "process".to_string(),
         scope: scope.to_string(),
         state,
-        origin: origin(snapshot, &format!("{scope}/claim")),
+        origin: origin(snapshot, &format!("{scope}/exclusive-claim")),
         load: 0.0,
         activity: if alive(snapshot, scope) { 1.0 } else { 0.0 },
         evidence,
     }
 }
 
-/// Exclusive pickup over the shared `claim` directory (ADR-0024's property).
-fn claim_link(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyLink {
-    let claim = format!("{scope}/claim");
+/// Exclusive pickup over the shared `exclusive-claim` directory (ADR-0024's property).
+fn exclusive_claim_link(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyLink {
+    let claim = format!("{scope}/exclusive-claim");
     let (state, evidence) = mood(worst(snapshot, &claim).as_ref());
     link(
         name,
-        "claim",
+        "exclusive-claim",
         SHARED,
         "publish-consume",
         origin(snapshot, &claim),
@@ -196,11 +200,11 @@ fn claim_link(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyLink {
     )
 }
 
-/// The backlog drained over the shared `daily` directory: the Streams the node
+/// The backlog drained over the shared `daily-backlog` directory: the Streams the node
 /// drained are the volume, and the backlog left is what progress is against.
-fn daily_link(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyLink {
-    let daily = format!("{scope}/daily");
-    let (state, evidence) = mood(worst(snapshot, &daily).as_ref());
+fn daily_backlog_link(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyLink {
+    let daily_backlog = format!("{scope}/daily-backlog");
+    let (state, evidence) = mood(worst(snapshot, &daily_backlog).as_ref());
     let drained = snapshot
         .measure(scope, Counted::Streams)
         .map_or(0, |count| count.value);
@@ -209,10 +213,10 @@ fn daily_link(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyLink {
         .map_or(0, |count| count.value);
     let mut link = link(
         name,
-        "daily",
+        "daily-backlog",
         SHARED,
         "publish-consume",
-        origin(snapshot, &daily),
+        origin(snapshot, &daily_backlog),
         state,
         evidence,
     );
@@ -304,12 +308,12 @@ mod tests {
         let mut snapshot = Snapshot::new();
         snapshot.record_health(record(&format!("{scope}/process"), Health::Fine, "alive"));
         snapshot.record_health(record(
-            &format!("{scope}/claim/file"),
+            &format!("{scope}/exclusive-claim/file"),
             Health::Stressed,
             "raced",
         ));
         snapshot.record_health(record(
-            &format!("{scope}/daily/drain"),
+            &format!("{scope}/daily-backlog/drain"),
             Health::Fine,
             "drained",
         ));
@@ -357,12 +361,16 @@ mod tests {
             ("working", "configured", 0.0)
         );
 
-        let daily = &topology.links[1];
+        let daily_backlog = &topology.links[1];
         assert_eq!(
-            (daily.id.as_str(), daily.to.as_str(), daily.volume),
-            ("R1/daily", "shared", 6)
+            (
+                daily_backlog.id.as_str(),
+                daily_backlog.to.as_str(),
+                daily_backlog.volume
+            ),
+            ("R1/daily-backlog", "shared", 6)
         );
-        assert!((daily.progress - 0.75).abs() < f64::EPSILON);
+        assert!((daily_backlog.progress - 0.75).abs() < f64::EPSILON);
         assert_eq!(topology.links[2].to, "fleet");
     }
 

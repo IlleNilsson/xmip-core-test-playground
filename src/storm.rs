@@ -1,10 +1,10 @@
 //! The storm scenario: every transport by every contract, at a stress level,
 //! all workers at once, harsh faults, the level's payload cycling by round.
 //!
-//! ADR-0028. Pingpong asks whether a pair delivered; the storm asks whether
+//! ADR-0028. `RoundTrip` asks whether a pair delivered; the storm asks whether
 //! the playground itself keeps its shape while everything is thrown at it at
 //! once. It publishes a leaf per pair under `<node>/<transport>/<contract>`
-//! the way pingpong does, but its subject is four invariants under stress:
+//! the way `RoundTrip` does, but its subject is four invariants under stress:
 //!
 //!   - a tick finishes within `pairs * TIMEOUT * 3 / workers` — a round is
 //!     judged, never waited on, and the workers really run at once;
@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use observe::{Count, Counted, Health, HealthRecord, Snapshot};
 
 use crate::fault::FaultPlan;
-use crate::pingpong::ping_pong_with;
+use crate::round_trip::round_trip_with;
 use crate::roundtrip::{RoundTrip, TIMEOUT, all_transports};
 use crate::schedule::{CONTRACTS, drive_pairs};
 use crate::standing::{Mark, Standing};
@@ -61,7 +61,7 @@ pub struct Storm {
 impl Storm {
     /// A storm publishing under `node` over every wired transport, at
     /// `Realistic` until [`Storm::at`] says otherwise. `file_dir` is where
-    /// the file transport ping-pongs.
+    /// the file transport round-trips.
     #[must_use]
     pub fn new(node: impl Into<String>, file_dir: impl Into<std::path::PathBuf>) -> Self {
         Self {
@@ -198,7 +198,7 @@ impl Storm {
         let payload = stress::payload(contract, size);
 
         let (outcome, bytes, panicked) = match catch_unwind(AssertUnwindSafe(|| {
-            ping_pong_with(transport, contract, &payload)
+            round_trip_with(transport, contract, &payload)
         })) {
             Ok((outcome, bytes)) => (outcome, bytes, false),
             Err(panic) => (

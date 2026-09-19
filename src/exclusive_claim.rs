@@ -1,4 +1,4 @@
-//! The claim scenario: exclusive pickup, one holder at a time.
+//! The `ExclusiveClaim` test: exclusive pickup, one holder at a time.
 //!
 //! ADR-0028; ADR-0024 owns the claim. Some resources must be read by exactly one
 //! party — a thread, in a process, on a node — and no one else may touch the
@@ -22,7 +22,7 @@
 //! by adding a `RoundTrip` adapter, no change here, so no protocol is named in
 //! this code.
 //!
-//! **Across processes, 2026-09-09.** A [`Claim::shared`] exercise lays its items
+//! **Across processes, 2026-09-09.** A [`ExclusiveClaim::shared`] exercise lays its items
 //! in a *lane* — `<dir>/<style>/<pid>-<round>/` — beside every other process's
 //! lanes, and its readers scan them all, so the contention is between real
 //! System Processes (ADR-0028 clause 2), which is the property `O_EXCL` exists
@@ -96,7 +96,7 @@ enum Verdict {
 /// The claim exercise: each round drops keyed items into a lane and races
 /// reader threads — and, when shared, every other process's readers — for
 /// them, one style at a time.
-pub struct Claim {
+pub struct ExclusiveClaim {
     node: String,
     dir: PathBuf,
     tag: String,
@@ -106,7 +106,7 @@ pub struct Claim {
     standings: BTreeMap<String, Standing>,
 }
 
-impl Claim {
+impl ExclusiveClaim {
     /// A claim exercise publishing under `node`, using `dir` for the pickup
     /// directory, with the atomic claim intact and no other process in it.
     #[must_use]
@@ -311,13 +311,13 @@ mod tests {
     #[test]
     fn the_atomic_claim_gives_every_item_one_holder() {
         let dir = scratch("held");
-        let mut claim = Claim::new("xmip:///playground/claim", &dir);
+        let mut claim = ExclusiveClaim::new("xmip:///playground/exclusive-claim", &dir);
         let mut snapshot = claim.tick();
         for _ in 0..10 {
             snapshot = claim.tick();
         }
         assert_eq!(
-            snapshot.worst("xmip:///playground/claim/file"),
+            snapshot.worst("xmip:///playground/exclusive-claim/file"),
             Some(Health::Fine),
             "the atomic rename claim holds under contention"
         );
@@ -327,12 +327,13 @@ mod tests {
     #[test]
     fn without_the_claim_a_breach_shows() {
         let dir = scratch("breach");
-        let mut claim = Claim::new("xmip:///playground/claim", &dir).under_pressure();
+        let mut claim =
+            ExclusiveClaim::new("xmip:///playground/exclusive-claim", &dir).under_pressure();
         let mut saw_red = false;
         for _ in 0..80 {
             let snapshot = claim.tick();
             // A Done leaf rolls up to Holding at the aggregate (ADR-0041).
-            if snapshot.worst("xmip:///playground/claim/file") == Some(Health::Holding) {
+            if snapshot.worst("xmip:///playground/exclusive-claim/file") == Some(Health::Holding) {
                 saw_red = true;
                 break;
             }
@@ -347,14 +348,14 @@ mod tests {
     #[test]
     fn every_style_holds_the_claim_when_healthy() {
         let dir = scratch("styles");
-        let mut claim = Claim::new("xmip:///playground/claim", &dir);
+        let mut claim = ExclusiveClaim::new("xmip:///playground/exclusive-claim", &dir);
         let mut snapshot = claim.tick();
         for _ in 0..5 {
             snapshot = claim.tick();
         }
         for style in ["sequential", "parallel", "concurrent"] {
             assert_eq!(
-                snapshot.worst(&format!("xmip:///playground/claim/file/{style}")),
+                snapshot.worst(&format!("xmip:///playground/exclusive-claim/file/{style}")),
                 Some(Health::Fine),
                 "{style} holds the claim"
             );
@@ -364,9 +365,12 @@ mod tests {
 
     #[test]
     fn calm_leaves_the_claim_intact_and_stress_scales_the_breach() {
-        assert_eq!(Claim::new("n", "d").at(Stress::Calm).rate, 0);
-        assert_eq!(Claim::new("n", "d").at(Stress::Realistic).rate, BREACH_RATE);
-        assert!(Claim::new("n", "d").at(Stress::Harsh).rate > BREACH_RATE);
+        assert_eq!(ExclusiveClaim::new("n", "d").at(Stress::Calm).rate, 0);
+        assert_eq!(
+            ExclusiveClaim::new("n", "d").at(Stress::Realistic).rate,
+            BREACH_RATE
+        );
+        assert!(ExclusiveClaim::new("n", "d").at(Stress::Harsh).rate > BREACH_RATE);
     }
 
     /// Two real System Processes over one shared directory: the property
@@ -378,7 +382,7 @@ mod tests {
     fn two_processes_never_both_claim_the_same_item() {
         let dir = scratch("two-processes");
         let shared = dir.join("shared");
-        let contended = shared.join("claim/parallel/contended-0");
+        let contended = shared.join("exclusive-claim/parallel/contended-0");
         let staging = contended.with_file_name(".contended-0");
         std::fs::create_dir_all(&staging).expect("staging dir");
         for n in 0..1_000 {
@@ -424,7 +428,7 @@ mod tests {
         for name in ["left", "right"] {
             let text = std::fs::read_to_string(dir.join(format!("{name}.toml"))).expect("snapshot");
             let snapshot = from_toml(&text).expect("a node's snapshot parses");
-            let scope = format!("xmip:///playground/node/{name}/claim/file");
+            let scope = format!("xmip:///playground/node/{name}/exclusive-claim/file");
             for record in snapshot.health(&scope) {
                 assert_eq!(
                     record.health,

@@ -2,7 +2,7 @@
 
 //! The Xmip Playground: the tool that exercises Xmip. ADR-0028.
 //!
-//! It runs the **pingpong test** — one integration test, over time, across the
+//! It runs the **`RoundTrip` test** — one integration test, over time, across the
 //! whole estate: not a test per protocol or per contract but a single test
 //! whose subject is every transport by every content contract at once. On a
 //! Schedule it sends an actual Stream, catches it, checks it came back whole and
@@ -17,7 +17,7 @@
 //!
 //! Xmip's own transports are the far end, so nothing external is stood up and
 //! the Playground runs on a laptop with no network. Every implemented transport
-//! ping-pongs today, each as its own far end — the capability's `Loopback`,
+//! round-trips today, each as its own far end — the capability's `Loopback`,
 //! written in the technology's crate (ADR-0051) — behind the one
 //! [`RoundTrip`] adapter, so the scenario is one thing over all of them. A
 //! transport declared but not yet implemented is a `loopback()` away, not a
@@ -27,45 +27,45 @@
 //! asked of the same estate, published under its own subtree of
 //! `xmip:///playground`:
 //!
-//!   - **pingpong** — did it arrive whole and hold its contract, across the
+//!   - **`RoundTrip`** — did it arrive whole and hold its contract, across the
 //!     message-path stages, and does Receive run the identity pipeline and Send
 //!     present identity (ADR-0019).
-//!   - **furious** — did it arrive in time: round-trip latency against a budget,
+//!   - **`LowLatency`** — did it arrive in time: round-trip latency against a budget,
 //!     judged on p50/p99 over recent rounds.
-//!   - **load** — a megabyte per pair: did it arrive byte-for-byte and still
+//!   - **`HeavyLoad`** — a megabyte per pair: did it arrive byte-for-byte and still
 //!     validate at size, and how fast.
-//!   - **secretary** — retention and archiving: retain, then archive by age,
+//!   - **Retention** — retention and archiving: retain, then archive by age,
 //!     driving the real retention policy and archive store. Xmip does not delete
 //!     (ADR-0040).
-//!   - **filing** — the archive axis: every archive technology, by every
+//!   - **Filing** — the archive axis: every archive technology, by every
 //!     contract, files a probe item through the real store and restores it
 //!     whole, each behind one [`Cabinet`] adapter.
-//!   - **claim** — exclusive pickup: one holder per item under contention, per
+//!   - **`ExclusiveClaim`** — exclusive pickup: one holder per item under contention, per
 //!     execution style (sequential, parallel, concurrent).
-//!   - **daily** — drain a backlog as fast as possible; tweak, then add a node.
+//!   - **`DailyBacklog`** — drain a backlog as fast as possible; tweak, then add a node.
 //!
 //! What it can do grows with the runtime and the transports. Created
 //! 2026-09-05; named by the owner.
 
 pub mod budget;
 pub mod cabinet;
-pub mod claim;
 pub mod contracts;
-pub mod daily;
+pub mod daily_backlog;
 pub mod database;
+pub mod exclusive_claim;
 pub mod fault;
 pub mod filing;
 pub mod fleet;
-pub mod furious;
 pub mod headroom;
+pub mod heavy_load;
 pub mod identity;
-pub mod load;
-pub mod pingpong;
+pub mod low_latency;
 pub mod remote;
 pub mod report;
+pub mod retention;
+pub mod round_trip;
 pub mod roundtrip;
 pub mod schedule;
-pub mod secretary;
 pub mod standing;
 pub mod storm;
 pub mod stress;
@@ -76,20 +76,20 @@ pub mod verdict;
 
 pub use budget::Budget;
 pub use cabinet::{Cabinet, Filed, all_cabinets};
-pub use claim::Claim;
 pub use contracts::ContentContract;
-pub use daily::Daily;
+pub use daily_backlog::DailyBacklog;
+pub use exclusive_claim::ExclusiveClaim;
 pub use fault::{Fault, FaultKind, FaultPlan};
 pub use filing::Filing;
-pub use furious::Furious;
 pub use headroom::Headroom;
+pub use heavy_load::HeavyLoad;
 pub use identity::{IdentityFaults, Step};
-pub use load::Load;
-pub use pingpong::ping_pong;
+pub use low_latency::LowLatency;
 pub use report::{activity_toml, history_toml, to_toml, to_toml_with, write_atomic};
+pub use retention::Retention;
+pub use round_trip::round_trip;
 pub use roundtrip::{Exchange, FileRoundTrip, RoundTrip, TcpRoundTrip, UdpRoundTrip};
 pub use schedule::{CONTRACTS, Schedule};
-pub use secretary::Secretary;
 pub use stress::Stress;
 pub use support::{cluster_name, cluster_root, now_unix_nanos};
 pub use switch::Switches;

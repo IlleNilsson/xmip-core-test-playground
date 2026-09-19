@@ -4,8 +4,8 @@
 //! is killed and restarted like any other Host Service. Until 2026-09-09 no
 //! scenario spawned one; the owner's requirement — *about 10-40 processes
 //! emulating nodes* — is this. A [`Fleet`] starts [`Stress::nodes`] copies of
-//! the `node` binary beside the current executable, each running the claim and
-//! daily scenarios over one shared directory, so the contention is between
+//! the `node` binary beside the current executable, each running the `ExclusiveClaim`
+//! and `DailyBacklog` tests over one shared directory, so the contention is between
 //! processes, and each publishing its own snapshot file.
 //!
 //! [`Fleet::tick`] is the surface's half of ADR-0027 decision 8: a node answers
@@ -474,7 +474,7 @@ mod tests {
         snapshot = merge_into(snapshot, &fleet.tick());
 
         for name in ["node-01", "node-02", "node-03"] {
-            let claim = format!("{ROOT}/node/{name}/claim/file");
+            let claim = format!("{ROOT}/node/{name}/exclusive-claim/file");
             let verdicts = snapshot.health(&claim);
             assert_eq!(verdicts.len(), 3, "{name}: three styles published");
             for record in verdicts {
@@ -487,9 +487,9 @@ mod tests {
             }
             assert!(
                 snapshot
-                    .worst(&format!("{ROOT}/node/{name}/daily"))
+                    .worst(&format!("{ROOT}/node/{name}/daily-backlog"))
                     .is_some(),
-                "{name}: the daily drain published"
+                "{name}: the DailyBacklog drain published"
             );
             assert_eq!(
                 snapshot.worst(&format!("{ROOT}/node/{name}/process")),
@@ -569,7 +569,7 @@ mod tests {
             .names()
             .filter(|name| {
                 snapshot
-                    .worst(&format!("{ROOT}/node/{name}/claim"))
+                    .worst(&format!("{ROOT}/node/{name}/exclusive-claim"))
                     .is_some()
             })
             .count();
