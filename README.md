@@ -336,16 +336,19 @@ Get and Stop for each, from the estate's PowerShell module. The commands and
 what each one does are the estate's `README.md` (*Beginners*, *Operators* and
 *The estate module*), and `Get-Help Start-XmipTest -Full` documents every
 parameter; this document does not repeat them. A suite is named
-`<Provider>.<Name>` (ADR-0011, ADR-0059), so this one is `Core.Playground`,
-which is also the default; a bare `Playground` is refused. A provider's suite
-joins by a declaration in `test/suite`, never by an edit to Xmip.
+`<Provider>.<Name>` (ADR-0011, ADR-0059), and a bare name is Xmip's own
+because `core` is the reserved provider, so this one is `Playground` — the
+default — and `Core.Playground` names the same suite. `-Suite` takes
+wildcards as `-Test` does: `-Suite *` is every suite this estate knows. A
+provider's suite joins by a declaration in `test/suite`, never by an edit to
+Xmip.
 
 The Playground's tests, by the name a person asks for and the scope segment the
 roll publishes under: RoundTrip is `round-trip`, LowLatency is `low-latency`,
 HeavyLoad is `heavy-load`, Retention is `retention`, Filing is `filing`,
 ExclusiveClaim is `exclusive-claim`, DailyBacklog is `daily-backlog`. `-Test`
 tab-completes them, and the estate's Pester files when the suite is
-`Core.Estate`. Omit `-Test` and the whole suite runs, and `-Test *` says the
+`Estate`. Omit `-Test` and the whole suite runs, and `-Test *` says the
 same; `-Test Round*` is RoundTrip. Wildcards, not regular expressions
 (ADR-0059), and a pattern that matches nothing is refused before the roll
 starts.
