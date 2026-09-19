@@ -72,7 +72,26 @@ where
     T: Send,
     F: Fn(&dyn RoundTrip, Contract) -> T + Sync,
 {
-    let workers = workers.clamp(1, pairs.len().max(1));
+    drive_each(pairs, workers, |&(transport, contract)| {
+        judge(transports[transport].as_ref(), contract)
+    })
+}
+
+/// Judge every one of `items` from `workers` threads, the results in the
+/// items' order. What [`drive_selected`] is over pairs, over anything — a
+/// role node's send stage drives the handoffs it claimed, which carry their
+/// own bytes.
+///
+/// # Panics
+///
+/// When an item's judge panics, as [`drive_pairs`] says.
+pub(crate) fn drive_each<I, T, F>(items: &[I], workers: usize, judge: F) -> Vec<T>
+where
+    I: Sync,
+    T: Send,
+    F: Fn(&I) -> T + Sync,
+{
+    let workers = workers.clamp(1, items.len().max(1));
     let next = AtomicUsize::new(0);
 
     let mut judged: Vec<(usize, T)> = std::thread::scope(|scope| {
@@ -82,10 +101,10 @@ where
                     let mut mine = Vec::new();
                     loop {
                         let at = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(&(transport, contract)) = pairs.get(at) else {
+                        let Some(item) = items.get(at) else {
                             break;
                         };
-                        mine.push((at, judge(transports[transport].as_ref(), contract)));
+                        mine.push((at, judge(item)));
                     }
                     mine
                 })

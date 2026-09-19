@@ -3,7 +3,7 @@
 //! Loopback never fails, one payload never surprises, one round at a time
 //! never contends. A [`Stress`] level turns each of those up together — the
 //! fault rates, the payloads, how many pairs run at once, how many rounds a
-//! test drives, and how many node processes a fleet spawns — so a scenario
+//! test drives, and how many node processes a cluster spawns — so a scenario
 //! at `Harsh` finds what the same scenario at `Calm` proves works. The owner,
 //! 2026-09-09: *incorporate higher difficulty, stress on all tests; we need
 //! about 10-40 processes emulating nodes.*
@@ -102,7 +102,7 @@ impl Stress {
         }
     }
 
-    /// How many node processes a fleet spawns. Ten and forty were the whole
+    /// How many node processes a cluster spawns. Ten and forty were the whole
     /// machine's worth; since 2026-09-11 they are scaled to the [`Headroom`]
     /// by the same rule as [`Self::workers`].
     #[must_use]

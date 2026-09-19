@@ -34,17 +34,27 @@
 //! When stdout is a terminal the board is redrawn in place; when it is piped,
 //! one summary line per round is appended. After every tick the snapshot,
 //! history and activity are written to the TOML files the monitoring GUI reads,
-//! overridable with `XMIP_PLAYGROUND_SNAPSHOT`, `_HISTORY`, `_ACTIVITY`.
+//! overridable with `XMIP_PLAYGROUND_SNAPSHOT`, `_HISTORY`, `_ACTIVITY`. Every
+//! variable is read in one place, `environment.rs`.
 //!
-//! **The fleet.** When `XMIP_PLAYGROUND_NODES` is set — a count, or empty for
-//! the level's own — or `XMIP_PLAYGROUND_STRESS` is `harsh` or `brutal`, the
-//! roll spawns a fleet of node processes beside the in-process scenarios and
-//! merges their snapshot each round (ADR-0028 clause 2). The board shows the
-//! fleet's rollup row, and a node's leaf only when it is not fine. Unset, no
-//! process is spawned and the roll is what it was. `XMIP_PLAYGROUND_NODE_NAMES`
-//! names the nodes instead, comma separated, one process each, at any level;
-//! `XMIP_PLAYGROUND_ONLINE_NODES` names the ones among them that may assume the
-//! internet (ADR-0045); unset, every node reads `XMIP_ONLINE`.
+//! **The cluster's nodes.** When `XMIP_PLAYGROUND_NODES` is set — a count, or
+//! empty for the level's own — or `XMIP_PLAYGROUND_STRESS` is `harsh` or
+//! `brutal`, the roll spawns one node process per node beside the in-process
+//! scenarios and merges their snapshots each round (ADR-0028 clause 2). The
+//! board shows the nodes' rollup row, and a node's leaf only when it is not
+//! fine. Unset, no process is spawned and the roll is what it was.
+//! `XMIP_PLAYGROUND_NODE_NAMES` names the nodes instead, comma separated, one
+//! process each, at any level; `XMIP_PLAYGROUND_ONLINE_NODES` names the ones
+//! among them that may assume the internet (ADR-0045); unset, every node
+//! reads `XMIP_ONLINE`.
+//!
+//! **The letter is the role** (the owner, 2026-09-19). A node named `R…`
+//! receives, `P…` processes, `S…` sends; every node is told the scenarios
+//! that were named and runs its part of them. With role nodes, `RoundTrip`
+//! is theirs — each pair handed `R` to `P` to `S` between the processes — and
+//! the roll does not also run it in-process; a role missing among them is
+//! REFUSED at the start. A node with any other name (`node-01`) has no role
+//! and runs the shared-directory tests whole, as every node did before.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -52,11 +62,15 @@ use std::time::Duration;
 
 use observe::{Health, History, Snapshot};
 use xmip_test_playground::Headroom;
-use xmip_test_playground::fleet::{Fleet, merge, node_binary};
+use xmip_test_playground::cluster::{Cluster, merge, node_binary};
+use xmip_test_playground::environment::{
+    self, load_bytes, max_seconds, node_names, publish_paths, time_factor,
+};
+use xmip_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_test_playground::{
     Budget, DailyBacklog, ExclusiveClaim, FaultPlan, Filing, HeavyLoad, LowLatency, Retention,
-    Schedule, Stress, activity_toml, cluster_name, cluster_root, fleet_topology, history_toml,
-    now_unix_nanos, to_toml_with, write_atomic,
+    Roster, Run, Schedule, Stress, activity_toml, cluster_name, cluster_root, cluster_topology,
+    history_toml, now_unix_nanos, to_toml_run, write_atomic,
 };
 
 fn main() {
@@ -69,8 +83,11 @@ fn main() {
         .declare()
         .map_err(|error| eprintln!("roll: could not declare itself: {error}"));
     let stress = Stress::from_env();
-    let chosen = chosen(std::env::var("XMIP_PLAYGROUND_SCENARIOS").ok().as_deref());
-    let mut fleet = spawn_fleet(stress, &base);
+    let chosen = chosen_or_refuse();
+    let names = node_names(stress);
+    let relayed = relayed_or_refuse(&chosen, &names);
+    let run = Run::of(&cluster, &chosen, &names, stress);
+    let mut nodes = spawn_nodes(stress, &names, &chosen, &base);
 
     // Each scenario under its own subtree, each with faults or pressure on, so
     // the board is realistic rather than uniformly green. `file` stays clean in
@@ -118,11 +135,12 @@ fn main() {
 
         // What everyone else is using, measured now: the levels size this
         // round's pairs to half of what is left (ADR-0028, 2026-09-11). The
-        // fleet was sized the same way when it was spawned.
+        // level's own count of nodes was sized the same way.
         let headroom = Headroom::refresh();
 
         let mut snapshot = Snapshot::new();
-        if drives(&chosen, "round-trip") {
+        // With role nodes the message path is theirs, between processes.
+        if drives(&chosen, ROUND_TRIP) && !relayed {
             merge(&mut snapshot, &round_trip.tick());
         }
         if drives(&chosen, "low-latency") {
@@ -143,18 +161,18 @@ fn main() {
         if drives(&chosen, "daily-backlog") {
             merge(&mut snapshot, &daily_backlog.tick());
         }
-        if let Some(fleet) = fleet.as_mut() {
-            merge(&mut snapshot, &fleet.tick());
+        if let Some(nodes) = nodes.as_mut() {
+            merge(&mut snapshot, &nodes.tick());
         }
 
         history.record(&snapshot);
 
-        let topology = fleet
-            .as_ref()
-            .map(|fleet| fleet_topology(&snapshot, fleet.names(), now_unix_nanos()));
+        let topology = nodes.as_ref().map(|nodes| {
+            cluster_topology(&snapshot, nodes.names(), &nodes.hops(), now_unix_nanos())
+        });
         write(
             &snapshot_path,
-            &to_toml_with(root, &snapshot, topology),
+            &to_toml_run(root, &snapshot, topology, Some(run.clone())),
             "snapshot",
         );
         write(&history_path, &history_toml(root, &history), "history");
@@ -178,82 +196,62 @@ fn main() {
         std::thread::sleep(real);
     }
 
-    if let Some(mut fleet) = fleet {
-        fleet.stop();
+    if let Some(mut nodes) = nodes {
+        nodes.stop();
     }
     std::fs::remove_dir_all(&base).ok();
 }
 
-/// The fleet a roll wants, if any: `XMIP_PLAYGROUND_NODE_NAMES` names its nodes
-/// outright; else `XMIP_PLAYGROUND_NODES` names a count (or, empty, the level's
-/// own; `0` means no fleet at any level), and `harsh` or `brutal` spawn one
-/// unasked. A fleet that cannot start is said so and the roll goes on without it.
-fn spawn_fleet(stress: Stress, base: &Path) -> Option<Fleet> {
-    let listed = std::env::var("XMIP_PLAYGROUND_NODE_NAMES")
-        .ok()
-        .map(|raw| xmip_test_playground::switch::names(&raw));
-    let count = std::env::var("XMIP_PLAYGROUND_NODES").ok();
-    if listed.is_none() && count.is_none() && stress < Stress::Harsh {
-        return None;
+/// The scenarios named in `XMIP_PLAYGROUND_SCENARIOS`: none named is every
+/// one. A name that is no scenario is REFUSED and the roll does not start —
+/// until 2026-09-19 it was said on stderr and dropped, and the roll carried on
+/// as something nobody asked for.
+fn chosen_or_refuse() -> Vec<String> {
+    environment::scenarios().unwrap_or_else(|refusal| {
+        eprintln!("{refusal}");
+        std::process::exit(2);
+    })
+}
+
+/// Whether `RoundTrip` runs over role nodes rather than in this process: it
+/// was chosen, and nodes are named by role. A role missing among them is
+/// REFUSED before anything is spawned, naming the role.
+fn relayed_or_refuse(chosen: &[String], names: &[String]) -> bool {
+    let roster = Roster::of(names);
+    if !drives(chosen, ROUND_TRIP) || !roster.has_roles() {
+        return false;
     }
-    let names = listed.unwrap_or_else(|| {
-        let count = count
-            .and_then(|raw| raw.trim().parse::<usize>().ok())
-            .unwrap_or_else(|| stress.nodes());
-        (1..=count)
-            .map(|index| format!("node-{index:02}"))
-            .collect()
-    });
+    if let Some(refusal) = roster.refusal() {
+        eprintln!("{refusal}");
+        std::process::exit(2);
+    }
+    true
+}
+
+/// One process per name, each told the scenarios chosen, over the cluster's
+/// shared directory. Nodes that cannot start are said so and the roll goes on
+/// without them.
+fn spawn_nodes(
+    stress: Stress,
+    names: &[String],
+    chosen: &[String],
+    base: &Path,
+) -> Option<Cluster> {
     if names.is_empty() {
         return None;
     }
-    let shared = base.join("fleet/shared");
-    let snapshots = base.join("fleet/snapshots");
-    let spawned = node_binary()
-        .and_then(|binary| Fleet::spawn_named(&binary, stress, &names, &shared, &snapshots, 0));
+    let shared = base.join("shared");
+    let snapshots = base.join("snapshots");
+    let spawned = node_binary().and_then(|binary| {
+        Cluster::spawn_driving(&binary, stress, names, chosen, &shared, &snapshots, 0)
+    });
     match spawned {
-        Ok(fleet) => Some(fleet),
+        Ok(cluster) => Some(cluster),
         Err(error) => {
-            eprintln!("no fleet: {error}");
+            eprintln!("no nodes: {error}");
             None
         }
     }
-}
-
-/// The scenarios named in `XMIP_PLAYGROUND_SCENARIOS`: empty when the variable is
-/// unset or names nothing, meaning every scenario. Names are trimmed and lowered;
-/// one the roll does not know is said on stderr and dropped, so a typo loses one
-/// scenario visibly rather than the whole roll silently.
-fn chosen(raw: Option<&str>) -> Vec<String> {
-    let (known, unknown): (Vec<String>, Vec<String>) = raw
-        .unwrap_or_default()
-        .split(',')
-        .map(|name| name.trim().to_ascii_lowercase())
-        .filter(|name| !name.is_empty())
-        .partition(|name| SCENARIOS.contains(&name.as_str()));
-    for name in unknown {
-        eprintln!(
-            "no scenario named {name}; the scenarios are {}",
-            SCENARIOS.join(", ")
-        );
-    }
-    known
-}
-
-/// Every scenario a roll can drive, by the name `XMIP_PLAYGROUND_SCENARIOS` uses.
-const SCENARIOS: [&str; 7] = [
-    "round-trip",
-    "low-latency",
-    "heavy-load",
-    "retention",
-    "filing",
-    "exclusive-claim",
-    "daily-backlog",
-];
-
-/// Whether this roll drives the named scenario: every one when nothing was chosen.
-fn drives(chosen: &[String], scenario: &str) -> bool {
-    chosen.is_empty() || chosen.iter().any(|name| name == scenario)
 }
 
 /// A publish path: the environment override, or the well-known temp file the GUI
@@ -272,74 +270,6 @@ fn this_cluster() -> (String, String, PathBuf) {
     let base = std::env::temp_dir().join("playground").join(&cluster);
     std::fs::remove_dir_all(&base).ok();
     (cluster, cluster_root(), base)
-}
-
-/// Where the roll publishes its snapshot, history and activity: the three
-/// variables the cmdlet sets, else `<cluster>-snapshot.toml` and kin in the
-/// temp directory.
-fn publish_paths(cluster: &str) -> (PathBuf, PathBuf, PathBuf) {
-    (
-        env_path(
-            "XMIP_PLAYGROUND_SNAPSHOT",
-            &format!("{cluster}-snapshot.toml"),
-        ),
-        env_path(
-            "XMIP_PLAYGROUND_HISTORY",
-            &format!("{cluster}-history.toml"),
-        ),
-        env_path(
-            "XMIP_PLAYGROUND_ACTIVITY",
-            &format!("{cluster}-activity.toml"),
-        ),
-    )
-}
-
-fn env_path(variable: &str, default: &str) -> PathBuf {
-    std::env::var_os(variable).map_or_else(|| std::env::temp_dir().join(default), PathBuf::from)
-}
-
-/// The `HeavyLoad` payload size: `XMIP_PLAYGROUND_LOAD_BYTES` if set — a plain number or
-/// a human size like `512mb` or `2gb` — else a megabyte. The variable is
-/// external, so it keeps the prefix. Note the memory: peak is roughly twice this
-/// per pair, so a gigabyte wants a few free.
-fn load_bytes() -> usize {
-    let Some(raw) = std::env::var("XMIP_PLAYGROUND_LOAD_BYTES").ok() else {
-        return 1024 * 1024;
-    };
-    let text = raw.trim().to_lowercase();
-    let (number, unit) = text
-        .find(|c: char| c.is_alphabetic())
-        .map_or((text.as_str(), ""), |at| text.split_at(at));
-    let scale: usize = match unit {
-        "gb" | "g" => 1024 * 1024 * 1024,
-        "mb" | "m" => 1024 * 1024,
-        "kb" | "k" => 1024,
-        _ => 1,
-    };
-    number
-        .trim()
-        .parse::<usize>()
-        .map_or(1024 * 1024, |value| value.saturating_mul(scale))
-}
-
-/// The maximum wall-clock time to roll: `XMIP_PLAYGROUND_MAX_SECONDS` if set,
-/// else no ceiling. The variable is external, so it keeps the prefix.
-fn max_seconds() -> Option<Duration> {
-    std::env::var("XMIP_PLAYGROUND_MAX_SECONDS")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<f64>().ok())
-        .filter(|seconds| *seconds > 0.0)
-        .map(Duration::from_secs_f64)
-}
-
-/// The factor on time: `XMIP_PLAYGROUND_TIME_FACTOR` if set, else `1.0` (real
-/// time). Below one runs faster than real time, above one slower. The variable
-/// is external, so it keeps the prefix.
-fn time_factor() -> f64 {
-    std::env::var("XMIP_PLAYGROUND_TIME_FACTOR")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<f64>().ok())
-        .unwrap_or(1.0)
 }
 
 fn write(path: &Path, contents: &str, what: &str) {
@@ -392,9 +322,9 @@ fn summarise(node: &str, round: u64, snapshot: &Snapshot) {
     println!("round {round:>4}: {worst}  ({count} leaves){trouble}");
 }
 
-/// The rows the board shows: every leaf, except that a fleet node's leaves
-/// appear only when not fine — the fleet's own row always does, and an
-/// operator drills into a node from there.
+/// The rows the board shows: every leaf, except that a node's leaves appear
+/// only when not fine — the nodes' rollup row always does, and an operator
+/// drills into a node from there.
 fn pairs(node: &str, snapshot: &Snapshot) -> Vec<observe::HealthRecord> {
     let nodes = format!("{node}/node/");
     let mut records = snapshot.health(node);
@@ -419,30 +349,19 @@ fn word(health: Health) -> &'static str {
 mod tests {
     use super::*;
 
-    #[test]
-    fn nothing_chosen_drives_every_scenario() {
-        assert!(chosen(None).is_empty());
-        assert!(chosen(Some("")).is_empty());
-        assert!(chosen(Some(" , ")).is_empty());
-        for scenario in SCENARIOS {
-            assert!(drives(&[], scenario));
-        }
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(ToString::to_string).collect()
     }
 
     #[test]
-    fn a_list_drives_only_what_it_names() {
-        let picked = chosen(Some(" Round-Trip, heavy-load "));
-        assert_eq!(picked, ["round-trip", "heavy-load"]);
-        assert!(drives(&picked, "round-trip"));
-        assert!(drives(&picked, "heavy-load"));
-        assert!(!drives(&picked, "low-latency"));
-    }
-
-    #[test]
-    fn an_unknown_name_is_dropped_and_the_rest_kept() {
-        let picked = chosen(Some("round-trip,typo"));
-        assert_eq!(picked, ["round-trip"]);
-        assert!(!drives(&picked, "typo"));
-        assert!(!drives(&picked, "daily-backlog"));
+    fn round_trip_is_the_role_nodes_when_there_are_any_and_it_was_chosen() {
+        let roles = names(&["R1", "P1", "S1"]);
+        assert!(relayed_or_refuse(&[], &roles));
+        assert!(relayed_or_refuse(&names(&["round-trip"]), &roles));
+        assert!(!relayed_or_refuse(&names(&["heavy-load"]), &roles));
+        assert!(!relayed_or_refuse(&[], &names(&["node-01", "node-02"])));
+        assert!(!relayed_or_refuse(&[], &[]));
+        // A role missing is no refusal when RoundTrip was not chosen.
+        assert!(!relayed_or_refuse(&names(&["filing"]), &names(&["R1"])));
     }
 }

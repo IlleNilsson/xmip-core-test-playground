@@ -113,7 +113,7 @@ own idea of hard: the fault rates (none, as written, tripled, at the ceiling of
 nine rounds in ten), the payload sizes (a few bytes; then the sizes protocols
 break on — a datagram's MTU either side, the UDP maximum, sixty-four kibibytes
 plus one, a mebibyte), how many pairs run at once (one, one, four, every core),
-how many rounds a test drives, and how many node processes a fleet spawns (one,
+how many rounds a test drives, and how many node processes a roll spawns (one,
 three, ten, forty). `realistic` is what the runner ran at before the axis
 existed and is the default, so nothing changed quietly; `XMIP_PLAYGROUND_STRESS`
 sets it for a roll.
@@ -146,11 +146,11 @@ busy has three quarters free; the Playground takes half of that, three eighths
 of the machine, and the other half of what was free stays with whatever else
 the machine is doing — and that other work moves, so the measure is taken
 again before every round. `headroom.rs` reads processor time less what the
-roll and its fleet burn themselves — the Windows performance counters,
+roll and its nodes burn themselves — the Windows performance counters,
 `/proc/stat` on Linux, free assumed elsewhere — and every count that would
 take the whole machine is scaled to that budget, never below one: `brutal`
 drives pairs from the budgeted cores and spawns forty nodes' worth of budget,
-`harsh` four cores and ten nodes' worth. The fleet is sized when it is
+`harsh` four cores and ten nodes' worth. The nodes are counted when they are
 spawned; the pairs follow the budget round by round, and the roll prints the
 budget beside each round.
 
@@ -166,17 +166,84 @@ becomes "a new transport is its own loopback, and a line in the list".
 ### Nodes are processes, now
 
 Decision 2 said nodes run as System Processes, and until this day no scenario
-spawned one. The **fleet** does: `node`, a second binary, is one emulated node
-that runs the ExclusiveClaim and DailyBacklog tests over a directory the whole
-fleet shares
-and publishes its own snapshot under `xmip:///playground/node/<name>`; the
-fleet spawns the level's count of them, merges their snapshots each round, adds
-the cluster rollup the surface owes (ADR-0027 decision 8), and kills and
-restarts a node whose snapshot stops moving — a recorded yellow, never silent.
-Exclusive pickup and backlog draining are thereby contended by real processes,
-which is the property ADR-0024's claim exists to prove and a thread could only
-imitate. `XMIP_PLAYGROUND_NODES` or a harsh or brutal level puts the fleet on
-the board beside the in-process scenarios.
+spawned one. The **cluster** does (`cluster.rs`): `node`, a second binary, is
+one emulated node that runs its part of the tests over a directory the whole
+cluster shares and publishes its own snapshot under
+`xmip:///<cluster>/node/<name>`; the roll spawns one per name, or the level's
+count of them, merges their snapshots each round, adds the rollup the surface
+owes at `xmip:///<cluster>/node` (ADR-0027 decision 8), and kills and restarts a
+node whose snapshot stops moving — a recorded yellow, never silent. Exclusive
+pickup and backlog draining are thereby contended by real processes, which is
+the property ADR-0024's claim exists to prove and a thread could only imitate.
+`XMIP_PLAYGROUND_NODES` or a harsh or brutal level puts the nodes on the board
+beside the in-process scenarios. What the roll knows of a node's process — alive,
+exited, restarted — is at `node/<name>/system-process`.
+
+### A cluster and its nodes: the letter is the role, 2026-09-19
+
+The owner: *Fleet is what I see in topology when running test, I would like to
+see cluster, nodes, receive, process, send.* What the Playground spawns is a
+cluster and its nodes, and the word it used until then is retired (ADR-0028).
+
+**The letter is the role** (`role.rs`). A node whose name starts with `R`
+receives, `P` processes, `S` sends — either case, the rest of the name letters
+and digits: `R1`, `p2`, `Send3`. A node with any other name (`node-01`, `left`,
+`P1-2`) has no role and behaves as every node did before: it runs the
+shared-directory tests whole and no part of RoundTrip.
+
+**Nodes run the test that was named.** The roll passes the scenarios it was
+given to every node (`--scenarios`, with every node's name in `--nodes`), and a
+node runs its part of those and nothing else: ExclusiveClaim and DailyBacklog
+only when they were chosen, or when nothing was, which means all. A name that is
+no scenario is REFUSED, by the roll and by a node alike, with exit code 2 and
+the scenarios there are; it is never dropped. LowLatency, HeavyLoad, Retention
+and Filing stay in the roll's own process, at the cluster's level.
+
+**RoundTrip over role nodes is the message path between processes**
+(`relay.rs`). The (transport x contract) matrix is split across the `R` nodes,
+a pair's index modulo their count, and a bounded slice of each share rotates
+through the rounds so a round still lands in seconds. Per pair:
+
+- the `R` node lets the Stream arrive through the transport and publishes
+  `xmip:///<cluster>/node/<R>/receive/<transport>/<contract>`, the identity
+  steps beneath it, then hands what arrived to a `P` node;
+- the `P` node holds the content contract over it, publishes
+  `.../node/<P>/process/<transport>/<contract>`, and hands it to an `S` node;
+- the `S` node sends it out through the same transport, publishes
+  `.../node/<S>/send/<transport>/<contract>` with the identity presentation
+  beneath it, and closes the verdict: bytes are counted here.
+
+The `P` or `S` node a pair goes to is a stable hash of the role and the pair
+over the nodes of that role, so every sender agrees without asking. Each stage takes the same
+injected faults the schedule does, scaled to the level, decided by the round
+the `R` node received the pair in; a stage that fails hands nothing on. The
+tally, the standing between a pair's turns and the counts are the schedule's
+own (`schedule/ledger.rs`), not a copy. When role nodes exist and RoundTrip was
+chosen the roll does not also run it in-process; when a role is missing among
+them the roll is REFUSED at the start, naming the role, and `Start-XmipTest`
+says the same before anything is spawned.
+
+**The handoff** (`handoff.rs`) is a file in the cluster's shared directory, one
+inbox per node, `<shared>/handoff/<node>/`: written under a temporary name and
+renamed into place, claimed by the receiver by rename, so a file has one holder
+(the semantics ADR-0024's claim rests on). Every delivered handoff is a hop,
+counted per (from, to) link with the time of the last one, published in the
+node's file and drawn as a link. `--online false` gates what is outside the
+cluster only: an offline node takes handoffs like any other. This rehearses
+option A of `doc/planning/open-problems.md` problem 17 in the rig; it rules
+nothing for the runtime.
+
+**The topology** (`topology.rs`) a roll publishes is the cluster (kind
+`cluster`), its nodes (`node`), the stages each runs (`stage`), and under a
+receive or a send stage one endpoint per transport it reported on (`endpoint`).
+The links are the handoffs, `R` stage to `P` stage to `S` stage, for every pair
+of nodes that exchanged any — pattern `send-receive`, protocol `handoff`, volume
+the hops, mood the worst leaf at either end — and the shared store with its
+ExclusiveClaim and DailyBacklog links only when those tests ran on a node.
+
+**The run says what it was started with** (`run.rs`): the snapshot carries a
+`[run]` table — `cluster`, `tests`, `nodes`, `online`, `stress` — that a reader
+which does not know it skips, and the web GUI shows as one line on every view.
 
 
 
@@ -203,8 +270,8 @@ own environment, never yours: `-Stress` is `XMIP_PLAYGROUND_STRESS`
 (`calm`, `realistic`, `harsh`, `brutal`), `-Test` is
 `XMIP_PLAYGROUND_SCENARIOS` (the scope segments above; unset means all),
 `-Nodes` is `XMIP_PLAYGROUND_NODE_NAMES` (the nodes to simulate, by name, one
-process each; an empty list is `XMIP_PLAYGROUND_NODES=0`, no fleet; omitted, the
-level's own numbered fleet), `-OnlineNodes` is `XMIP_PLAYGROUND_ONLINE_NODES`
+process each, the letter the role; an empty list is `XMIP_PLAYGROUND_NODES=0`,
+no nodes; omitted, the level's own numbered nodes), `-OnlineNodes` is `XMIP_PLAYGROUND_ONLINE_NODES`
 (which of them may assume the internet, by name, ADR-0045; unset, every node
 reads `XMIP_ONLINE`), `-Duration` is
 `XMIP_PLAYGROUND_MAX_SECONDS`, `-TimeFactor` is `XMIP_PLAYGROUND_TIME_FACTOR`

@@ -16,25 +16,25 @@
 //! without one it runs as it always has — one pair at a time, the probe, and
 //! whatever faults were set.
 
+pub mod ledger;
 pub mod tally;
 pub(crate) mod workers;
 
-use std::collections::BTreeMap;
-
-use observe::{Activity, Count, Counted, Item, ItemKind, Snapshot};
+use observe::{Activity, Snapshot};
 
 use crate::fault::FaultPlan;
-use crate::identity::{self, IdentityFaults};
+use crate::identity::IdentityFaults;
+use crate::identity::verdicts::{receive_verdicts, send_verdict};
 use crate::round_trip::{round_trip, round_trip_with};
 use crate::roundtrip::{RoundTrip, all_transports};
 use crate::stress::{self, Stress};
 use crate::support::now_unix_nanos;
 use crate::verdict::{Contract, Outcome, Stage, Verdict};
 
+pub use ledger::Ledger;
 pub use tally::Tally;
-use tally::over_time;
-pub(crate) use workers::drive_pairs;
-use workers::{all_pairs, drive_selected, slice};
+use workers::drive_selected;
+pub(crate) use workers::{all_pairs, drive_each, drive_pairs, slice};
 
 /// Every contract the playground exercises today: the three local shapes and
 /// every contract technology the estate has landed. ADR-0028's matrix is every
@@ -67,7 +67,6 @@ pub const CONTRACTS: [Contract; 20] = [
 /// runs the scenario over every adapter by every contract, expands it across
 /// Receive, Process and Send, and publishes what it found.
 pub struct Schedule {
-    node: String,
     transports: Vec<Box<dyn RoundTrip>>,
     faults: FaultPlan,
     identity_faults: IdentityFaults,
@@ -75,13 +74,8 @@ pub struct Schedule {
     /// `None` is the schedule as it ran before the axis existed.
     stress: Option<Stress>,
     round: u64,
-    tallies: BTreeMap<String, Tally>,
-    activity: Activity,
-    item_seq: u64,
-    streams: u64,
-    messages: u64,
-    journeys: u64,
-    moved_bytes: u64,
+    /// Every pair's record over time, the throughput and the recent items.
+    ledger: Ledger,
     /// How many pairs one round drives, when bounded; the rest wait their
     /// turn and keep their standing on the board. `None` drives every pair
     /// every round, as a test wants.
@@ -99,19 +93,12 @@ impl Schedule {
         let transports = all_transports(file_dir);
 
         Self {
-            node: node.into(),
+            ledger: Ledger::new(node),
             transports,
             faults: FaultPlan::none(),
             identity_faults: IdentityFaults::none(),
             stress: None,
             round: 0,
-            tallies: BTreeMap::new(),
-            activity: Activity::with_capacity(2048),
-            item_seq: 0,
-            streams: 0,
-            messages: 0,
-            journeys: 0,
-            moved_bytes: 0,
             per_round: None,
             cursor: 0,
         }
@@ -173,58 +160,15 @@ impl Schedule {
         let mut snapshot = Snapshot::new();
 
         for verdict in self.run_once(now) {
-            // Throughput and the activity feed count the transport verdict, not
-            // the identity children: a Stream is received once, not once per
-            // identity step. The identity points still fold into health, so an
-            // operator drills to the step that failed.
-            let is_transport = verdict.point.is_none();
-
-            if is_transport && matches!(verdict.outcome, Outcome::Delivered) {
-                match verdict.stage {
-                    Stage::Receive => self.streams += 1,
-                    Stage::Process => self.journeys += 1,
-                    Stage::Send => {
-                        self.messages += 1;
-                        self.moved_bytes += verdict.bytes;
-                    }
-                }
-            }
-
-            let scope = verdict.scope(&self.node);
-            let tally = self.tallies.entry(scope.clone()).or_default();
-            tally.fold(&verdict.outcome);
-            snapshot.record_health(over_time(&scope, tally, now));
-
-            if is_transport {
-                self.item_seq += 1;
-                self.activity.record(Item {
-                    kind: item_kind(verdict.stage),
-                    scope,
-                    id: format!("{:08}", self.item_seq),
-                    bytes: verdict.bytes,
-                    detail: detail(&verdict.outcome),
-                    observed_unix_nanos: now,
-                });
-            }
-        }
-
-        // The pairs that waited this round keep their standing on the board.
-        let published: std::collections::BTreeSet<String> = snapshot
-            .health_records()
-            .map(|record| record.scope.clone())
-            .collect();
-        for (scope, tally) in &self.tallies {
-            if !published.contains(scope) {
-                snapshot.record_health(over_time(scope, tally, now));
-            }
+            self.ledger.fold(&verdict, &mut snapshot, now);
         }
         if let Some(per_round) = self.per_round {
             let matrix = (self.transports.len() * CONTRACTS.len()).max(1);
             self.cursor = (self.cursor + per_round.min(matrix)) % matrix;
         }
 
-        self.record_throughput(&mut snapshot, now);
-
+        // The pairs that waited this round keep their standing on the board.
+        self.ledger.close(&mut snapshot, now);
         snapshot
     }
 
@@ -232,28 +176,7 @@ impl Schedule {
     /// last rounds — for the surface that lists what actually flowed. ADR-0032.
     #[must_use]
     pub fn activity(&self) -> &Activity {
-        &self.activity
-    }
-
-    /// Publish the cumulative throughput at the node scope: Streams in at
-    /// Receive, Journeys through Process, Messages out at Send, and the Bytes
-    /// that moved. These are what the operator's stage cards count.
-    fn record_throughput(&self, snapshot: &mut Snapshot, now: i64) {
-        for (counted, value) in [
-            (Counted::Streams, self.streams),
-            (Counted::Journeys, self.journeys),
-            (Counted::Messages, self.messages),
-            (Counted::Bytes, self.moved_bytes),
-        ] {
-            snapshot.record_count(Count {
-                scope: self.node.clone(),
-                counted,
-                value,
-                window_start_unix_nanos: now,
-                window_end_unix_nanos: now,
-                observed_unix_nanos: now,
-            });
-        }
+        self.ledger.activity()
     }
 
     /// The verdicts of one round: every transport by every contract, each
@@ -318,61 +241,17 @@ impl Schedule {
             });
         }
 
-        self.push_identity(&mut verdicts, name, contract, now);
+        let identity = &self.identity_faults;
+        verdicts.extend(receive_verdicts(identity, name, contract, self.round, now));
+        verdicts.push(send_verdict(identity, name, contract, self.round, now));
         verdicts
-    }
-
-    /// Append the identity verdicts for one (transport, contract): the three
-    /// Receive steps — Identification, Authentication, Authorization — and the
-    /// Send presentation, each a child scope under its stage. ADR-0019, ADR-0033.
-    fn push_identity(&self, verdicts: &mut Vec<Verdict>, name: &str, contract: Contract, now: i64) {
-        for (step, outcome) in identity::receive(&self.identity_faults, name, contract, self.round)
-        {
-            verdicts.push(Verdict {
-                stage: Stage::Receive,
-                transport: name.to_string(),
-                contract,
-                outcome,
-                bytes: 0,
-                point: Some(step.name()),
-                observed_unix_nanos: now,
-            });
-        }
-
-        verdicts.push(Verdict {
-            stage: Stage::Send,
-            transport: name.to_string(),
-            contract,
-            outcome: identity::send(&self.identity_faults, name, contract, self.round),
-            bytes: 0,
-            point: Some("identity"),
-            observed_unix_nanos: now,
-        });
     }
 
     /// The tally for one pair's scope, for a caller that wants the numbers
     /// rather than the health.
     #[must_use]
     pub fn tally(&self, scope: &str) -> Option<&Tally> {
-        self.tallies.get(scope)
-    }
-}
-
-/// Which kind of item a stage produces: Receive a Stream in, Process a Journey
-/// through, Send a Message out.
-const fn item_kind(stage: Stage) -> ItemKind {
-    match stage {
-        Stage::Receive => ItemKind::Stream,
-        Stage::Process => ItemKind::Journey,
-        Stage::Send => ItemKind::Message,
-    }
-}
-
-/// The item's detail line: what became of it.
-fn detail(outcome: &Outcome) -> String {
-    match outcome {
-        Outcome::Delivered => "delivered".to_string(),
-        Outcome::OneSided(why) | Outcome::Failed(why) => why.clone(),
+        self.ledger.tally(scope)
     }
 }
 
@@ -412,7 +291,7 @@ mod tests {
     use crate::roundtrip::{FileRoundTrip, TIMEOUT, TcpRoundTrip, UdpRoundTrip};
     use crate::storm::violations;
     use crate::support::scratch;
-    use observe::Health;
+    use observe::{Counted, Health};
 
     const NODE: &str = "xmip:///playground";
 

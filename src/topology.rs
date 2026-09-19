@@ -1,20 +1,26 @@
 //! The communication topology a roll publishes beside its snapshot: Xmip's
-//! own communication, drawn from what the fleet configured and what its nodes
-//! reported (ADR-0052, amendment 2026-09-14, ruling 3). Nothing here is
+//! own communication, drawn from what the cluster configured and what its
+//! nodes reported (ADR-0052, amendment 2026-09-14, ruling 3). Nothing here is
 //! inferred from a socket — a node is in the picture because `-Nodes` named
-//! it, and a link because a scenario the node runs reported on it.
+//! it, a stage because the node's name gives it that role or it reported on
+//! it, and a link because a handoff was delivered over it.
 //!
-//! The picture is the fleet's: the fleet as the service, each node as the
-//! System Process it is (ADR-0028 clause 2), the shared directory every node
-//! claims from and drains as the one location they meet at, and three links
-//! per node — the exclusive pickup over `exclusive-claim`, the backlog drained
-//! over `daily-backlog`, and the snapshot the node publishes each round for the fleet to
-//! merge. The surface reads the words this file writes (`Xmip.Surface`,
-//! `SnapshotOperator`), so they are the surface's, not chosen here.
+//! The picture is the owner's, 2026-09-19: *cluster, nodes, receive, process,
+//! send*. The cluster holds its nodes; a node holds the stages of the message
+//! path it runs; a receive or a send stage holds one endpoint per transport it
+//! reported on. Between the nodes run the handoffs, `R` to `P` to `S`, one link
+//! per pair of nodes that exchanged any, its volume the hops. The shared
+//! directory is drawn only when a node ran a test over it. The surface reads
+//! the words this file writes (`Xmip.Surface`, `SnapshotOperator`), so they
+//! are the surface's, not chosen here.
 
-use observe::{Counted, Health, HealthRecord, Snapshot};
+mod shared;
+mod stage;
+
+use observe::{Health, HealthRecord, Snapshot};
 use serde::{Deserialize, Serialize};
 
+use crate::handoff::Hop;
 use crate::report::state;
 use crate::support::cluster_root;
 
@@ -60,37 +66,46 @@ pub struct TopologyLink {
     pub evidence: String,
 }
 
-const FLEET: &str = "fleet";
-const SHARED: &str = "shared";
+/// The id of the cluster, the one node with no parent.
+const CLUSTER: &str = "cluster";
 
-/// The fleet's topology from what its nodes published this round: the fleet,
-/// the shared store, one process per named node, and the node's three links.
+/// The cluster's topology from what its nodes published this round and the
+/// handoffs they delivered: the cluster, one node per name, each node's
+/// stages and their endpoints, the handoff links, and the shared store with
+/// its links when a node ran a test over it.
 #[must_use]
-pub fn fleet_topology<'a>(
+pub fn cluster_topology<'a>(
     snapshot: &Snapshot,
     names: impl Iterator<Item = &'a str>,
+    hops: &[Hop],
     now: i64,
 ) -> Topology {
     let names: Vec<&str> = names.collect();
     let root = cluster_root();
     let mut topology = Topology {
-        source: "playground — the fleet".to_string(),
+        source: format!("playground — cluster {}", label(&root)),
         observed_unix_nanos: now,
-        nodes: vec![fleet_node(snapshot, &names), shared_node(snapshot, &names)],
+        nodes: vec![cluster_node(snapshot, &root, &names)],
         links: Vec::new(),
     };
-    for name in names {
+    for name in &names {
         let scope = format!("{root}/node/{name}");
-        topology.nodes.push(process_node(snapshot, name, &scope));
-        topology
-            .links
-            .push(exclusive_claim_link(snapshot, name, &scope));
-        topology
-            .links
-            .push(daily_backlog_link(snapshot, name, &scope));
-        topology.links.push(snapshot_link(snapshot, name, &scope));
+        topology.nodes.push(node(snapshot, name, &scope));
+        topology.nodes.extend(stage::nodes(snapshot, name, &scope));
     }
+    topology.links.extend(stage::handoff_links(snapshot, hops));
+    shared::draw(snapshot, &names, &mut topology);
     topology
+}
+
+/// The id of the node called `name`.
+fn node_id(name: &str) -> String {
+    format!("node/{name}")
+}
+
+/// The last segment of a scope: what a thing is called.
+fn label(scope: &str) -> &str {
+    scope.rsplit('/').next().unwrap_or(scope)
 }
 
 /// The worst record at or beneath `scope`, if anything was published there.
@@ -111,26 +126,26 @@ fn mood(record: Option<&HealthRecord>) -> (String, String) {
     )
 }
 
-/// Whether the fleet's own record says the node's process is running.
+/// Whether the cluster's own record says the node's process is running.
 fn alive(snapshot: &Snapshot, scope: &str) -> bool {
-    worst(snapshot, &format!("{scope}/process"))
+    worst(snapshot, &format!("{scope}/system-process"))
         .is_some_and(|record| record.evidence.starts_with("alive"))
 }
 
-fn fleet_node(snapshot: &Snapshot, names: &[&str]) -> TopologyNode {
-    let root = cluster_root();
-    let scope = format!("{root}/{FLEET}");
-    let (state, evidence) = mood(worst(snapshot, &scope).as_ref());
+/// The cluster: its mood the rollup over its nodes, its activity the share
+/// of them running.
+fn cluster_node(snapshot: &Snapshot, root: &str, names: &[&str]) -> TopologyNode {
+    let (state, evidence) = mood(worst(snapshot, &format!("{root}/node")).as_ref());
     let running = names
         .iter()
         .filter(|name| alive(snapshot, &format!("{root}/node/{name}")))
         .count();
     TopologyNode {
-        id: FLEET.to_string(),
+        id: CLUSTER.to_string(),
         parent: String::new(),
-        label: "fleet".to_string(),
-        kind: "service".to_string(),
-        scope,
+        label: label(root).to_string(),
+        kind: "cluster".to_string(),
+        scope: root.to_string(),
         state,
         origin: "configured".to_string(),
         load: 0.0,
@@ -139,136 +154,24 @@ fn fleet_node(snapshot: &Snapshot, names: &[&str]) -> TopologyNode {
     }
 }
 
-/// The one directory every node claims from and drains: its mood is the worst
-/// any node reported over it.
-fn shared_node(snapshot: &Snapshot, names: &[&str]) -> TopologyNode {
-    let root = cluster_root();
-    let over_store = names
-        .iter()
-        .flat_map(|name| {
-            let scope = format!("{root}/node/{name}");
-            [
-                worst(snapshot, &format!("{scope}/exclusive-claim")),
-                worst(snapshot, &format!("{scope}/daily-backlog")),
-            ]
-        })
-        .flatten()
-        .max_by_key(|record| (record.health, record.severity));
-    let (state, evidence) = mood(over_store.as_ref());
-    TopologyNode {
-        id: SHARED.to_string(),
-        parent: String::new(),
-        label: "shared store".to_string(),
-        kind: "location".to_string(),
-        scope: format!("{root}/{FLEET}/{SHARED}"),
-        state,
-        origin: "configured".to_string(),
-        load: 0.0,
-        activity: 0.0,
-        evidence,
-    }
-}
-
-fn process_node(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyNode {
+/// One node of the cluster, the System Process it is (ADR-0028 clause 2).
+fn node(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyNode {
     let (state, evidence) = mood(worst(snapshot, scope).as_ref());
     TopologyNode {
-        id: format!("node/{name}"),
-        parent: FLEET.to_string(),
+        id: node_id(name),
+        parent: CLUSTER.to_string(),
         label: name.to_string(),
-        kind: "process".to_string(),
+        kind: "node".to_string(),
         scope: scope.to_string(),
         state,
-        origin: origin(snapshot, &format!("{scope}/exclusive-claim")),
+        origin: origin(snapshot, scope),
         load: 0.0,
         activity: if alive(snapshot, scope) { 1.0 } else { 0.0 },
         evidence,
     }
 }
 
-/// Exclusive pickup over the shared `exclusive-claim` directory (ADR-0024's property).
-fn exclusive_claim_link(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyLink {
-    let claim = format!("{scope}/exclusive-claim");
-    let (state, evidence) = mood(worst(snapshot, &claim).as_ref());
-    link(
-        name,
-        "exclusive-claim",
-        SHARED,
-        "publish-consume",
-        origin(snapshot, &claim),
-        state,
-        evidence,
-    )
-}
-
-/// The backlog drained over the shared `daily-backlog` directory: the Streams the node
-/// drained are the volume, and the backlog left is what progress is against.
-fn daily_backlog_link(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyLink {
-    let daily_backlog = format!("{scope}/daily-backlog");
-    let (state, evidence) = mood(worst(snapshot, &daily_backlog).as_ref());
-    let drained = snapshot
-        .measure(scope, Counted::Streams)
-        .map_or(0, |count| count.value);
-    let backlog = snapshot
-        .measure(scope, Counted::Messages)
-        .map_or(0, |count| count.value);
-    let mut link = link(
-        name,
-        "daily-backlog",
-        SHARED,
-        "publish-consume",
-        origin(snapshot, &daily_backlog),
-        state,
-        evidence,
-    );
-    link.volume = drained;
-    link.progress = fraction(
-        usize::try_from(drained).unwrap_or(usize::MAX),
-        usize::try_from(drained + backlog).unwrap_or(usize::MAX),
-    );
-    link
-}
-
-/// The snapshot the node writes each round and the fleet merges.
-fn snapshot_link(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyLink {
-    let (state, evidence) = mood(worst(snapshot, &format!("{scope}/process")).as_ref());
-    link(
-        name,
-        "snapshot",
-        FLEET,
-        "fire-and-forget",
-        "observed".to_string(),
-        state,
-        evidence,
-    )
-}
-
-fn link(
-    name: &str,
-    what: &str,
-    to: &str,
-    pattern: &str,
-    origin: String,
-    state: String,
-    evidence: String,
-) -> TopologyLink {
-    TopologyLink {
-        id: format!("{name}/{what}"),
-        from: format!("node/{name}"),
-        to: to.to_string(),
-        pattern: pattern.to_string(),
-        origin,
-        protocol: "file".to_string(),
-        state,
-        volume: 0,
-        rate: 0.0,
-        latency_ms: 0.0,
-        progress: 0.0,
-        attempts: 0,
-        evidence,
-    }
-}
-
-/// Configured by the fleet, and observed too once the node reported on it.
+/// Configured by the cluster, and observed too once something reported on it.
 fn origin(snapshot: &Snapshot, scope: &str) -> String {
     if snapshot.health(scope).is_empty() {
         "configured".to_string()
@@ -289,9 +192,9 @@ fn fraction(part: usize, whole: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fleet::ROOT;
+    use crate::cluster::ROOT;
     use crate::report::{from_toml, to_toml_with};
-    use observe::Count;
+    use observe::{Count, Counted};
 
     fn record(scope: &str, health: Health, evidence: &str) -> HealthRecord {
         HealthRecord {
@@ -303,28 +206,41 @@ mod tests {
         }
     }
 
-    fn published(name: &str) -> Snapshot {
-        let scope = format!("{ROOT}/node/{name}");
+    fn hop(from: &str, to: &str, count: u64) -> Hop {
+        Hop {
+            from: from.to_string(),
+            to: to.to_string(),
+            count,
+            last_unix_nanos: 7,
+        }
+    }
+
+    /// `R1` received over tcp and file, `P1` processed, `S1` sent over tcp
+    /// with one pair stressed; `S1` also ran the two shared-directory tests.
+    fn published() -> Snapshot {
         let mut snapshot = Snapshot::new();
-        snapshot.record_health(record(&format!("{scope}/process"), Health::Fine, "alive"));
-        snapshot.record_health(record(
-            &format!("{scope}/exclusive-claim/file"),
-            Health::Stressed,
-            "raced",
-        ));
-        snapshot.record_health(record(
-            &format!("{scope}/daily-backlog/drain"),
-            Health::Fine,
-            "drained",
-        ));
-        snapshot.record_health(record(
-            &format!("{ROOT}/fleet"),
-            Health::Holding,
-            "one node",
-        ));
+        for (leaf, health, evidence) in [
+            ("R1/system-process", Health::Fine, "alive"),
+            ("R1/receive/tcp/json", Health::Fine, "3/3 rounds passed"),
+            ("R1/receive/tcp/json/identification", Health::Fine, "held"),
+            ("R1/receive/file/text", Health::Fine, "3/3 rounds passed"),
+            ("P1/system-process", Health::Fine, "alive"),
+            ("P1/process/tcp/json", Health::Fine, "3/3 rounds passed"),
+            ("S1/system-process", Health::Fine, "alive"),
+            (
+                "S1/send/tcp/json",
+                Health::Stressed,
+                "2/3 rounds passed, 1 failed",
+            ),
+            ("S1/exclusive-claim/file", Health::Fine, "one holder"),
+            ("S1/daily-backlog/drain", Health::Fine, "drained"),
+        ] {
+            snapshot.record_health(record(&format!("{ROOT}/node/{leaf}"), health, evidence));
+        }
+        snapshot.record_health(record(&format!("{ROOT}/node"), Health::Stressed, "3 nodes"));
         for (counted, value) in [(Counted::Streams, 6), (Counted::Messages, 2)] {
             snapshot.record_count(Count {
-                scope: scope.clone(),
+                scope: format!("{ROOT}/node/S1/daily-backlog"),
                 counted,
                 value,
                 window_start_unix_nanos: 7,
@@ -335,49 +251,131 @@ mod tests {
         snapshot
     }
 
+    fn drawn() -> Topology {
+        let hops = [hop("R1", "P1", 3), hop("P1", "S1", 2)];
+        cluster_topology(&published(), ["R1", "P1", "S1", "S2"].into_iter(), &hops, 9)
+    }
+
+    fn find<'a>(topology: &'a Topology, id: &str) -> &'a TopologyNode {
+        topology
+            .nodes
+            .iter()
+            .find(|node| node.id == id)
+            .unwrap_or_else(|| panic!("{id} is drawn"))
+    }
+
     #[test]
-    fn the_fleet_its_store_and_every_node_are_drawn_with_three_links_each() {
-        let topology = fleet_topology(&published("R1"), ["R1", "P1"].into_iter(), 9);
-
-        let ids: Vec<&str> = topology.nodes.iter().map(|node| node.id.as_str()).collect();
-        assert_eq!(ids, ["fleet", "shared", "node/R1", "node/P1"]);
-        assert_eq!(topology.links.len(), 6);
-
-        let fleet = &topology.nodes[0];
-        assert_eq!((fleet.state.as_str(), fleet.activity), ("holding", 0.5));
-        let store = &topology.nodes[1];
+    fn the_cluster_holds_nodes_that_hold_stages_that_hold_endpoints() {
+        let topology = drawn();
+        let shape: Vec<(&str, &str, &str)> = topology
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node.kind.as_str(), node.parent.as_str()))
+            .collect();
         assert_eq!(
-            (store.kind.as_str(), store.state.as_str()),
-            ("location", "stressed")
-        );
-        let r1 = &topology.nodes[2];
-        assert_eq!(
-            (r1.parent.as_str(), r1.origin.as_str(), r1.activity),
-            ("fleet", "both", 1.0)
-        );
-        let p1 = &topology.nodes[3];
-        assert_eq!(
-            (p1.state.as_str(), p1.origin.as_str(), p1.activity),
-            ("working", "configured", 0.0)
+            shape,
+            [
+                ("cluster", "cluster", ""),
+                ("node/R1", "node", "cluster"),
+                ("node/R1/receive", "stage", "node/R1"),
+                ("node/R1/receive/file", "endpoint", "node/R1/receive"),
+                ("node/R1/receive/tcp", "endpoint", "node/R1/receive"),
+                ("node/P1", "node", "cluster"),
+                ("node/P1/process", "stage", "node/P1"),
+                ("node/S1", "node", "cluster"),
+                ("node/S1/send", "stage", "node/S1"),
+                ("node/S1/send/tcp", "endpoint", "node/S1/send"),
+                ("node/S2", "node", "cluster"),
+                ("node/S2/send", "stage", "node/S2"),
+                ("shared", "location", "cluster"),
+            ]
         );
 
-        let daily_backlog = &topology.links[1];
+        let cluster = find(&topology, "cluster");
         assert_eq!(
             (
-                daily_backlog.id.as_str(),
-                daily_backlog.to.as_str(),
-                daily_backlog.volume
+                cluster.label.as_str(),
+                cluster.scope.as_str(),
+                cluster.state.as_str()
             ),
-            ("R1/daily-backlog", "shared", 6)
+            ("playground", ROOT, "stressed")
         );
-        assert!((daily_backlog.progress - 0.75).abs() < f64::EPSILON);
-        assert_eq!(topology.links[2].to, "fleet");
+        assert!((cluster.activity - 0.75).abs() < f64::EPSILON);
+        let endpoint = find(&topology, "node/S1/send/tcp");
+        assert_eq!(
+            (
+                endpoint.label.as_str(),
+                endpoint.scope.as_str(),
+                endpoint.state.as_str()
+            ),
+            ("tcp", "xmip:///playground/node/S1/send/tcp", "stressed")
+        );
+        let idle = find(&topology, "node/S2/send");
+        assert_eq!(
+            (idle.origin.as_str(), idle.state.as_str()),
+            ("configured", "working")
+        );
+    }
+
+    #[test]
+    fn handoffs_link_the_stages_and_the_store_is_linked_only_by_who_ran_over_it() {
+        let topology = drawn();
+        let links: Vec<(&str, &str, &str, &str, u64)> = topology
+            .links
+            .iter()
+            .map(|link| {
+                (
+                    link.from.as_str(),
+                    link.to.as_str(),
+                    link.pattern.as_str(),
+                    link.protocol.as_str(),
+                    link.volume,
+                )
+            })
+            .collect();
+        assert_eq!(
+            links,
+            [
+                (
+                    "node/R1/receive",
+                    "node/P1/process",
+                    "send-receive",
+                    "handoff",
+                    3
+                ),
+                (
+                    "node/P1/process",
+                    "node/S1/send",
+                    "send-receive",
+                    "handoff",
+                    2
+                ),
+                ("node/S1", "shared", "publish-consume", "file", 0),
+                ("node/S1", "shared", "publish-consume", "file", 6),
+            ]
+        );
+        assert_eq!(topology.links[0].state, "fine");
+        assert_eq!(
+            topology.links[1].state, "stressed",
+            "the worst leaf involved"
+        );
+        assert_eq!(topology.links[1].origin, "both");
+        assert!((topology.links[3].progress - 0.75).abs() < f64::EPSILON);
+
+        let bare = cluster_topology(&Snapshot::new(), ["node-01"].into_iter(), &[], 9);
+        let ids: Vec<&str> = bare.nodes.iter().map(|node| node.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["cluster", "node/node-01"],
+            "no store until a test runs over it"
+        );
+        assert!(bare.links.is_empty());
     }
 
     #[test]
     fn the_topology_rides_the_snapshot_and_the_records_still_read_back() {
-        let snapshot = published("S1");
-        let topology = fleet_topology(&snapshot, ["S1"].into_iter(), 9);
+        let snapshot = published();
+        let topology = drawn();
 
         let text = to_toml_with(ROOT, &snapshot, Some(topology.clone()));
         assert!(text.contains("[[topology.nodes]]"));
@@ -385,7 +383,7 @@ mod tests {
         let parsed: toml::Value = text.parse().expect("valid TOML");
         assert_eq!(
             parsed["topology"]["nodes"].as_array().map(Vec::len),
-            Some(3)
+            Some(topology.nodes.len())
         );
 
         let back = from_toml(&text).expect("reads back");

@@ -36,7 +36,7 @@ impl Switches {
 }
 
 impl Switches {
-    /// The switches the fleet's node called `name` runs with: online when
+    /// The switches the cluster's node called `name` runs with: online when
     /// `XMIP_PLAYGROUND_ONLINE_NODES` names it, else — the variable unset —
     /// whatever `XMIP_ONLINE` says for every node.
     #[must_use]
@@ -53,7 +53,7 @@ pub fn online() -> bool {
     std::env::var("XMIP_ONLINE").is_ok_and(|raw| parse(&raw) == Some(true))
 }
 
-/// The fleet's nodes that may assume the internet, by name:
+/// The cluster's nodes that may assume the internet, by name:
 /// `XMIP_PLAYGROUND_ONLINE_NODES`, comma separated; `None` when unset. Set and
 /// empty means none of them.
 #[must_use]

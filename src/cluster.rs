@@ -1,33 +1,47 @@
-//! The fleet: node processes emulating a cluster, spawned and watched.
+//! The cluster: its nodes as processes, spawned and watched.
 //!
 //! ADR-0028 clause 2: nodes run as System Processes, and a process that hangs
 //! is killed and restarted like any other Host Service. Until 2026-09-09 no
 //! scenario spawned one; the owner's requirement — *about 10-40 processes
-//! emulating nodes* — is this. A [`Fleet`] starts [`Stress::nodes`] copies of
-//! the `node` binary beside the current executable, each running the `ExclusiveClaim`
-//! and `DailyBacklog` tests over one shared directory, so the contention is between
-//! processes, and each publishing its own snapshot file.
+//! emulating nodes* — is this. A [`Cluster`] starts one copy of the `node`
+//! binary per node beside the current executable, each told the tests that
+//! were named and every node's name, all over one shared directory, so the
+//! contention and the handoffs are between processes, and each publishing its
+//! own snapshot file. 2026-09-19, the owner: what the Playground spawns is a
+//! cluster and its nodes; the word this file was named for until then is
+//! retired.
 //!
-//! [`Fleet::tick`] is the surface's half of ADR-0027 decision 8: a node answers
-//! for itself, and the cluster view is assembled by whoever asks each node.
-//! Every node's latest file is read and merged — scopes are disjoint per node —
-//! and the fleet adds what no node can say about itself: a health record per
-//! node (alive, exited with its code, or hung) and the rollup at
-//! `xmip:///playground/fleet`, worst of all. A node whose snapshot has not
+//! [`Cluster::tick`] is the surface's half of ADR-0027 decision 8: a node
+//! answers for itself, and the cluster view is assembled by whoever asks each
+//! node. Every node's latest file is read and merged — scopes are disjoint per
+//! node — and the cluster adds what no node can say about itself: a health
+//! record per node (alive, exited with its code, or hung) and the rollup at
+//! `xmip:///<cluster>/node`, worst of all. A node whose snapshot has not
 //! changed for longer than three rounds is hung: it is killed and restarted,
-//! and the restart is recorded as a fault — a yellow that stays for the fleet's
-//! life — never silently.
+//! and the restart is recorded as a fault — a yellow that stays for the
+//! cluster's life — never silently.
+
+mod binary;
+mod member;
+mod rollup;
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use observe::{Health, HealthRecord, Snapshot};
+use observe::Snapshot;
 
-use crate::report::from_toml;
+#[cfg(test)]
+pub(crate) use binary::built_node_binary;
+pub use binary::node_binary;
+use member::Member;
+pub use rollup::merge;
+use rollup::rollup;
+
+use crate::handoff::Hop;
 use crate::stress::Stress;
-use crate::support::{cluster_root, now_unix_nanos};
+use crate::support::now_unix_nanos;
 use crate::switch::Switches;
 
 /// The fixture root this crate's tests publish under. A roll is a cluster the
@@ -41,29 +55,21 @@ const GRACE: Duration = Duration::from_secs(2);
 /// How long `stop` waits for the nodes to leave on their own.
 const STOP_WAIT: Duration = Duration::from_secs(5);
 
-/// The node processes, and what the fleet knows about each.
-pub struct Fleet {
+/// The node processes, and what the cluster knows about each.
+pub struct Cluster {
     binary: PathBuf,
     shared: PathBuf,
     stress: Stress,
     rounds: u64,
-    nodes: Vec<Node>,
+    /// The scenarios every node is told to run; empty means every one.
+    scenarios: Vec<String>,
+    /// Every node's name, which each node is told: the letter is the role,
+    /// and a role node finds the others by it.
+    names: Vec<String>,
+    nodes: Vec<Member>,
 }
 
-/// One node process and its published state.
-struct Node {
-    name: String,
-    child: Option<Child>,
-    exit: Option<ExitStatus>,
-    path: PathBuf,
-    text: String,
-    published: Snapshot,
-    fresh: bool,
-    silent: u32,
-    restarts: u32,
-}
-
-impl Fleet {
+impl Cluster {
     /// Spawn `stress.nodes()` node processes over `shared`, each publishing
     /// to `snapshots/<name>.toml`, each running `rounds` rounds (`0` runs until
     /// stopped).
@@ -117,34 +123,46 @@ impl Fleet {
         snapshots: &Path,
         rounds: u64,
     ) -> io::Result<Self> {
+        Self::spawn_driving(binary, stress, names, &[], shared, snapshots, rounds)
+    }
+
+    /// The same with the scenarios named: every node is told them, and runs
+    /// its part of those and nothing else (the owner, 2026-09-19: nodes run
+    /// the test that was named). None named is every scenario.
+    ///
+    /// # Errors
+    ///
+    /// When a process cannot be started.
+    pub fn spawn_driving(
+        binary: &Path,
+        stress: Stress,
+        names: &[String],
+        scenarios: &[String],
+        shared: &Path,
+        snapshots: &Path,
+        rounds: u64,
+    ) -> io::Result<Self> {
         std::fs::create_dir_all(shared)?;
         std::fs::create_dir_all(snapshots)?;
         std::fs::remove_file(shared.join("stop")).ok();
 
-        let mut fleet = Self {
+        let mut cluster = Self {
             binary: binary.to_path_buf(),
             shared: shared.to_path_buf(),
             stress,
             rounds,
+            scenarios: scenarios.to_vec(),
+            names: names.to_vec(),
             nodes: Vec::new(),
         };
         for name in names {
-            let name = name.clone();
             let path = snapshots.join(format!("{name}.toml"));
-            let child = fleet.start(&name, &path)?;
-            fleet.nodes.push(Node {
-                name,
-                child: Some(child),
-                exit: None,
-                path,
-                text: String::new(),
-                published: Snapshot::new(),
-                fresh: false,
-                silent: 0,
-                restarts: 0,
-            });
+            let child = cluster.start(name, &path)?;
+            cluster
+                .nodes
+                .push(Member::started(name.clone(), child, path));
         }
-        Ok(fleet)
+        Ok(cluster)
     }
 
     /// Start the node called `name` — the name decides whether it may assume
@@ -166,6 +184,14 @@ impl Fleet {
             .args(["--name", name, "--stress", self.stress.name()])
             .args(["--rounds", &self.rounds.to_string()])
             .args(["--interval-ms", &node_interval_ms(self.stress).to_string()])
+            .args(["--nodes", &self.names.join(",")])
+            // None named is every scenario, which is what no flag means.
+            .args(
+                (!self.scenarios.is_empty())
+                    .then(|| ["--scenarios".to_string(), self.scenarios.join(",")])
+                    .into_iter()
+                    .flatten(),
+            )
             .args(Switches::for_node(name).flags())
             .arg("--shared")
             .arg(&self.shared)
@@ -207,32 +233,17 @@ impl Fleet {
         snapshot
     }
 
-    /// Read every node's file; a changed one is parsed and marks the node fresh.
+    /// Read every node's file.
     fn read_all(&mut self) {
         for node in &mut self.nodes {
-            let Ok(text) = std::fs::read_to_string(&node.path) else {
-                continue;
-            };
-            if text == node.text {
-                continue;
-            }
-            if let Ok(snapshot) = from_toml(&text) {
-                node.published = snapshot;
-                node.text = text;
-                node.fresh = true;
-            }
+            node.read();
         }
     }
 
     /// Reap an exit, count silence, and restart a node silent too long.
     fn judge_process(&mut self, index: usize) {
         let node = &mut self.nodes[index];
-        if let Some(child) = node.child.as_mut()
-            && let Ok(Some(status)) = child.try_wait()
-        {
-            node.exit = Some(status);
-            node.child = None;
-        }
+        node.reap();
         if node.fresh {
             node.silent = 0;
         } else {
@@ -249,7 +260,7 @@ impl Fleet {
                     node.child = Some(child);
                     node.exit = None;
                 }
-                Err(error) => eprintln!("fleet: could not restart {name}: {error}"),
+                Err(error) => eprintln!("cluster: could not restart {name}: {error}"),
             }
         }
     }
@@ -281,14 +292,24 @@ impl Fleet {
         self.nodes.iter().map(|node| node.name.as_str())
     }
 
-    /// How many restarts the fleet has recorded, over every node.
+    /// How many restarts the cluster has recorded, over every node.
     #[must_use]
     pub fn restarts(&self) -> u32 {
         self.nodes.iter().map(|node| node.restarts).sum()
     }
+
+    /// The handoffs every node says it delivered, per link — what the
+    /// topology draws between the nodes.
+    #[must_use]
+    pub fn hops(&self) -> Vec<Hop> {
+        self.nodes
+            .iter()
+            .flat_map(|node| node.hops.iter().cloned())
+            .collect()
+    }
 }
 
-impl Drop for Fleet {
+impl Drop for Cluster {
     /// A failing test leaves no orphans.
     fn drop(&mut self) {
         for node in &mut self.nodes {
@@ -297,161 +318,15 @@ impl Drop for Fleet {
     }
 }
 
-impl Node {
-    fn alive(&self) -> bool {
-        self.child.is_some()
-    }
-
-    fn reap(&mut self) {
-        if let Some(child) = self.child.as_mut()
-            && let Ok(Some(status)) = child.try_wait()
-        {
-            self.exit = Some(status);
-            self.child = None;
-        }
-    }
-
-    fn kill(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            child.kill().ok();
-            self.exit = child.wait().ok();
-        }
-    }
-
-    /// What the fleet knows about the process itself, which the node cannot
-    /// say: alive, exited with its code, starting, or restarted after hanging.
-    fn process_record(&self, now: i64) -> HealthRecord {
-        let restarted = format!(
-            "restarted {} time(s) after {SILENT_ROUNDS} silent rounds (hung)",
-            self.restarts
-        );
-        let (health, severity, evidence) = match (&self.exit, self.restarts) {
-            (Some(status), _) if !status.success() => {
-                (Health::Done, 90, format!("exited with {status}"))
-            }
-            (Some(_), 0) => (Health::Fine, 0, "exited 0 after its rounds".to_string()),
-            (Some(_), _) => (Health::Stressed, 60, format!("exited 0; {restarted}")),
-            (None, 0) if self.text.is_empty() => {
-                (Health::Working, 20, "starting, no snapshot yet".to_string())
-            }
-            (None, 0) => (Health::Fine, 0, "alive".to_string()),
-            (None, _) => (Health::Stressed, 60, format!("alive; {restarted}")),
-        };
-        HealthRecord {
-            scope: format!("{}/node/{}/process", cluster_root(), self.name),
-            health,
-            severity,
-            evidence,
-            observed_unix_nanos: now,
-        }
-    }
-}
-
-/// The cluster rollup the surface owes: the worst leaf across every node, and
-/// which node carries it.
-fn rollup(snapshot: &Snapshot, count: usize, now: i64) -> HealthRecord {
-    let records = snapshot.health(&format!("{}/node", cluster_root()));
-    let worst = records.first();
-    let fine = records
-        .iter()
-        .filter(|record| record.health == Health::Fine)
-        .count();
-    let (health, severity, evidence) = match worst {
-        Some(record) if record.health != Health::Fine => (
-            record.health,
-            record.severity,
-            format!(
-                "{count} nodes, {fine} of {} leaves fine; worst {}: {}",
-                records.len(),
-                record
-                    .scope
-                    .trim_start_matches(&format!("{}/node/", cluster_root())),
-                record.evidence
-            ),
-        ),
-        Some(_) => (
-            Health::Fine,
-            0,
-            format!("{count} nodes, all {} leaves fine", records.len()),
-        ),
-        None => (
-            Health::Working,
-            20,
-            format!("{count} nodes, nothing published yet"),
-        ),
-    };
-    HealthRecord {
-        scope: format!("{}/fleet", cluster_root()),
-        health,
-        severity,
-        evidence,
-        observed_unix_nanos: now,
-    }
-}
-
-/// Copy every health record and count from one snapshot into another. Scopes
-/// are disjoint per scenario and per node, so nothing collides.
-pub fn merge(into: &mut Snapshot, from: &Snapshot) {
-    for record in from.health_records() {
-        into.record_health(record.clone());
-    }
-    for count in from.all_counts() {
-        into.record_count(count.clone());
-    }
-}
-
-/// The `node` binary: `XMIP_PLAYGROUND_NODE` if set, else beside the current
-/// executable, else one directory up from it (a test runs from `deps/`).
-///
-/// # Errors
-///
-/// When none of those is a file.
-pub fn node_binary() -> io::Result<PathBuf> {
-    if let Some(named) = std::env::var_os("XMIP_PLAYGROUND_NODE") {
-        return Ok(PathBuf::from(named));
-    }
-    let current = std::env::current_exe()?;
-    let file = format!("xmip-playground-node{}", std::env::consts::EXE_SUFFIX);
-    let beside = current.parent().map(|dir| dir.join(&file));
-    let above = current
-        .parent()
-        .and_then(Path::parent)
-        .map(|dir| dir.join(&file));
-    [beside, above]
-        .into_iter()
-        .flatten()
-        .find(|candidate| candidate.is_file())
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "no node binary beside the playground; build it, or set XMIP_PLAYGROUND_NODE",
-            )
-        })
-}
-
-/// The `node` binary, built now so a test never runs a stale one. Cargo sets
-/// `CARGO_BIN_EXE_<name>` for integration tests only, never for a library's
-/// unit tests, so a unit test builds the binary itself: a no-op when it is
-/// fresh, and cargo has released the build lock by the time tests run.
-#[cfg(test)]
-pub(crate) fn built_node_binary() -> PathBuf {
-    let status = Command::new(env!("CARGO"))
-        .args(["build", "-q", "--bin", "xmip-playground-node"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .status()
-        .expect("cargo runs");
-    assert!(status.success(), "the node binary builds");
-    node_binary().expect("the node binary is beside the test executable")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::support::scratch;
+    use observe::{Health, HealthRecord};
 
-    fn spawn(stress: Stress, count: usize, rounds: u64) -> (PathBuf, Fleet) {
-        let dir = scratch("fleet");
-        let fleet = Fleet::spawn_binary(
+    fn spawn(stress: Stress, count: usize, rounds: u64) -> (PathBuf, Cluster) {
+        let dir = scratch("cluster");
+        let cluster = Cluster::spawn_binary(
             &built_node_binary(),
             stress,
             count,
@@ -459,19 +334,19 @@ mod tests {
             &dir.join("snapshots"),
             rounds,
         )
-        .expect("the fleet spawns");
-        (dir, fleet)
+        .expect("the cluster spawns");
+        (dir, cluster)
     }
 
     /// Every node's snapshot arrives, the rollup exists, no claim across
     /// processes was double-picked, and stop leaves no child running.
     #[test]
-    fn a_realistic_fleet_publishes_rolls_up_and_stops_clean() {
-        let (dir, mut fleet) = spawn(Stress::Calm, Stress::Realistic.nodes(), 0);
-        assert_eq!(fleet.alive(), 3);
+    fn a_realistic_cluster_publishes_rolls_up_and_stops_clean() {
+        let (dir, mut cluster) = spawn(Stress::Calm, Stress::Realistic.nodes(), 0);
+        assert_eq!(cluster.alive(), 3);
 
-        let mut snapshot = fleet.tick();
-        snapshot = merge_into(snapshot, &fleet.tick());
+        let mut snapshot = cluster.tick();
+        snapshot = merge_into(snapshot, &cluster.tick());
 
         for name in ["node-01", "node-02", "node-03"] {
             let claim = format!("{ROOT}/node/{name}/exclusive-claim/file");
@@ -492,80 +367,162 @@ mod tests {
                 "{name}: the DailyBacklog drain published"
             );
             assert_eq!(
-                snapshot.worst(&format!("{ROOT}/node/{name}/process")),
+                snapshot.worst(&format!("{ROOT}/node/{name}/system-process")),
                 Some(Health::Fine),
                 "{name} is alive"
             );
         }
-        let rollup = snapshot.health(&format!("{ROOT}/fleet"));
-        assert_eq!(rollup.len(), 1, "the rollup exists");
+        let rollup = snapshot_record(&snapshot, &format!("{ROOT}/node"));
         assert!(
-            rollup[0].evidence.starts_with("3 nodes"),
+            rollup.evidence.starts_with("3 nodes"),
             "{}",
-            rollup[0].evidence
+            rollup.evidence
         );
 
-        fleet.stop();
-        assert_eq!(fleet.alive(), 0, "stop leaves no child running");
-        assert_eq!(fleet.restarts(), 0);
+        cluster.stop();
+        assert_eq!(cluster.alive(), 0, "stop leaves no child running");
+        assert_eq!(cluster.restarts(), 0);
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn a_node_that_exits_is_reported_with_its_code_and_the_fleet_stays_up() {
-        let (dir, mut fleet) = spawn(Stress::Calm, 1, 1);
-        let mut last = fleet.tick();
+    fn a_node_that_exits_is_reported_with_its_code_and_the_cluster_stays_up() {
+        let (dir, mut cluster) = spawn(Stress::Calm, 1, 1);
+        let mut last = cluster.tick();
         for _ in 0..8 {
-            last = fleet.tick();
-            if fleet.alive() == 0 {
+            last = cluster.tick();
+            if cluster.alive() == 0 {
                 break;
             }
         }
-        let process = snapshot_record(&last, &format!("{ROOT}/node/node-01/process"));
+        let process = snapshot_record(&last, &format!("{ROOT}/node/node-01/system-process"));
         assert_eq!(process.health, Health::Fine, "{}", process.evidence);
         assert!(
             process.evidence.starts_with("exited 0"),
             "{}",
             process.evidence
         );
-        fleet.stop();
+        cluster.stop();
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn a_silent_node_is_restarted_and_the_restart_is_a_yellow() {
-        let (dir, mut fleet) = spawn(Stress::Calm, 1, 0);
+        let (dir, mut cluster) = spawn(Stress::Calm, 1, 0);
         // Freeze the node's file at what it first published by pointing the
-        // fleet at a copy it will never update; the real node is then "hung".
-        fleet.tick();
+        // cluster at a copy it will never update; the real node is then "hung".
+        cluster.tick();
         let frozen = dir.join("frozen.toml");
-        std::fs::copy(&fleet.nodes[0].path, &frozen).expect("a frozen copy");
-        fleet.nodes[0].path = frozen;
-        let mut last = fleet.tick();
+        std::fs::copy(&cluster.nodes[0].path, &frozen).expect("a frozen copy");
+        cluster.nodes[0].path = frozen;
+        let mut last = cluster.tick();
         for _ in 0..=SILENT_ROUNDS {
-            last = fleet.tick();
+            last = cluster.tick();
         }
-        assert_eq!(fleet.restarts(), 1, "silent past three rounds is hung");
-        let process = snapshot_record(&last, &format!("{ROOT}/node/node-01/process"));
+        assert_eq!(cluster.restarts(), 1, "silent past three rounds is hung");
+        let process = snapshot_record(&last, &format!("{ROOT}/node/node-01/system-process"));
         assert_eq!(process.health, Health::Stressed, "{}", process.evidence);
         assert!(process.evidence.contains("hung"), "{}", process.evidence);
-        let rollup = snapshot_record(&last, &format!("{ROOT}/fleet"));
+        let rollup = snapshot_record(&last, &format!("{ROOT}/node"));
         assert_ne!(rollup.health, Health::Fine, "the rollup carries the fault");
-        fleet.stop();
-        assert_eq!(fleet.alive(), 0);
+        cluster.stop();
+        assert_eq!(cluster.alive(), 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The owner's shape, 2026-09-19: nodes run the test that was named, and
+    /// the letter is the role. `RoundTrip` alone over `R1`, `P1`, `S1` is three
+    /// processes handing each pair on, each publishing its own stage, the
+    /// hops recorded per link — and neither shared-directory test runs.
+    #[test]
+    fn role_nodes_run_the_named_test_and_hand_each_pair_r_to_p_to_s() {
+        let dir = scratch("cluster-roles");
+        let names = ["R1", "P1", "S1"].map(str::to_string);
+        let mut cluster = Cluster::spawn_driving(
+            &built_node_binary(),
+            Stress::Calm,
+            &names,
+            &["round-trip".to_string()],
+            &dir.join("shared"),
+            &dir.join("snapshots"),
+            0,
+        )
+        .expect("the cluster spawns");
+
+        let mut snapshot = cluster.tick();
+        for _ in 0..40 {
+            snapshot = merge_into(snapshot, &cluster.tick());
+            if !snapshot.health(&format!("{ROOT}/node/S1/send")).is_empty() {
+                break;
+            }
+        }
+        for (name, stage) in [("R1", "receive"), ("P1", "process"), ("S1", "send")] {
+            let leaves = snapshot.health(&format!("{ROOT}/node/{name}/{stage}"));
+            assert!(!leaves.is_empty(), "{name} published its {stage} stage");
+            for other in [
+                "receive",
+                "process",
+                "send",
+                "exclusive-claim",
+                "daily-backlog",
+            ] {
+                let foreign = snapshot.health(&format!("{ROOT}/node/{name}/{other}"));
+                assert!(other == stage || foreign.is_empty(), "{name} ran {other}");
+            }
+        }
+        let links: Vec<(String, String)> = cluster
+            .hops()
+            .into_iter()
+            .inspect(|hop| assert!(hop.count > 0))
+            .map(|hop| (hop.from, hop.to))
+            .collect();
+        assert!(
+            links.contains(&("R1".to_string(), "P1".to_string())),
+            "{links:?}"
+        );
+        assert!(
+            links.contains(&("P1".to_string(), "S1".to_string())),
+            "{links:?}"
+        );
+
+        cluster.stop();
+        assert_eq!(cluster.alive(), 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_node_told_an_unknown_scenario_is_refused_with_exit_code_two() {
+        let dir = scratch("cluster-refused");
+        let output = Command::new(built_node_binary())
+            .args(["--name", "R1", "--stress", "calm", "--rounds", "1"])
+            .args(["--scenarios", "round-trip,pingpong"])
+            .arg("--shared")
+            .arg(dir.join("shared"))
+            .arg("--snapshot")
+            .arg(dir.join("R1.toml"))
+            .output()
+            .expect("the node binary runs");
+        assert_eq!(output.status.code(), Some(2));
+        let said = String::from_utf8_lossy(&output.stderr);
+        assert!(said.contains("REFUSED"), "{said}");
+        assert!(
+            said.contains("pingpong") && said.contains("daily-backlog"),
+            "{said}"
+        );
+        assert!(!dir.join("R1.toml").exists(), "nothing ran");
         std::fs::remove_dir_all(&dir).ok();
     }
 
     /// Forty processes, the owner's ceiling. For the runner, not the gate.
     #[test]
     #[ignore = "forty processes; run on purpose"]
-    fn brutal_fleet_of_forty() {
-        let (dir, mut fleet) = spawn(Stress::Brutal, Stress::Brutal.nodes(), 0);
-        let mut snapshot = fleet.tick();
+    fn brutal_cluster_of_forty() {
+        let (dir, mut cluster) = spawn(Stress::Brutal, Stress::Brutal.nodes(), 0);
+        let mut snapshot = cluster.tick();
         for _ in 0..4 {
-            snapshot = merge_into(snapshot, &fleet.tick());
+            snapshot = merge_into(snapshot, &cluster.tick());
         }
-        let published = fleet
+        let published = cluster
             .names()
             .filter(|name| {
                 snapshot
@@ -574,8 +531,8 @@ mod tests {
             })
             .count();
         assert_eq!(published, 40, "every one of forty nodes published");
-        fleet.stop();
-        assert_eq!(fleet.alive(), 0);
+        cluster.stop();
+        assert_eq!(cluster.alive(), 0);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -588,7 +545,7 @@ mod tests {
         snapshot
             .health(scope)
             .into_iter()
-            .next()
+            .find(|record| record.scope == scope)
             .unwrap_or_else(|| panic!("{scope} is recorded"))
     }
 }

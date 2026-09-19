@@ -52,8 +52,8 @@ const READERS: usize = 4;
 /// Percent of rounds a pressured run drops the atomic claim, so the board mostly
 /// holds and a breach surfaces now and then rather than every round.
 const BREACH_RATE: u8 = 12;
-/// How long a shared judge waits for the fleet to drain its lane before it
-/// calls what remains missed.
+/// How long a shared judge waits for the cluster's nodes to drain its lane
+/// before it calls what remains missed.
 const DRAIN_WAIT: Duration = Duration::from_secs(2);
 
 /// The transport substrate the claim runs over: the file directory, the one
@@ -389,7 +389,7 @@ mod tests {
             std::fs::write(staging.join(format!("item_0_{n}")), b"x").expect("an item");
         }
         std::fs::rename(&staging, &contended).expect("the lane into place");
-        let node = crate::fleet::built_node_binary();
+        let node = crate::cluster::built_node_binary();
 
         let children: Vec<std::process::Child> = ["left", "right"]
             .iter()

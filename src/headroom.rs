@@ -7,7 +7,7 @@
 //! free, and the Playground takes half of that; when the other work grows
 //! to half the machine, the Playground's share falls to a quarter. So the
 //! measure is taken again before every round, and it measures the *others*:
-//! the machine's processor time less what the roll and its fleet of nodes
+//! the machine's processor time less what the roll and its cluster's nodes
 //! are burning themselves, or a busy roll would read its own load as someone
 //! else's and throttle itself to nothing.
 //!
@@ -150,7 +150,7 @@ mod sample {
         Some((1.0 - others / 100.0).clamp(0.0, 1.0))
     }
 
-    /// The counters of the roll and of its fleet, by process name.
+    /// The counters of the roll and of its nodes, by process name.
     fn is_ours(counter: &str) -> bool {
         let instance = counter
             .split(r"\Process(")
@@ -199,7 +199,7 @@ mod sample {
         )
     }
 
-    /// This process's user and system ticks; the fleet's nodes are read the
+    /// This process's user and system ticks; the cluster's nodes are read the
     /// same way where they are this process's children.
     fn own_ticks() -> u64 {
         let stat = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();

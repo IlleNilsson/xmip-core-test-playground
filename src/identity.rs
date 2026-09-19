@@ -14,6 +14,8 @@
 //! feeds the gate the input that makes it truly refuse: an arrival with no
 //! certificate, an authenticator that will not prove, a policy that denies.
 
+pub mod verdicts;
+
 use authenticate::{
     Acceptance, AuthenticateError, Authenticator, PartyRegistry, Refusal, authenticate,
 };

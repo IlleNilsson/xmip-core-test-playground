@@ -18,6 +18,8 @@ use std::path::Path;
 use observe::{Activity, Count, Counted, Health, HealthRecord, History, ItemKind, Snapshot};
 use serde::{Deserialize, Serialize};
 
+use crate::handoff::Hop;
+use crate::run::Run;
 use crate::topology::Topology;
 
 #[derive(Serialize, Deserialize)]
@@ -26,7 +28,15 @@ struct SnapshotReport {
     node: String,
     records: Vec<RecordReport>,
     counts: Vec<CountReport>,
-    /// The fleet's communication, when a roll has one to publish (ADR-0052,
+    /// What the run was started with, when a roll says (2026-09-19); a node
+    /// writes none, and a reader that does not know the table skips it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    run: Option<Run>,
+    /// The handoffs a role node delivered, per link; a roll writes none —
+    /// it draws them as the topology's links.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hops: Vec<Hop>,
+    /// The cluster's communication, when a roll has one to publish (ADR-0052,
     /// amendment 2026-09-14); a node writes none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     topology: Option<Topology>,
@@ -45,6 +55,10 @@ struct RecordReport {
 struct CountReport {
     counted: String,
     value: u64,
+    /// Where the count was recorded, in a node's own file; empty in a roll's,
+    /// whose counts are the sums at its root, as the surfaces read them.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    scope: String,
 }
 
 #[derive(Serialize)]
@@ -84,10 +98,79 @@ pub fn to_toml(node: &str, snapshot: &Snapshot) -> String {
 }
 
 /// [`to_toml`] with the communication topology a roll publishes beside the
-/// snapshot: the fleet's nodes and links, under `[topology]`.
+/// snapshot: the cluster's nodes and links, under `[topology]`.
 #[must_use]
 pub fn to_toml_with(node: &str, snapshot: &Snapshot, topology: Option<Topology>) -> String {
-    let records = snapshot
+    to_toml_run(node, snapshot, topology, None)
+}
+
+/// [`to_toml_with`] with what the run was started with, under `[run]`.
+#[must_use]
+pub fn to_toml_run(
+    node: &str,
+    snapshot: &Snapshot,
+    topology: Option<Topology>,
+    run: Option<Run>,
+) -> String {
+    let counts = COUNTED
+        .into_iter()
+        .filter_map(|counted| {
+            snapshot.measure(node, counted).map(|count| CountReport {
+                counted: counted_name(counted).to_string(),
+                value: count.value,
+                scope: String::new(),
+            })
+        })
+        .collect();
+    let report = SnapshotReport {
+        source: format!("playground — {node}"),
+        node: node.to_string(),
+        records: records(node, snapshot),
+        counts,
+        run,
+        hops: Vec::new(),
+        topology,
+    };
+    toml::to_string(&report).unwrap_or_default()
+}
+
+/// A node's own file: its records, every count at the scope it was recorded
+/// at — two tests on one node count the same kinds, and the cluster must
+/// tell them apart — and the handoffs it delivered, per link.
+#[must_use]
+pub fn node_toml(node: &str, snapshot: &Snapshot, hops: Vec<Hop>) -> String {
+    let counts = snapshot
+        .all_counts()
+        .map(|count| CountReport {
+            counted: counted_name(count.counted).to_string(),
+            value: count.value,
+            scope: count.scope.clone(),
+        })
+        .collect();
+    let report = SnapshotReport {
+        source: format!("playground — {node}"),
+        node: node.to_string(),
+        records: records(node, snapshot),
+        counts,
+        run: None,
+        hops,
+        topology: None,
+    };
+    toml::to_string(&report).unwrap_or_default()
+}
+
+/// Every kind a snapshot file carries, in the order it lists them.
+const COUNTED: [Counted; 6] = [
+    Counted::Streams,
+    Counted::Messages,
+    Counted::Journeys,
+    Counted::Bytes,
+    Counted::Retrying,
+    Counted::Failed,
+];
+
+fn records(node: &str, snapshot: &Snapshot) -> Vec<RecordReport> {
+    snapshot
         .health(node)
         .into_iter()
         .map(|record| RecordReport {
@@ -97,34 +180,7 @@ pub fn to_toml_with(node: &str, snapshot: &Snapshot, topology: Option<Topology>)
             evidence: record.evidence,
             observed_unix_nanos: record.observed_unix_nanos,
         })
-        .collect();
-
-    let counts = [
-        Counted::Streams,
-        Counted::Messages,
-        Counted::Journeys,
-        Counted::Bytes,
-        Counted::Retrying,
-        Counted::Failed,
-    ]
-    .into_iter()
-    .filter_map(|counted| {
-        snapshot.measure(node, counted).map(|count| CountReport {
-            counted: counted_name(counted).to_string(),
-            value: count.value,
-        })
-    })
-    .collect();
-
-    let report = SnapshotReport {
-        source: format!("playground — {node}"),
-        node: node.to_string(),
-        records,
-        counts,
-        topology,
-    };
-
-    toml::to_string(&report).unwrap_or_default()
+        .collect()
 }
 
 /// The snapshot a node published, read back from the TOML [`to_toml`] wrote —
@@ -137,6 +193,15 @@ pub fn to_toml_with(node: &str, snapshot: &Snapshot, topology: Option<Topology>)
 ///
 /// When the text is not the TOML this module writes.
 pub fn from_toml(text: &str) -> Result<Snapshot, toml::de::Error> {
+    node_from_toml(text).map(|(snapshot, _)| snapshot)
+}
+
+/// [`from_toml`] with the handoffs the node delivered, per link.
+///
+/// # Errors
+///
+/// When the text is not the TOML this module writes.
+pub fn node_from_toml(text: &str) -> Result<(Snapshot, Vec<Hop>), toml::de::Error> {
     let report: SnapshotReport = toml::from_str(text)?;
     let mut snapshot = Snapshot::new();
     let newest = report
@@ -160,8 +225,13 @@ pub fn from_toml(text: &str) -> Result<Snapshot, toml::de::Error> {
 
     for count in report.counts {
         if let Some(counted) = counted_named(&count.counted) {
+            let scope = if count.scope.is_empty() {
+                report.node.clone()
+            } else {
+                count.scope
+            };
             snapshot.record_count(Count {
-                scope: report.node.clone(),
+                scope,
                 counted,
                 value: count.value,
                 window_start_unix_nanos: newest,
@@ -171,7 +241,7 @@ pub fn from_toml(text: &str) -> Result<Snapshot, toml::de::Error> {
         }
     }
 
-    Ok(snapshot)
+    Ok((snapshot, report.hops))
 }
 
 /// The node's throughput over time as the TOML the history cmdlet and UI read:
@@ -279,16 +349,9 @@ fn health_named(state: &str) -> Option<Health> {
 }
 
 fn counted_named(name: &str) -> Option<Counted> {
-    [
-        Counted::Streams,
-        Counted::Messages,
-        Counted::Journeys,
-        Counted::Bytes,
-        Counted::Retrying,
-        Counted::Failed,
-    ]
-    .into_iter()
-    .find(|counted| counted_name(*counted) == name)
+    COUNTED
+        .into_iter()
+        .find(|counted| counted_name(*counted) == name)
 }
 
 const fn kind_name(kind: ItemKind) -> &'static str {

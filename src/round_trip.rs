@@ -35,27 +35,10 @@ pub fn round_trip_with(
     contract: Contract,
     payload: &[u8],
 ) -> (Outcome, u64) {
-    if let Some(why) = transport.refuses(payload) {
-        return (Outcome::OneSided(why), 0);
-    }
-    let outcome = match transport.exchange(payload) {
-        Exchange::Returned(back) if back == payload => {
-            // It round-tripped; now the contract must hold over what arrived.
-            let arrived = Stream::new(
-                StreamId::new(1),
-                back,
-                Some(contract.representation().to_string()),
-            );
-            match contract.validate(&arrived) {
-                Ok(()) => Outcome::Delivered,
-                Err(why) => Outcome::Failed(format!("contract not held: {why}")),
-            }
-        }
-        Exchange::Returned(_) => {
-            Outcome::Failed("what came back did not match what was sent".to_string())
-        }
-        Exchange::OneSided(why) => Outcome::OneSided(why),
-        Exchange::Failed(why) => Outcome::Failed(why),
+    // It round-tripped; now the contract must hold over what arrived.
+    let outcome = match carried(transport, payload) {
+        Ok(back) => held(contract, back),
+        Err(outcome) => outcome,
     };
 
     let bytes = if matches!(outcome, Outcome::Delivered) {
@@ -65,6 +48,45 @@ pub fn round_trip_with(
     };
 
     (outcome, bytes)
+}
+
+/// The transport's half of a round: `payload` through `transport`, and what
+/// arrived when it arrived whole. A role node runs this half alone — an `R`
+/// node as the arrival, an `S` node as the send — and leaves the contract to
+/// the `P` node between them.
+///
+/// # Errors
+///
+/// The outcome to publish when nothing arrived whole: one-sided when the
+/// transport declares it cannot carry the payload or supports one direction
+/// only, failed when the exchange failed or what came back did not match.
+pub fn carried(transport: &dyn RoundTrip, payload: &[u8]) -> Result<Vec<u8>, Outcome> {
+    if let Some(why) = transport.refuses(payload) {
+        return Err(Outcome::OneSided(why));
+    }
+    match transport.exchange(payload) {
+        Exchange::Returned(back) if back == payload => Ok(back),
+        Exchange::Returned(_) => Err(Outcome::Failed(
+            "what came back did not match what was sent".to_string(),
+        )),
+        Exchange::OneSided(why) => Err(Outcome::OneSided(why)),
+        Exchange::Failed(why) => Err(Outcome::Failed(why)),
+    }
+}
+
+/// The contract's half of a round: the bytes that arrived rebuilt into a
+/// Stream, and the real contract run over it.
+#[must_use]
+pub fn held(contract: Contract, arrived: Vec<u8>) -> Outcome {
+    let arrived = Stream::new(
+        StreamId::new(1),
+        arrived,
+        Some(contract.representation().to_string()),
+    );
+    match contract.validate(&arrived) {
+        Ok(()) => Outcome::Delivered,
+        Err(why) => Outcome::Failed(format!("contract not held: {why}")),
+    }
 }
 
 #[cfg(test)]

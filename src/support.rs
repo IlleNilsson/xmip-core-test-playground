@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// `XMIP_PLAYGROUND_CLUSTER`; `None` when nobody named one. A test may spawn
 /// nodes, never a cluster (the owner, 2026-09-14; ADR-0052), so the binaries
 /// refuse to start without a name rather than inventing one. A roll's nodes
-/// inherit the variable, so the fleet and every node agree on the root without
+/// inherit the variable, so the roll and every node agree on the root without
 /// being told twice.
 #[must_use]
 pub fn cluster_name() -> Option<String> {
@@ -27,7 +27,7 @@ pub fn cluster_name() -> Option<String> {
 #[must_use]
 pub fn cluster_root() -> String {
     cluster_name().map_or_else(
-        || crate::fleet::ROOT.to_string(),
+        || crate::cluster::ROOT.to_string(),
         |name| format!("xmip:///{name}"),
     )
 }
