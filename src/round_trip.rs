@@ -51,7 +51,7 @@ pub fn round_trip_with(
 }
 
 /// The transport's half of a round: `payload` through `transport`, and what
-/// arrived when it arrived whole. A role node runs this half alone — an `R`
+/// arrived when it arrived whole. A node runs this half alone — a receiving
 /// node as the arrival, an `S` node as the send — and leaves the contract to
 /// the `P` node between them.
 ///

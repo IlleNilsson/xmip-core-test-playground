@@ -2,20 +2,28 @@
 //!
 //! ```text
 //! node --name <name> --shared <dir> --stress <level> --rounds <n> --snapshot <path>
-//!      [--interval-ms <ms>] [--online true|false]
-//!      [--nodes <name,name,...>] [--scenarios <scenario,scenario,...>]
+//!      [--interval-ms <ms>] [--online true|false] [--can receive,process]
+//!      [--nodes <name[=capability],...>] [--scenarios <scenario,...>]
 //! ```
+//!
+//! **A node declares what it can do** (ADR-0056). `--can` says which stages of
+//! the message path this node serves — `receive`, `process`, `send`, or more
+//! than one — and `--nodes` says the same for every node of the cluster, so
+//! this one finds the others without asking. Nothing is read out of a name: on
+//! 2026-09-19 the rig took a node's stage from its first letter and the owner
+//! said *I know, so why do you break it!* A word that is no capability is
+//! REFUSED with exit code 2 and the words there are (ADR-0055).
 //!
 //! **It runs the tests that were named** (the owner, 2026-09-19) — its part
 //! of the `--scenarios` it is given, every one when none is given. A name
 //! that is no scenario is REFUSED with exit code 2 and the scenarios there
 //! are; it is never dropped.
 //!
-//!   - **`RoundTrip`**, when its name gives it a role — `R` receives, `P`
-//!     processes, `S` sends — and `--nodes` names a cluster with all three:
-//!     its one stage of the message path, handing each pair on to the next
-//!     node through the inboxes under `<shared>/handoff/` (`relay.rs`). A
-//!     node with no role runs no part of it; the roll runs it whole.
+//!   - **`RoundTrip`**, for each stage it declared, when `--nodes` covers the
+//!     whole path: that stage of the message path, handing each pair on to a
+//!     node that declared the next through the inboxes under
+//!     `<shared>/handoff/` (`relay.rs`). A node that declared no stage runs no
+//!     part of it; the roll runs it whole.
 //!   - **`ExclusiveClaim`** and **`DailyBacklog`**, over a directory the whole
 //!     cluster shares — `<shared>/exclusive-claim` and
 //!     `<shared>/daily-backlog` — so exclusive pickup and backlog draining are
@@ -32,8 +40,13 @@
 //! claiming what this one was about to take is a lost race and a normal
 //! outcome; nothing here treats it as an error. The stress level sets the
 //! injected fault rates (none at `calm`), and the interval is the pause
-//! between rounds, a quarter of a second unless given. `--online` gates what
-//! is outside the cluster only: an offline node takes handoffs like any other.
+//! between rounds, a quarter of a second unless given. Online capability gates
+//! what is outside the cluster only: an offline node takes handoffs like any
+//! other.
+//!
+//! Each round it publishes what it declared at `<node>/capability`, beside the
+//! `switch` record, so a surface reads a node's capabilities from the snapshot
+//! rather than from its name.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -43,7 +56,7 @@ use observe::Snapshot;
 use xmip_test_playground::cluster::merge;
 use xmip_test_playground::scenario::{self, DAILY_BACKLOG, EXCLUSIVE_CLAIM, ROUND_TRIP, drives};
 use xmip_test_playground::{
-    DailyBacklog, ExclusiveClaim, Relay, Roster, Stress, Switches, cluster_root, node_toml,
+    Capability, DailyBacklog, ExclusiveClaim, Relay, Roster, Stress, cluster_root, node_toml,
     write_atomic,
 };
 
@@ -55,25 +68,29 @@ struct Arguments {
     rounds: u64,
     snapshot: PathBuf,
     interval: Duration,
-    /// ADR-0045: whether this node may assume the internet. Published in
-    /// its own health record, so the cluster's board shows it per node.
-    online: bool,
-    /// Every node of the cluster, this one among them; empty when not told.
-    nodes: Vec<String>,
+    /// What this node declared it can do (ADR-0056): the stages of the
+    /// message path from `--can`, and from `--online` whether it may assume
+    /// the internet (ADR-0045). Published in its own health records, so the
+    /// cluster's board shows both per node.
+    capability: Capability,
+    /// Every node of the cluster and what each declared, this one among them;
+    /// empty when not told.
+    roster: Roster,
     /// The scenarios to run this node's part of; empty means every one.
     scenarios: Vec<String>,
 }
+
+const USAGE: &str = "usage: node --name <name> --shared <dir> --stress <level> --rounds <n> \
+     --snapshot <path> [--interval-ms <ms>] [--online true|false] \
+     [--can receive,process] [--nodes <name[=capability],...>] \
+     [--scenarios <scenarios>]";
 
 fn main() -> ExitCode {
     let arguments = match parse(std::env::args().skip(1)) {
         Ok(arguments) => arguments,
         Err(problem) => {
             eprintln!("node: {problem}");
-            eprintln!(
-                "usage: node --name <name> --shared <dir> --stress <level> --rounds <n> \
-                 --snapshot <path> [--interval-ms <ms>] [--online true|false] \
-                 [--nodes <names>] [--scenarios <scenarios>]"
-            );
+            eprintln!("{USAGE}");
             return ExitCode::from(2);
         }
     };
@@ -87,14 +104,33 @@ fn main() -> ExitCode {
 
     let shared = &arguments.shared;
     let chosen = &arguments.scenarios;
-    let mut relay = drives(chosen, ROUND_TRIP)
-        .then(|| {
-            let work = shared.join("work").join(&arguments.name);
-            let roster = Roster::of(&arguments.nodes);
-            Relay::new(&arguments.name, node.clone(), &roster, shared, &work)
-        })
-        .flatten()
-        .map(|relay| relay.at(arguments.stress));
+    // This node's own `--can` is the last word on itself; the roster says what
+    // the others declared, so it knows who can take the next stage.
+    let roster = arguments
+        .roster
+        .clone()
+        .declared(&arguments.name, arguments.capability.clone());
+    let mut relays: Vec<Relay> = if drives(chosen, ROUND_TRIP) {
+        let work = shared.join("work").join(&arguments.name);
+        arguments
+            .capability
+            .features()
+            .iter()
+            .filter_map(|stage| {
+                Relay::new(
+                    &arguments.name,
+                    node.clone(),
+                    *stage,
+                    &roster,
+                    shared,
+                    &work,
+                )
+                .map(|relay| relay.at(arguments.stress))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut exclusive_claim = drives(chosen, EXCLUSIVE_CLAIM).then(|| {
         let scope = format!("{node}/{EXCLUSIVE_CLAIM}");
         ExclusiveClaim::shared(scope, shared.join(EXCLUSIVE_CLAIM)).at(arguments.stress)
@@ -115,8 +151,9 @@ fn main() -> ExitCode {
         round += 1;
 
         let mut snapshot = Snapshot::new();
-        if let Some(relay) = relay.as_mut() {
-            merge(&mut snapshot, &relay.tick());
+        for relay in &mut relays {
+            let ticked = relay.tick();
+            merge(&mut snapshot, &ticked);
         }
         if let Some(exclusive_claim) = exclusive_claim.as_mut() {
             merge(&mut snapshot, &exclusive_claim.tick());
@@ -124,11 +161,22 @@ fn main() -> ExitCode {
         if let Some(daily_backlog) = daily_backlog.as_mut() {
             merge(&mut snapshot, &daily_backlog.tick());
         }
-        snapshot.record_health(switch_record(&node, arguments.online));
+        snapshot.record_health(record(
+            format!("{node}/switch"),
+            format!(
+                "{}; the estate's tests run offline",
+                arguments.capability.word()
+            ),
+        ));
+        snapshot.record_health(record(
+            format!("{node}/capability"),
+            arguments.capability.evidence(),
+        ));
 
-        let hops = relay
-            .as_ref()
-            .map_or_else(Vec::new, |relay| relay.hops().links().cloned().collect());
+        let hops = relays
+            .iter()
+            .flat_map(|relay| relay.hops().links().cloned())
+            .collect();
         let text = node_toml(&node, &snapshot, hops);
         if let Err(error) = write_atomic(&arguments.snapshot, &text) {
             eprintln!(
@@ -155,7 +203,8 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
     let mut snapshot = None;
     let mut interval = Duration::from_millis(250);
     let mut online = false;
-    let mut nodes = Vec::new();
+    let mut can = Capability::none();
+    let mut roster = Roster::default();
     let mut scenarios = Vec::new();
 
     let mut args = args.peekable();
@@ -174,7 +223,8 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
                 online = xmip_test_playground::switch::parse(&value)
                     .ok_or(format!("--online wants true or false, not {value}"))?;
             }
-            "--nodes" => nodes = xmip_test_playground::switch::names(&value),
+            "--can" => can = Capability::parse(&value)?,
+            "--nodes" => roster = Roster::parse(&value)?,
             "--scenarios" => scenarios = scenario::chosen(Some(&value))?,
             other => return Err(format!("unknown flag {other}")),
         }
@@ -187,22 +237,22 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
         rounds: rounds.ok_or("--rounds is required")?,
         snapshot: snapshot.ok_or("--snapshot is required")?,
         interval,
-        online,
-        nodes,
+        capability: can.with_online(online),
+        roster,
         scenarios,
     })
 }
 
-/// The node's `online` switch as one health record under its scope:
-/// always fine, its evidence the word, so the cluster's board shows which
-/// emulated nodes may assume the internet (ADR-0045, none by default).
-fn switch_record(node: &str, online: bool) -> observe::HealthRecord {
-    let switches = Switches { online };
+/// One health record of the node's own, always fine: what it declared, and
+/// the online capability's word. The cluster's board reads both per node
+/// (ADR-0045, ADR-0056), and the topology takes a node's stages from the
+/// capability record rather than from its name.
+fn record(scope: String, evidence: String) -> observe::HealthRecord {
     observe::HealthRecord {
-        scope: format!("{node}/switch"),
+        scope,
         health: observe::Health::Fine,
         severity: 0,
-        evidence: format!("{}; the estate's tests run offline", switches.word()),
+        evidence,
         observed_unix_nanos: xmip_test_playground::now_unix_nanos(),
     }
 }
@@ -234,14 +284,26 @@ mod tests {
     }
 
     #[test]
-    fn the_scenarios_and_the_nodes_are_read_and_absent_means_every_one() {
+    fn the_scenarios_and_the_roster_are_read_and_absent_means_every_one() {
         let bare = arguments(&[]).expect("the required flags suffice");
-        assert!(bare.scenarios.is_empty() && bare.nodes.is_empty());
+        assert!(bare.scenarios.is_empty() && bare.roster.is_empty());
+        assert!(
+            bare.capability.declares_no_stage(),
+            "a node told nothing declares nothing and runs whole tests"
+        );
 
-        let told = arguments(&["--scenarios", "Round-Trip", "--nodes", "R1, P1,S1"])
-            .expect("both are well formed");
+        let told = arguments(&[
+            "--scenarios",
+            "Round-Trip",
+            "--nodes",
+            "R1=receive, P1=process,S1=send",
+            "--can",
+            "receive",
+        ])
+        .expect("all three are well formed");
         assert_eq!(told.scenarios, ["round-trip"]);
-        assert_eq!(told.nodes, ["R1", "P1", "S1"]);
+        assert_eq!(told.roster.names(), ["R1", "P1", "S1"]);
+        assert_eq!(told.capability.words(), "receive");
         assert!(
             arguments(&["--scenarios", ""])
                 .expect("empty is every one")
@@ -251,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_scenario_is_refused_with_the_names_there_are() {
+    fn an_unknown_scenario_or_capability_is_refused_with_the_names_there_are() {
         let refusal = arguments(&["--scenarios", "round-trip,pingpong"])
             .err()
             .expect("pingpong is no scenario");
@@ -260,5 +322,16 @@ mod tests {
             refusal.contains("pingpong") && refusal.contains("exclusive-claim"),
             "{refusal}"
         );
+
+        for extra in [["--can", "relay"], ["--nodes", "R1=relay"]] {
+            let refusal = arguments(&extra)
+                .err()
+                .unwrap_or_else(|| panic!("{extra:?}"));
+            assert!(refusal.starts_with("REFUSED"), "{refusal}");
+            assert!(
+                refusal.contains("relay") && refusal.contains("receive, process, send"),
+                "{refusal}"
+            );
+        }
     }
 }

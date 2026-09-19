@@ -32,7 +32,7 @@ struct SnapshotReport {
     /// writes none, and a reader that does not know the table skips it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     run: Option<Run>,
-    /// The handoffs a role node delivered, per link; a roll writes none —
+    /// The handoffs a node delivered, per link; a roll writes none —
     /// it draws them as the topology's links.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     hops: Vec<Hop>,

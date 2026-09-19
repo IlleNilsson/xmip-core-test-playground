@@ -20,7 +20,7 @@ pub const SCENARIOS: [&str; 7] = [
     "daily-backlog",
 ];
 
-/// The scenario role nodes hand from one to the next.
+/// The scenario a cluster's nodes hand from one stage to the next.
 pub const ROUND_TRIP: &str = "round-trip";
 /// Exclusive pickup over the cluster's shared directory.
 pub const EXCLUSIVE_CLAIM: &str = "exclusive-claim";

@@ -66,7 +66,8 @@ impl Spawned {
         command
             .env("XMIP_PLAYGROUND_CLUSTER", cluster)
             .args(["--name", cluster, "--stress", orders.stress.name()])
-            .args(["--nodes", &orders.names.join(",")])
+            // Each node with what it was declared with, never its name alone.
+            .args(["--nodes", &orders.roster.text()])
             // The cluster rolls until the roll stops it; its nodes run its
             // rounds, which is what `orders` carries.
             .args(["--rounds", "0"]);
@@ -186,8 +187,9 @@ mod tests {
     #[test]
     fn a_spawned_cluster_publishes_its_nodes_and_stops_them_with_itself() {
         let dir = scratch("spawned");
-        let names = ["R1", "P1", "S1"].map(str::to_string);
-        let orders = Orders::of(Stress::Calm, &names, 0)
+        let roster =
+            crate::Roster::parse("R1=receive,P1=process,S1=send").expect("a well-formed roster");
+        let orders = Orders::of(Stress::Calm, roster, 0)
             .driving(&["round-trip".to_string()])
             .with_online(Some(vec!["R1".to_string()]));
         let path = dir.join("Zt-cluster.toml");

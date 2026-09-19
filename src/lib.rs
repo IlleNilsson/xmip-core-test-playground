@@ -49,6 +49,7 @@
 
 pub mod budget;
 pub mod cabinet;
+pub mod capability;
 pub mod cluster;
 pub mod contracts;
 pub mod daily_backlog;
@@ -66,7 +67,7 @@ pub mod relay;
 pub mod remote;
 pub mod report;
 pub mod retention;
-pub mod role;
+pub mod roster;
 pub mod round_trip;
 pub mod roundtrip;
 pub mod run;
@@ -82,6 +83,7 @@ pub mod verdict;
 
 pub use budget::Budget;
 pub use cabinet::{Cabinet, Filed, all_cabinets};
+pub use capability::Capability;
 pub use cluster::Cluster;
 pub use contracts::ContentContract;
 pub use daily_backlog::DailyBacklog;
@@ -97,13 +99,12 @@ pub use report::{
     activity_toml, history_toml, node_toml, to_toml, to_toml_run, to_toml_with, write_atomic,
 };
 pub use retention::Retention;
-pub use role::{Role, Roster};
+pub use roster::Roster;
 pub use round_trip::round_trip;
 pub use roundtrip::{Exchange, FileRoundTrip, RoundTrip, TcpRoundTrip, UdpRoundTrip};
 pub use run::Run;
 pub use schedule::{CONTRACTS, Schedule};
 pub use stress::Stress;
 pub use support::{cluster_name, cluster_root, now_unix_nanos};
-pub use switch::Switches;
 pub use topology::{Topology, cluster_topology};
 pub use verdict::{Contract, Outcome, Stage, Verdict};

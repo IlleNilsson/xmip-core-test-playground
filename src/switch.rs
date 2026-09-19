@@ -1,5 +1,11 @@
-//! The switches a cluster and a node carry, and the one the tests read:
-//! `online`, whether a route to the internet may be assumed (ADR-0045).
+//! Where the online capability is read from the environment (ADR-0045): the
+//! variables, and the rule that turns them into whether one node may assume a
+//! route to the internet.
+//!
+//! The capability itself lives in `capability.rs` — online capability is one
+//! of ADR-0056's four kinds, not a notion of its own, and what a node carries
+//! is one [`Capability`](crate::capability::Capability). This file stayed for
+//! the environment it reads.
 //!
 //! False unless set. Nothing in the estate reaches out at runtime, so at
 //! every stress level the default is that no emulated node may; the switch
@@ -7,44 +13,12 @@
 //! stays silent without it, rather than bringing the suite online with it.
 //! `XMIP_ONLINE=true` is how an operator or a roll says the world is there.
 
-/// What a node may assume.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Switches {
-    /// A route to the internet may be assumed.
-    pub online: bool,
-}
-
-impl Switches {
-    /// The switches a roll runs with: `XMIP_ONLINE` as `true` or `false`,
-    /// false when unset or unrecognised.
-    #[must_use]
-    pub fn from_env() -> Self {
-        Self { online: online() }
-    }
-
-    /// The switches as the node binary's flags.
-    #[must_use]
-    pub fn flags(self) -> Vec<String> {
-        vec!["--online".to_string(), self.online.to_string()]
-    }
-
-    /// The word a health record carries for it.
-    #[must_use]
-    pub const fn word(self) -> &'static str {
-        if self.online { "online" } else { "offline" }
-    }
-}
-
-impl Switches {
-    /// The switches the cluster's node called `name` runs with: online when
-    /// `XMIP_PLAYGROUND_ONLINE_NODES` names it, else — the variable unset —
-    /// whatever `XMIP_ONLINE` says for every node.
-    #[must_use]
-    pub fn for_node(name: &str) -> Self {
-        Self {
-            online: node_online(name, online_nodes().as_deref(), online()),
-        }
-    }
+/// Whether the cluster's node called `name` may assume the internet: online
+/// when `XMIP_PLAYGROUND_ONLINE_NODES` names it, else — the variable unset —
+/// whatever `XMIP_ONLINE` says for every node.
+#[must_use]
+pub fn node_is_online(name: &str) -> bool {
+    node_online(name, online_nodes().as_deref(), online())
 }
 
 /// Whether this process may assume the internet: `XMIP_ONLINE=true`.
@@ -73,8 +47,8 @@ pub fn names(raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// The rule behind [`Switches::for_node`], with the environment already read:
-/// a list names the online nodes, case-insensitively; no list leaves it to `all`.
+/// The rule behind [`node_is_online`], with the environment already read: a
+/// list names the online nodes, case-insensitively; no list leaves it to `all`.
 #[must_use]
 pub fn node_online(name: &str, online: Option<&[String]>, all: bool) -> bool {
     online.map_or(all, |online| {
@@ -113,9 +87,6 @@ mod tests {
         assert_eq!(parse("TRUE"), Some(true));
         assert_eq!(parse("off"), Some(false));
         assert_eq!(parse("maybe"), None);
-        assert_eq!(Switches::default().word(), "offline");
-        assert_eq!(Switches { online: true }.word(), "online");
-        assert_eq!(Switches { online: true }.flags(), ["--online", "true"]);
     }
 
     #[test]

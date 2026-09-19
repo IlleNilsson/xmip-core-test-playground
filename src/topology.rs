@@ -2,14 +2,15 @@
 //! own communication, drawn from what the cluster configured and what its
 //! nodes reported (ADR-0052, amendment 2026-09-14, ruling 3). Nothing here is
 //! inferred from a socket — a node is in the picture because `-Nodes` named
-//! it, a stage because the node's name gives it that role or it reported on
+//! it, a stage because the node declared it (ADR-0056) or reported on
 //! it, and a link because a handoff was delivered over it.
 //!
 //! The picture is the owner's, 2026-09-19: *cluster, nodes, receive, process,
 //! send*. The cluster holds its nodes; a node holds the stages of the message
-//! path it runs; a receive or a send stage holds one endpoint per transport it
-//! reported on. Between the nodes run the handoffs, `R` to `P` to `S`, one link
-//! per pair of nodes that exchanged any, its volume the hops. The shared
+//! path it declared; a receive or a send stage holds one endpoint per transport
+//! it reported on. Between them run the handoffs, receive to process to send,
+//! one link per pair of stages that exchanged any, its volume the hops. The
+//! shared
 //! directory is drawn only when a node ran a test over it. The surface reads
 //! the words this file writes (`Xmip.Surface`, `SnapshotOperator`), so they
 //! are the surface's, not chosen here.
@@ -192,6 +193,7 @@ fn fraction(part: usize, whole: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capability::Capability;
     use crate::cluster::ROOT;
     use crate::report::{from_toml, to_toml_with};
     use observe::{Count, Counted};
@@ -206,19 +208,37 @@ mod tests {
         }
     }
 
-    fn hop(from: &str, to: &str, count: u64) -> Hop {
+    fn hop(from: &str, from_stage: &str, to: &str, to_stage: &str, count: u64) -> Hop {
         Hop {
             from: from.to_string(),
+            from_stage: from_stage.to_string(),
             to: to.to_string(),
+            to_stage: to_stage.to_string(),
             count,
             last_unix_nanos: 7,
         }
     }
 
+    /// The capability record a node publishes each round (ADR-0056), by the
+    /// words `--can` takes.
+    fn declares(stages: &str) -> String {
+        Capability::parse(stages).expect("a capability").evidence()
+    }
+
     /// `R1` received over tcp and file, `P1` processed, `S1` sent over tcp
     /// with one pair stressed; `S1` also ran the two shared-directory tests.
+    /// `S2` has only said what it can do and reported nothing yet.
     fn published() -> Snapshot {
         let mut snapshot = Snapshot::new();
+        for (leaf, capability) in [
+            ("R1", "receive"),
+            ("P1", "process"),
+            ("S1", "send"),
+            ("S2", "send"),
+        ] {
+            let scope = format!("{ROOT}/node/{leaf}/capability");
+            snapshot.record_health(record(&scope, Health::Fine, &declares(capability)));
+        }
         for (leaf, health, evidence) in [
             ("R1/system-process", Health::Fine, "alive"),
             ("R1/receive/tcp/json", Health::Fine, "3/3 rounds passed"),
@@ -252,7 +272,10 @@ mod tests {
     }
 
     fn drawn() -> Topology {
-        let hops = [hop("R1", "P1", 3), hop("P1", "S1", 2)];
+        let hops = [
+            hop("R1", "receive", "P1", "process", 3),
+            hop("P1", "process", "S1", "send", 2),
+        ];
         cluster_topology(&published(), ["R1", "P1", "S1", "S2"].into_iter(), &hops, 9)
     }
 

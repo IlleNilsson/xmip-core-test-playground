@@ -3,7 +3,7 @@
 //! The three Receive steps — Identification, Authentication, Authorization —
 //! and the Send presentation each publish as a child scope under their stage,
 //! so an operator drills to the step that failed (ADR-0019, ADR-0033). The
-//! schedule publishes both ends; a role node publishes its own — an `R` node
+//! schedule publishes both ends; a node publishes its own — a receiving node
 //! the Receive steps, an `S` node the presentation.
 
 use super::{IdentityFaults, receive, send};

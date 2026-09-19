@@ -196,7 +196,7 @@ xmip-playground-roll             the test: chooses scenarios, sets stress, judge
 
 The **roll** keeps what a test driver owns: the scenarios that stay in its own
 process (LowLatency, HeavyLoad, Retention, Filing, and RoundTrip when there
-are no role nodes), the board, the history, the activity, and
+are no nodes declaring a stage), the board, the history, the activity, and
 `<cluster>-snapshot.toml` — the one file the prompt, the CLI and the web GUI
 read, at the same path and in the same shape as before. It spawns exactly one
 cluster process when nodes are named, merges the file that cluster publishes
@@ -220,17 +220,31 @@ orphaned. `Get-XmipProcess` shows all three kinds with the location and
 purpose each declared, and `Get-XmipTestNode` reports a node's roll, which is
 now its grandparent.
 
-### A cluster and its nodes: the letter is the role, 2026-09-19
+### A cluster and its nodes: a node declares what it can do, 2026-09-19
 
 The owner: *Fleet is what I see in topology when running test, I would like to
 see cluster, nodes, receive, process, send.* What the Playground spawns is a
 cluster and its nodes, and the word it used until then is retired (ADR-0028).
 
-**The letter is the role** (`role.rs`). A node whose name starts with `R`
-receives, `P` processes, `S` sends — either case, the rest of the name letters
-and digits: `R1`, `p2`, `Send3`. A node with any other name (`node-01`, `left`,
-`P1-2`) has no role and behaves as every node did before: it runs the
-shared-directory tests whole and no part of RoundTrip.
+**A node declares what it can do** (`capability.rs`, `roster.rs`; ADR-0056). A
+node is started with a capability — `--can receive`, `--can process,send` —
+and serves the stages of the message path it declared, no more and no fewer. A
+node that declares none behaves as every node did before: it runs the
+shared-directory tests whole and no part of RoundTrip. Two of ADR-0056's four
+kinds are modelled here, feature capability (the stages) and online capability
+(`--online`, ADR-0045); authentication and runtime capability are not, and the
+node's own capability record says so rather than leaving it to be guessed.
+
+The rig read a node's stage out of the first letter of its name for one
+afternoon on 2026-09-19, until the owner said *I know, so why do you break
+it!* — ADR-0009 already had it that what a node does is its configuration, and
+ADR-0022 that placement must satisfy node capability. **Nothing at runtime
+reads a node's name.** The one exception is the operator's keyboard:
+`Start-XmipTest -Nodes R1, P1, S1` expands `R`, `P` and `S` into the receive,
+process and send capability inside the cmdlet, and `-NodeCapability
+@{ alpha = 'receive' }` says it outright and overrides the shorthand. What
+leaves PowerShell is `XMIP_PLAYGROUND_NODE_CAPABILITIES=R1=receive,…` — a
+declaration, not a name.
 
 **Nodes run the test that was named.** The roll passes the scenarios it was
 given to every node (`--scenarios`, with every node's name in `--nodes`), and a
@@ -240,51 +254,61 @@ no scenario is REFUSED, by the roll and by a node alike, with exit code 2 and
 the scenarios there are; it is never dropped. LowLatency, HeavyLoad, Retention
 and Filing stay in the roll's own process, at the cluster's level.
 
-**RoundTrip over role nodes is the message path between processes**
-(`relay.rs`). The (transport x contract) matrix is split across the `R` nodes,
-a pair's index modulo their count, and a bounded slice of each share rotates
-through the rounds so a round still lands in seconds. Per pair:
+**RoundTrip across nodes is the message path between processes**
+(`relay.rs`). The (transport x contract) matrix is split across the nodes that
+declared `receive`, a pair's index modulo their count, and a bounded slice of
+each share rotates through the rounds so a round still lands in seconds. Per
+pair:
 
-- the `R` node lets the Stream arrive through the transport and publishes
-  `xmip:///<cluster>/node/<R>/receive/<transport>/<contract>`, the identity
-  steps beneath it, then hands what arrived to a `P` node;
-- the `P` node holds the content contract over it, publishes
-  `.../node/<P>/process/<transport>/<contract>`, and hands it to an `S` node;
-- the `S` node sends it out through the same transport, publishes
-  `.../node/<S>/send/<transport>/<contract>` with the identity presentation
+- the receiving node lets the Stream arrive through the transport and
+  publishes `xmip:///<cluster>/node/<name>/receive/<transport>/<contract>`,
+  the identity steps beneath it, then hands what arrived to a node that
+  declared `process`;
+- that node holds the content contract over it, publishes
+  `.../node/<name>/process/<transport>/<contract>`, and hands it to a node
+  that declared `send`;
+- that node sends it out through the same transport, publishes
+  `.../node/<name>/send/<transport>/<contract>` with the identity presentation
   beneath it, and closes the verdict: bytes are counted here.
 
-The `P` or `S` node a pair goes to is a stable hash of the role and the pair
-over the nodes of that role, so every sender agrees without asking. Each stage takes the same
-injected faults the schedule does, scaled to the level, decided by the round
-the `R` node received the pair in; a stage that fails hands nothing on. The
-tally, the standing between a pair's turns and the counts are the schedule's
-own (`schedule/ledger.rs`), not a copy. When role nodes exist and RoundTrip was
-chosen the roll does not also run it in-process; when a role is missing among
-them the roll is REFUSED at the start, naming the role, and `Start-XmipTest`
-says the same before anything is spawned.
+The node a pair goes to next is a stable hash of the stage and the pair over
+the nodes that declared it, so every sender agrees without asking. A node that
+declared two stages runs one relay per stage, each with its own inbox. Each
+stage takes the same injected faults the schedule does, scaled to the level,
+decided by the round the receiving node took the pair in; a stage that fails
+hands nothing on. The tally, the standing between a pair's turns and the counts
+are the schedule's own (`schedule/ledger.rs`), not a copy. When any node
+declares a stage and RoundTrip was chosen the roll does not also run it
+in-process; when a stage of the path is declared by nobody the roll is REFUSED
+at the start, naming the **capability** that went undeclared, and
+`Start-XmipTest` says the same before anything is spawned.
 
 **The handoff** (`handoff.rs`) is a file in the cluster's shared directory, one
-inbox per node, `<shared>/handoff/<node>/`: written under a temporary name and
-renamed into place, claimed by the receiver by rename, so a file has one holder
-(the semantics ADR-0024's claim rests on). Every delivered handoff is a hop,
-counted per (from, to) link with the time of the last one, published in the
-node's file and drawn as a link. `--online false` gates what is outside the
-cluster only: an offline node takes handoffs like any other. This rehearses
-option A of `doc/planning/open-problems.md` problem 17 in the rig; it rules
-nothing for the runtime.
+inbox per node per stage, `<shared>/handoff/<node>/<stage>/`: written under a
+temporary name and renamed into place, claimed by the receiver by rename, so a
+file has one holder (the semantics ADR-0024's claim rests on). Every delivered
+handoff is a hop, counted per link with the stage at either end and the time of
+the last one, published in the node's file and drawn as a link. `--online
+false` gates what is outside the cluster only: an offline node takes handoffs
+like any other. This rehearses option A of `doc/planning/open-problems.md`
+problem 17 in the rig; it rules nothing for the runtime.
 
 **The topology** (`topology.rs`) a roll publishes is the cluster (kind
 `cluster`), its nodes (`node`), the stages each runs (`stage`), and under a
 receive or a send stage one endpoint per transport it reported on (`endpoint`).
-The links are the handoffs, `R` stage to `P` stage to `S` stage, for every pair
-of nodes that exchanged any — pattern `send-receive`, protocol `handoff`, volume
+A node's stages are the ones it **declared**, read from the capability record
+it publishes, and any it has reported on — never its name. The links are the
+handoffs, receive stage to process stage to send stage, for every pair of
+stages that exchanged any — pattern `send-receive`, protocol `handoff`, volume
 the hops, mood the worst leaf at either end — and the shared store with its
 ExclusiveClaim and DailyBacklog links only when those tests ran on a node.
 
 **The run says what it was started with** (`run.rs`): the snapshot carries a
-`[run]` table — `cluster`, `tests`, `nodes`, `online`, `stress` — that a reader
-which does not know it skips, and the web GUI shows as one line on every view.
+`[run]` table — `cluster`, `tests`, `nodes`, `capabilities`, `online`,
+`stress` — that a reader which does not know it skips, and the web GUI shows as
+one line on every view. `capabilities` is what each node was started with,
+`R1=receive` or `P1=process+send`, a node that declared nothing listed by name
+alone.
 
 
 
@@ -311,8 +335,12 @@ own environment, never yours: `-Stress` is `XMIP_PLAYGROUND_STRESS`
 (`calm`, `realistic`, `harsh`, `brutal`), `-Test` is
 `XMIP_PLAYGROUND_SCENARIOS` (the scope segments above; unset means all),
 `-Nodes` is `XMIP_PLAYGROUND_NODE_NAMES` (the nodes to simulate, by name, one
-process each, the letter the role; an empty list is `XMIP_PLAYGROUND_NODES=0`,
-no nodes; omitted, the level's own numbered nodes), `-OnlineNodes` is `XMIP_PLAYGROUND_ONLINE_NODES`
+process each; an empty list is `XMIP_PLAYGROUND_NODES=0`,
+no nodes; omitted, the level's own numbered nodes), `-NodeCapability` is
+`XMIP_PLAYGROUND_NODE_CAPABILITIES` (what each declares it can do,
+`alpha=receive,beta=process+send`; a node it does not name declares nothing —
+and this is where the `R`/`P`/`S` shorthand of `-Nodes` has already been
+expanded), `-OnlineNodes` is `XMIP_PLAYGROUND_ONLINE_NODES`
 (which of them may assume the internet, by name, ADR-0045; unset, every node
 reads `XMIP_ONLINE`), `-Duration` is
 `XMIP_PLAYGROUND_MAX_SECONDS`, `-TimeFactor` is `XMIP_PLAYGROUND_TIME_FACTOR`

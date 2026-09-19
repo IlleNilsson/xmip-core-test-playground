@@ -264,6 +264,25 @@ impl Stage {
             Stage::Send => "send",
         }
     }
+
+    /// The stage a token names, or `None` when no stage is called that. The
+    /// one place a word becomes a stage, so a capability, a hop and a scope
+    /// cannot disagree on what `process` means.
+    #[must_use]
+    pub fn named(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|stage| stage.name() == token)
+    }
+
+    /// The stage a handoff goes on to: receive to process, process to send.
+    /// Send closes the verdict and hands nothing on.
+    #[must_use]
+    pub const fn next(self) -> Option<Self> {
+        match self {
+            Self::Receive => Some(Self::Process),
+            Self::Process => Some(Self::Send),
+            Self::Send => None,
+        }
+    }
 }
 
 /// One round's outcome for one (stage, transport, contract). ADR-0028: a verdict

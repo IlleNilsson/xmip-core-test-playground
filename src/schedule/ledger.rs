@@ -3,7 +3,8 @@
 //! way it is published.
 //!
 //! It was the second half of [`Schedule::tick`](crate::Schedule::tick) until
-//! 2026-09-19. A role node judges one stage of the same test and must publish
+//! 2026-09-19. A node judges the stages it declared of the same test and must
+//! publish
 //! it the same way — the same tally, the same standing between a pair's
 //! turns, the same counts — so the accumulation lives here, used by the
 //! schedule and by the [`Relay`](crate::relay::Relay) alike, and neither

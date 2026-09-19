@@ -3,10 +3,15 @@
 //! processes during tests*).
 //!
 //! ```text
-//! cluster --name <cluster> --shared <dir> --nodes <a,b,c> --stress <level>
-//!         --rounds <n> --snapshot <path>
+//! cluster --name <cluster> --shared <dir> --nodes <a[=capability],b,...>
+//!         --stress <level> --rounds <n> --snapshot <path>
 //!         [--online <a,b>] [--scenarios <a,b>] [--interval-ms <ms>]
 //! ```
+//!
+//! `--nodes` carries what each node is **declared** with — `R1=receive`,
+//! `P1=process+send`, or a bare name for a node that declares no stage of the
+//! message path — and the cluster passes each node's own to it as `--can`
+//! (ADR-0056). It infers nothing: a name is not a capability.
 //!
 //! The tree the owner asked for is three deep. `xmip-playground-roll` is the
 //! test: it chooses the scenarios, sets the stress, judges and draws the
@@ -37,6 +42,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use xmip_test_playground::cluster::{Cluster, Orders, node_binary};
+use xmip_test_playground::roster::Roster;
 use xmip_test_playground::scenario;
 use xmip_test_playground::stress::Stress;
 use xmip_test_playground::switch::names;
@@ -49,8 +55,9 @@ struct Arguments {
     /// The directory the cluster and its nodes share — handoffs, the
     /// contended tests' stores, the nodes' own snapshots, and `stop`.
     shared: PathBuf,
-    /// Every node to spawn, one process each.
-    nodes: Vec<String>,
+    /// Every node to spawn, one process each, with the capability each is
+    /// declared with; the cluster passes it on and infers nothing.
+    nodes: Roster,
     /// The nodes that may assume the internet (ADR-0045); `None` when the
     /// flag was not given, which leaves it to the environment.
     online: Option<Vec<String>>,
@@ -64,9 +71,9 @@ struct Arguments {
     interval: Duration,
 }
 
-const USAGE: &str = "usage: cluster --name <cluster> --shared <dir> --nodes <a,b,c> \
-     --stress <level> --rounds <n> --snapshot <path> [--online <a,b>] \
-     [--scenarios <a,b>] [--interval-ms <ms>]";
+const USAGE: &str = "usage: cluster --name <cluster> --shared <dir> \
+     --nodes <a[=capability],b,...> --stress <level> --rounds <n> \
+     --snapshot <path> [--online <a,b>] [--scenarios <a,b>] [--interval-ms <ms>]";
 
 fn main() -> ExitCode {
     let arguments = match parse(std::env::args().skip(1)) {
@@ -90,7 +97,7 @@ fn main() -> ExitCode {
             .declare()
             .map_err(|error| eprintln!("cluster {root}: could not declare itself: {error}"));
 
-    let orders = Orders::of(arguments.stress, &arguments.nodes, 0)
+    let orders = Orders::of(arguments.stress, arguments.nodes.clone(), 0)
         .driving(&arguments.scenarios)
         .with_online(arguments.online.clone());
     if let Some(refusal) = orders.refusal() {
@@ -162,7 +169,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
         match flag.as_str() {
             "--name" => name = Some(cluster_named(&value)?),
             "--shared" => shared = Some(PathBuf::from(value)),
-            "--nodes" => nodes = Some(names(&value)),
+            "--nodes" => nodes = Some(Roster::parse(&value)?),
             "--online" => online = Some(names(&value)),
             "--stress" => stress = Some(level(&value)?),
             "--scenarios" => scenarios = scenario::chosen(Some(&value))?,
@@ -182,7 +189,10 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
     Ok(Arguments {
         name: name.ok_or("REFUSED: --name is required; a cluster is named, never invented")?,
         shared: shared.ok_or("REFUSED: --shared is required; it is the store the nodes share")?,
-        nodes: nodes.ok_or("REFUSED: --nodes is required; --nodes R1,P1,S1 names them")?,
+        nodes: nodes.ok_or(
+            "REFUSED: --nodes is required; --nodes R1=receive,P1=process,S1=send \
+             names them and what each declares",
+        )?,
         online,
         stress: stress.ok_or(format!(
             "REFUSED: --stress is required; it is one of {}",
@@ -241,7 +251,7 @@ mod tests {
             "--shared",
             "s",
             "--nodes",
-            "R1,P1,S1",
+            "R1=receive,P1=process,S1=send",
             "--stress",
             "calm",
             "--rounds",
@@ -256,7 +266,8 @@ mod tests {
     fn the_required_flags_are_read_and_the_optional_ones_have_the_nodes_defaults() {
         let bare = arguments(&[]).expect("the required flags suffice");
         assert_eq!(bare.name, "Zt");
-        assert_eq!(bare.nodes, ["R1", "P1", "S1"]);
+        assert_eq!(bare.nodes.names(), ["R1", "P1", "S1"]);
+        assert_eq!(bare.nodes.capability("P1").words(), "process");
         assert_eq!(bare.stress, Stress::Calm);
         assert_eq!(bare.interval, Duration::from_millis(250));
         assert!(bare.online.is_none() && bare.scenarios.is_empty());
@@ -287,6 +298,7 @@ mod tests {
             (["--name", "9lives"], "9lives", "starting with a letter"),
             (["--rounds", "many"], "many", "whole number"),
             (["--scenarios", "pingpong"], "pingpong", "exclusive-claim"),
+            (["--nodes", "R1=relay"], "relay", "receive, process, send"),
             (["--wobble", "yes"], "--wobble", "the flags are"),
         ] {
             let refusal = arguments(&extra)
@@ -305,7 +317,7 @@ mod tests {
             "--rounds",
             "--snapshot",
         ] {
-            let given: Vec<String> = ["--name", "Zt", "--shared", "s", "--nodes", "R1,P1,S1"]
+            let given: Vec<String> = ["--name", "Zt", "--shared", "s", "--nodes", "R1=receive"]
                 .into_iter()
                 .chain(["--stress", "calm", "--rounds", "0", "--snapshot", "z.toml"])
                 .map(ToString::to_string)

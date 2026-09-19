@@ -98,7 +98,7 @@ impl Cluster {
             orders: orders.clone(),
             nodes: Vec::new(),
         };
-        for name in orders.names.clone() {
+        for name in orders.names().iter().map(ToString::to_string) {
             let path = snapshots.join(format!("{name}.toml"));
             let child = cluster.start(&name, &path)?;
             cluster.nodes.push(Member::started(name, child, path));
@@ -106,8 +106,9 @@ impl Cluster {
         Ok(cluster)
     }
 
-    /// Start the node called `name` — the orders decide whether it may assume
-    /// the internet, and what tests it is told to run.
+    /// Start the node called `name` — the orders say what it is declared with
+    /// (ADR-0056), whether it may assume the internet, and what tests it is
+    /// told to run. Nothing about it is worked out from its name.
     fn start(&self, name: &str, path: &Path) -> io::Result<Child> {
         /// How often a node ticks. A quarter second where a test wants
         /// contention now; two seconds in a brutal roll, where forty nodes
@@ -129,7 +130,7 @@ impl Cluster {
                 "--interval-ms",
                 &node_interval_ms(orders.stress).to_string(),
             ])
-            .args(["--nodes", &orders.names.join(",")])
+            .args(["--nodes", &orders.roster.text()])
             // None named is every scenario, which is what no flag means.
             .args(
                 (!orders.scenarios.is_empty())
@@ -137,7 +138,7 @@ impl Cluster {
                     .into_iter()
                     .flatten(),
             )
-            .args(orders.switches(name).flags())
+            .args(orders.capability(name).flags())
             .arg("--shared")
             .arg(&self.shared)
             .arg("--snapshot")
@@ -374,14 +375,16 @@ mod tests {
     }
 
     /// The owner's shape, 2026-09-19: nodes run the test that was named, and
-    /// the letter is the role. `RoundTrip` alone over `R1`, `P1`, `S1` is three
-    /// processes handing each pair on, each publishing its own stage, the
-    /// hops recorded per link — and neither shared-directory test runs.
+    /// a node serves the stages it declared. `RoundTrip` alone over three
+    /// nodes whose **names say nothing** is three processes handing each pair
+    /// on, each publishing its own stage, the hops recorded per link — and
+    /// neither shared-directory test runs.
     #[test]
-    fn role_nodes_run_the_named_test_and_hand_each_pair_r_to_p_to_s() {
-        let dir = scratch("cluster-roles");
-        let names = ["R1", "P1", "S1"].map(str::to_string);
-        let orders = Orders::of(Stress::Calm, &names, 0).driving(&["round-trip".to_string()]);
+    fn declared_nodes_run_the_named_test_and_hand_each_pair_along_the_path() {
+        let dir = scratch("cluster-declared");
+        let roster =
+            crate::Roster::parse("R1=receive,P1=process,S1=send").expect("a well-formed roster");
+        let orders = Orders::of(Stress::Calm, roster, 0).driving(&["round-trip".to_string()]);
         let mut cluster = Cluster::spawn(
             &built_node_binary(),
             &orders,
@@ -436,6 +439,7 @@ mod tests {
         let dir = scratch("cluster-refused");
         let output = Command::new(built_node_binary())
             .args(["--name", "R1", "--stress", "calm", "--rounds", "1"])
+            .args(["--can", "receive"])
             .args(["--scenarios", "round-trip,pingpong"])
             .arg("--shared")
             .arg(dir.join("shared"))

@@ -79,7 +79,7 @@ where
 
 /// Judge every one of `items` from `workers` threads, the results in the
 /// items' order. What [`drive_selected`] is over pairs, over anything — a
-/// role node's send stage drives the handoffs it claimed, which carry their
+/// node's send stage drives the handoffs it claimed, which carry their
 /// own bytes.
 ///
 /// # Panics

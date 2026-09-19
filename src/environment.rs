@@ -7,9 +7,10 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::roster::Roster;
 use crate::scenario;
 use crate::stress::Stress;
-use crate::switch::names;
+use crate::switch::{names, node_is_online};
 
 /// The scenarios named in `XMIP_PLAYGROUND_SCENARIOS`: none named is every
 /// one.
@@ -43,6 +44,27 @@ pub fn node_names(stress: Stress) -> Vec<String> {
             .map(|index| format!("node-{index:02}"))
             .collect()
     })
+}
+
+/// The roster a roll spawns: the nodes [`node_names`] gives, each declaring
+/// what `XMIP_PLAYGROUND_NODE_CAPABILITIES` gives it — `R1=receive,
+/// P1=process+send`, comma separated, a node it does not name declaring
+/// nothing — and each carrying the online capability the environment says
+/// (ADR-0045, ADR-0056). Nothing is read out of a node's name.
+///
+/// # Errors
+///
+/// When a word is no capability, or a capability was given to a node that is
+/// no node of this roll: REFUSED, naming both sides (ADR-0055).
+pub fn roster(stress: Stress) -> Result<Roster, String> {
+    let named = node_names(stress);
+    let declared = std::env::var("XMIP_PLAYGROUND_NODE_CAPABILITIES").unwrap_or_default();
+    let mut roster = Roster::declaring(&named, &declared)?;
+    for node in &named {
+        let capability = roster.capability(node).with_online(node_is_online(node));
+        roster = roster.declared(node, capability);
+    }
+    Ok(roster)
 }
 
 /// Where the roll publishes its snapshot, history and activity: the three

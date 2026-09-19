@@ -50,13 +50,15 @@
 //! among them that may assume the internet (ADR-0045); unset, every node
 //! reads `XMIP_ONLINE`.
 //!
-//! **The letter is the role** (the owner, 2026-09-19). A node named `R…`
-//! receives, `P…` processes, `S…` sends; every node is told the scenarios
-//! that were named and runs its part of them. With role nodes, `RoundTrip`
-//! is theirs — each pair handed `R` to `P` to `S` between the processes — and
-//! the roll does not also run it in-process; a role missing among them is
-//! REFUSED at the start. A node with any other name (`node-01`) has no role
-//! and runs the shared-directory tests whole, as every node did before.
+//! **A node declares what it can do** (ADR-0056).
+//! `XMIP_PLAYGROUND_NODE_CAPABILITIES` says which stages of the message path
+//! each node serves — `R1=receive,P1=process+send` — and every node runs its
+//! part of the scenarios named. Where a node declares a stage, `RoundTrip` is
+//! the nodes' — each pair handed receive to process to send between the
+//! processes — and the roll does not also run it in-process; a stage no node
+//! declares is REFUSED at the start, naming the capability. A node that
+//! declares nothing runs the shared-directory tests whole, as before. A
+//! node's name decides none of this.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -66,7 +68,7 @@ use observe::{Activity, Health, History, Snapshot};
 use xmip_test_playground::Headroom;
 use xmip_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
 use xmip_test_playground::environment::{
-    self, load_bytes, max_seconds, node_names, publish_paths, time_factor,
+    self, load_bytes, max_seconds, publish_paths, time_factor,
 };
 use xmip_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_test_playground::{
@@ -86,10 +88,10 @@ fn main() {
         .declare()
         .map_err(|error| eprintln!("roll: could not declare itself: {error}"));
     let stress = Stress::from_env();
-    let chosen = chosen_or_refuse();
-    let names = node_names(stress);
-    let relayed = relayed_or_refuse(&chosen, &names);
-    let run = Run::of(&cluster, &chosen, &names, stress);
+    let chosen = or_refuse(environment::scenarios());
+    let roster = or_refuse(environment::roster(stress));
+    let relayed = relayed_or_refuse(&chosen, &roster);
+    let run = Run::of(&cluster, &chosen, &roster, stress);
 
     // Each scenario under its own subtree, each with faults or pressure on, so
     // the board is realistic rather than uniformly green. `file` stays clean in
@@ -127,7 +129,7 @@ fn main() {
     // own: it spawns and supervises the nodes and publishes beside this
     // roll's snapshot, which merges that one file each round.
     let cluster_path = publication.beside(&format!("{cluster}-cluster.toml"));
-    let mut spawned = spawn_cluster(&cluster, stress, &names, &chosen, &base, &cluster_path);
+    let mut spawned = spawn_cluster(&cluster, stress, &roster, &chosen, &base, &cluster_path);
 
     let limit: Option<u64> = std::env::args().nth(1).and_then(|arg| arg.parse().ok());
     let live = std::io::stdout().is_terminal();
@@ -148,7 +150,8 @@ fn main() {
         let headroom = Headroom::refresh();
 
         let mut snapshot = Snapshot::new();
-        // With role nodes the message path is theirs, between processes.
+        // Where nodes declare stages the message path is theirs, between
+        // processes.
         if drives(&chosen, ROUND_TRIP) && !relayed {
             merge(&mut snapshot, &round_trip.tick());
         }
@@ -173,8 +176,8 @@ fn main() {
         // The cluster's own file, and from it what the topology draws.
         let topology = spawned.as_mut().map(|spawned| {
             merge(&mut snapshot, spawned.tick());
-            let names = names.iter().map(String::as_str);
-            cluster_topology(&snapshot, names, spawned.hops(), now_unix_nanos())
+            let named = roster.names().into_iter();
+            cluster_topology(&snapshot, named, spawned.hops(), now_unix_nanos())
         });
 
         history.record(&snapshot);
@@ -247,23 +250,23 @@ impl Publication {
     }
 }
 
-/// The scenarios named in `XMIP_PLAYGROUND_SCENARIOS`: none named is every
-/// one. A name that is no scenario is REFUSED and the roll does not start —
-/// until 2026-09-19 it was said on stderr and dropped, and the roll carried on
-/// as something nobody asked for.
-fn chosen_or_refuse() -> Vec<String> {
-    environment::scenarios().unwrap_or_else(|refusal| {
+/// What the environment told this roll, or REFUSED: a value it cannot read is
+/// said and the roll does not start — until 2026-09-19 an unknown scenario was
+/// said on stderr and dropped, and the roll carried on as something nobody
+/// asked for. A capability that is no capability is refused the same way.
+fn or_refuse<T>(told: Result<T, String>) -> T {
+    told.unwrap_or_else(|refusal| {
         eprintln!("{refusal}");
         std::process::exit(2);
     })
 }
 
-/// Whether `RoundTrip` runs over role nodes rather than in this process: it
-/// was chosen, and nodes are named by role. A role missing among them is
-/// REFUSED before anything is spawned, naming the role.
-fn relayed_or_refuse(chosen: &[String], names: &[String]) -> bool {
-    let roster = Roster::of(names);
-    if !drives(chosen, ROUND_TRIP) || !roster.has_roles() {
+/// Whether `RoundTrip` runs across the cluster's nodes rather than in this
+/// process: it was chosen, and some node declared a stage of the path. A stage
+/// no node declares is REFUSED before anything is spawned, naming the
+/// capability that went undeclared (ADR-0056).
+fn relayed_or_refuse(chosen: &[String], roster: &Roster) -> bool {
+    if !drives(chosen, ROUND_TRIP) || !roster.serves_any_stage() {
         return false;
     }
     if let Some(refusal) = roster.refusal() {
@@ -280,16 +283,16 @@ fn relayed_or_refuse(chosen: &[String], names: &[String]) -> bool {
 fn spawn_cluster(
     cluster: &str,
     stress: Stress,
-    names: &[String],
+    roster: &Roster,
     chosen: &[String],
     base: &Path,
     path: &Path,
 ) -> Option<Spawned> {
-    if names.is_empty() {
+    if roster.is_empty() {
         return None;
     }
     let shared = base.join("shared");
-    let orders = Orders::of(stress, names, 0).driving(chosen);
+    let orders = Orders::of(stress, roster.clone(), 0).driving(chosen);
     let started = cluster_binary()
         .and_then(|binary| Spawned::start(&binary, cluster, &orders, &shared, path));
     match started {
@@ -400,15 +403,22 @@ mod tests {
         list.iter().map(ToString::to_string).collect()
     }
 
+    fn roster(text: &str) -> Roster {
+        Roster::parse(text).expect("a well-formed roster")
+    }
+
     #[test]
-    fn round_trip_is_the_role_nodes_when_there_are_any_and_it_was_chosen() {
-        let roles = names(&["R1", "P1", "S1"]);
-        assert!(relayed_or_refuse(&[], &roles));
-        assert!(relayed_or_refuse(&names(&["round-trip"]), &roles));
-        assert!(!relayed_or_refuse(&names(&["heavy-load"]), &roles));
-        assert!(!relayed_or_refuse(&[], &names(&["node-01", "node-02"])));
-        assert!(!relayed_or_refuse(&[], &[]));
-        // A role missing is no refusal when RoundTrip was not chosen.
-        assert!(!relayed_or_refuse(&names(&["filing"]), &names(&["R1"])));
+    fn round_trip_is_the_nodes_when_any_declares_a_stage_and_it_was_chosen() {
+        let path = roster("R1=receive,P1=process,S1=send");
+        assert!(relayed_or_refuse(&[], &path));
+        assert!(relayed_or_refuse(&names(&["round-trip"]), &path));
+        assert!(!relayed_or_refuse(&names(&["heavy-load"]), &path));
+        assert!(!relayed_or_refuse(&[], &roster("node-01,node-02")));
+        assert!(!relayed_or_refuse(&[], &Roster::default()));
+        // A capability missing is no refusal when RoundTrip was not chosen.
+        assert!(!relayed_or_refuse(
+            &names(&["filing"]),
+            &roster("R1=receive")
+        ));
     }
 }

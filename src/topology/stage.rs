@@ -6,20 +6,21 @@ use std::collections::BTreeSet;
 use observe::Snapshot;
 
 use super::{TopologyLink, TopologyNode, mood, node_id, origin, worst};
+use crate::capability::Capability;
 use crate::handoff::Hop;
-use crate::role::Role;
 use crate::support::cluster_root;
 use crate::verdict::Stage;
 
 /// The stage nodes of the node called `name`, each followed by its
-/// endpoints: the stage its name's role gives it, drawn before it has
-/// reported, and any stage it has reported on.
+/// endpoints: every stage the node **declared** it can serve, drawn before it
+/// has reported, and any stage it has reported on. Its name says nothing
+/// here (ADR-0056).
 pub(super) fn nodes(snapshot: &Snapshot, name: &str, scope: &str) -> Vec<TopologyNode> {
-    let own = Role::of(name).stage();
+    let declared = declared(snapshot, scope);
     let mut drawn = Vec::new();
     for stage in Stage::ALL {
         let at = format!("{scope}/{}", stage.name());
-        if own != Some(stage) && snapshot.health(&at).is_empty() {
+        if !declared.can(stage) && snapshot.health(&at).is_empty() {
             continue;
         }
         let id = format!("{}/{}", node_id(name), stage.name());
@@ -48,6 +49,20 @@ pub(super) fn nodes(snapshot: &Snapshot, name: &str, scope: &str) -> Vec<Topolog
         }
     }
     drawn
+}
+
+/// What the node published at `<scope>/capability`: what it declared it can
+/// do. Nothing published is nothing declared — the node has yet to say, and
+/// only what it reports is drawn.
+fn declared(snapshot: &Snapshot, scope: &str) -> Capability {
+    let at = format!("{scope}/capability");
+    snapshot
+        .health(&at)
+        .into_iter()
+        .find(|record| record.scope == at)
+        .map_or_else(Capability::none, |record| {
+            Capability::from_evidence(&record.evidence)
+        })
 }
 
 /// The transports a stage has reported on: the segment after the stage in
@@ -88,15 +103,16 @@ fn part(
     }
 }
 
-/// One link per pair of nodes that exchanged handoffs, from the sender's
+/// One link per pair of stages that exchanged handoffs, from the sender's
 /// stage to the receiver's: its volume the hops, its mood the worst leaf at
-/// either end. A hop between nodes without a role on the path is not drawn.
+/// either end. The stages are the hop's own, recorded when the handoff was
+/// delivered; a hop that names neither is not drawn.
 pub(super) fn handoff_links(snapshot: &Snapshot, hops: &[Hop]) -> Vec<TopologyLink> {
     let root = cluster_root();
     hops.iter()
         .filter_map(|hop| {
-            let from = Role::of(&hop.from).stage()?;
-            let to = Role::of(&hop.to).stage()?;
+            let from = Stage::named(&hop.from_stage)?;
+            let to = Stage::named(&hop.to_stage)?;
             let ends = [
                 format!("{root}/node/{}/{}", hop.from, from.name()),
                 format!("{root}/node/{}/{}", hop.to, to.name()),
