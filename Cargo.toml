@@ -29,6 +29,12 @@ path = "src/lib.rs"
 name = "xmip-playground-roll"
 path = "src/bin/roll.rs"
 
+# The roll spawns the cluster and the cluster spawns the nodes (the owner,
+# 2026-09-19: even clusters have to be spawned as processes during tests).
+[[bin]]
+name = "xmip-playground-cluster"
+path = "src/bin/cluster.rs"
+
 [[bin]]
 name = "xmip-playground-node"
 path = "src/bin/node.rs"

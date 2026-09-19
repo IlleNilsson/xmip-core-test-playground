@@ -37,12 +37,14 @@
 //! overridable with `XMIP_PLAYGROUND_SNAPSHOT`, `_HISTORY`, `_ACTIVITY`. Every
 //! variable is read in one place, `environment.rs`.
 //!
-//! **The cluster's nodes.** When `XMIP_PLAYGROUND_NODES` is set — a count, or
-//! empty for the level's own — or `XMIP_PLAYGROUND_STRESS` is `harsh` or
-//! `brutal`, the roll spawns one node process per node beside the in-process
-//! scenarios and merges their snapshots each round (ADR-0028 clause 2). The
-//! board shows the nodes' rollup row, and a node's leaf only when it is not
-//! fine. Unset, no process is spawned and the roll is what it was.
+//! **The cluster is a process too** (the owner, 2026-09-19). When
+//! `XMIP_PLAYGROUND_NODES` is set — a count, or empty for the level's own — or
+//! `XMIP_PLAYGROUND_STRESS` is `harsh` or `brutal`, the roll spawns exactly
+//! one `xmip-playground-cluster` process, and that process spawns and
+//! supervises one `xmip-playground-node` per node (ADR-0028 clause 2). The
+//! roll merges the one file the cluster publishes into its own snapshot each
+//! round; the board shows the nodes' rollup row, and a node's leaf only when
+//! it is not fine. Unset, no process is spawned and the roll is what it was.
 //! `XMIP_PLAYGROUND_NODE_NAMES` names the nodes instead, comma separated, one
 //! process each, at any level; `XMIP_PLAYGROUND_ONLINE_NODES` names the ones
 //! among them that may assume the internet (ADR-0045); unset, every node
@@ -60,17 +62,17 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use observe::{Health, History, Snapshot};
+use observe::{Activity, Health, History, Snapshot};
 use xmip_test_playground::Headroom;
-use xmip_test_playground::cluster::{Cluster, merge, node_binary};
+use xmip_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
 use xmip_test_playground::environment::{
     self, load_bytes, max_seconds, node_names, publish_paths, time_factor,
 };
 use xmip_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_test_playground::{
     Budget, DailyBacklog, ExclusiveClaim, FaultPlan, Filing, HeavyLoad, LowLatency, Retention,
-    Roster, Run, Schedule, Stress, activity_toml, cluster_name, cluster_root, cluster_topology,
-    history_toml, now_unix_nanos, to_toml_run, write_atomic,
+    Roster, Run, Schedule, Stress, Topology, activity_toml, cluster_name, cluster_root,
+    cluster_topology, history_toml, now_unix_nanos, to_toml_run, write_atomic,
 };
 
 fn main() {
@@ -78,7 +80,8 @@ fn main() {
     let root = root.as_str();
 
     // What this process says of itself while it runs (ADR-0053): the roll is
-    // the cluster it emulates, and everything the Playground runs is test.
+    // the test over the cluster it starts, and everything the Playground runs
+    // is test.
     let _declared = ::node::Declaration::new("xmip-playground-roll", root, ::node::Purpose::Test)
         .declare()
         .map_err(|error| eprintln!("roll: could not declare itself: {error}"));
@@ -87,7 +90,6 @@ fn main() {
     let names = node_names(stress);
     let relayed = relayed_or_refuse(&chosen, &names);
     let run = Run::of(&cluster, &chosen, &names, stress);
-    let mut nodes = spawn_nodes(stress, &names, &chosen, &base);
 
     // Each scenario under its own subtree, each with faults or pressure on, so
     // the board is realistic rather than uniformly green. `file` stays clean in
@@ -119,14 +121,21 @@ fn main() {
     // so a week-long run does not grow. ADR-0029.
     let mut history = History::with_capacity(3600);
 
-    let (snapshot_path, history_path, activity_path) = publish_paths(&cluster);
+    let publication = Publication::of(&cluster, run);
+
+    // One cluster per roll (ADR-0028), and since 2026-09-19 a process of its
+    // own: it spawns and supervises the nodes and publishes beside this
+    // roll's snapshot, which merges that one file each round.
+    let cluster_path = publication.beside(&format!("{cluster}-cluster.toml"));
+    let mut spawned = spawn_cluster(&cluster, stress, &names, &chosen, &base, &cluster_path);
+
     let limit: Option<u64> = std::env::args().nth(1).and_then(|arg| arg.parse().ok());
     let live = std::io::stdout().is_terminal();
     let real = Duration::from_millis(1000);
     let budget = Budget::new(max_seconds(), time_factor());
 
     if !live {
-        println!("publishing snapshots to {}", snapshot_path.display());
+        println!("publishing snapshots to {}", publication.snapshot.display());
     }
 
     let mut round: u64 = 0;
@@ -161,30 +170,19 @@ fn main() {
         if drives(&chosen, "daily-backlog") {
             merge(&mut snapshot, &daily_backlog.tick());
         }
-        if let Some(nodes) = nodes.as_mut() {
-            merge(&mut snapshot, &nodes.tick());
-        }
+        // The cluster's own file, and from it what the topology draws.
+        let topology = spawned.as_mut().map(|spawned| {
+            merge(&mut snapshot, spawned.tick());
+            let names = names.iter().map(String::as_str);
+            cluster_topology(&snapshot, names, spawned.hops(), now_unix_nanos())
+        });
 
         history.record(&snapshot);
-
-        let topology = nodes.as_ref().map(|nodes| {
-            cluster_topology(&snapshot, nodes.names(), &nodes.hops(), now_unix_nanos())
-        });
-        write(
-            &snapshot_path,
-            &to_toml_run(root, &snapshot, topology, Some(run.clone())),
-            "snapshot",
-        );
-        write(&history_path, &history_toml(root, &history), "history");
-        write(
-            &activity_path,
-            &activity_toml(root, round_trip.activity()),
-            "activity",
-        );
+        publication.round(root, &snapshot, topology, &history, round_trip.activity());
 
         if live {
             redraw(root, round, &snapshot);
-            println!("  publishing to {}", snapshot_path.display());
+            println!("  publishing to {}", publication.snapshot.display());
         } else {
             summarise(root, round, &snapshot);
         }
@@ -196,10 +194,57 @@ fn main() {
         std::thread::sleep(real);
     }
 
-    if let Some(mut nodes) = nodes {
-        nodes.stop();
+    // The cluster is asked to leave before this process does, so it stops its
+    // own nodes on the way out and nothing is orphaned.
+    if let Some(mut spawned) = spawned {
+        spawned.stop();
     }
     std::fs::remove_dir_all(&base).ok();
+    std::fs::remove_file(&cluster_path).ok();
+}
+
+/// The three files a round publishes, and the run header every snapshot
+/// carries. The paths are the cmdlet's or the roll's own defaults, decided
+/// once (`environment.rs`); the header says what the run was started with.
+struct Publication {
+    snapshot: PathBuf,
+    history: PathBuf,
+    activity: PathBuf,
+    run: Run,
+}
+
+impl Publication {
+    /// Where this cluster publishes, with the run it publishes under.
+    fn of(cluster: &str, run: Run) -> Self {
+        let (snapshot, history, activity) = publish_paths(cluster);
+        Self {
+            snapshot,
+            history,
+            activity,
+            run,
+        }
+    }
+
+    /// A file called `name` beside the snapshot — where the cluster process
+    /// publishes its own.
+    fn beside(&self, name: &str) -> PathBuf {
+        self.snapshot.with_file_name(name)
+    }
+
+    /// One round's snapshot, history and activity, each written atomically.
+    fn round(
+        &self,
+        root: &str,
+        snapshot: &Snapshot,
+        topology: Option<Topology>,
+        history: &History,
+        activity: &Activity,
+    ) {
+        let text = to_toml_run(root, snapshot, topology, Some(self.run.clone()));
+        write(&self.snapshot, &text, "snapshot");
+        write(&self.history, &history_toml(root, history), "history");
+        write(&self.activity, &activity_toml(root, activity), "activity");
+    }
 }
 
 /// The scenarios named in `XMIP_PLAYGROUND_SCENARIOS`: none named is every
@@ -228,27 +273,29 @@ fn relayed_or_refuse(chosen: &[String], names: &[String]) -> bool {
     true
 }
 
-/// One process per name, each told the scenarios chosen, over the cluster's
-/// shared directory. Nodes that cannot start are said so and the roll goes on
-/// without them.
-fn spawn_nodes(
+/// One cluster process, told the nodes to spawn and the scenarios chosen,
+/// over the shared directory it will own. Nothing is spawned when no node was
+/// named; a cluster that cannot start is said so and the roll goes on without
+/// one, as it did when the nodes were its own.
+fn spawn_cluster(
+    cluster: &str,
     stress: Stress,
     names: &[String],
     chosen: &[String],
     base: &Path,
-) -> Option<Cluster> {
+    path: &Path,
+) -> Option<Spawned> {
     if names.is_empty() {
         return None;
     }
     let shared = base.join("shared");
-    let snapshots = base.join("snapshots");
-    let spawned = node_binary().and_then(|binary| {
-        Cluster::spawn_driving(&binary, stress, names, chosen, &shared, &snapshots, 0)
-    });
-    match spawned {
-        Ok(cluster) => Some(cluster),
+    let orders = Orders::of(stress, names, 0).driving(chosen);
+    let started = cluster_binary()
+        .and_then(|binary| Spawned::start(&binary, cluster, &orders, &shared, path));
+    match started {
+        Ok(spawned) => Some(spawned),
         Err(error) => {
-            eprintln!("no nodes: {error}");
+            eprintln!("no cluster: {error}");
             None
         }
     }

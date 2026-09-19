@@ -169,15 +169,56 @@ Decision 2 said nodes run as System Processes, and until this day no scenario
 spawned one. The **cluster** does (`cluster.rs`): `node`, a second binary, is
 one emulated node that runs its part of the tests over a directory the whole
 cluster shares and publishes its own snapshot under
-`xmip:///<cluster>/node/<name>`; the roll spawns one per name, or the level's
+`xmip:///<cluster>/node/<name>`; the cluster spawns one per name, or the level's
 count of them, merges their snapshots each round, adds the rollup the surface
 owes at `xmip:///<cluster>/node` (ADR-0027 decision 8), and kills and restarts a
 node whose snapshot stops moving — a recorded yellow, never silent. Exclusive
 pickup and backlog draining are thereby contended by real processes, which is
 the property ADR-0024's claim exists to prove and a thread could only imitate.
 `XMIP_PLAYGROUND_NODES` or a harsh or brutal level puts the nodes on the board
-beside the in-process scenarios. What the roll knows of a node's process — alive,
-exited, restarted — is at `node/<name>/system-process`.
+beside the in-process scenarios. What the cluster knows of a node's process —
+alive, exited, restarted — is at `node/<name>/system-process`.
+
+### Even clusters are spawned as processes, 2026-09-19
+
+The owner: *even clusters have to be spawned as processes during tests.* Until
+this day `xmip-playground-roll` was both the test and the cluster. Now the
+tree is three deep, and each of the three declares its name, location and
+purpose Test where it starts (ADR-0053):
+
+```text
+xmip-playground-roll             the test: chooses scenarios, sets stress, judges, draws
+└─ xmip-playground-cluster C1    the cluster: owns the shared store, spawns and watches
+   ├─ xmip-playground-node R1    the nodes, one process each
+   ├─ xmip-playground-node P1
+   └─ xmip-playground-node S1
+```
+
+The **roll** keeps what a test driver owns: the scenarios that stay in its own
+process (LowLatency, HeavyLoad, Retention, Filing, and RoundTrip when there
+are no role nodes), the board, the history, the activity, and
+`<cluster>-snapshot.toml` — the one file the prompt, the CLI and the web GUI
+read, at the same path and in the same shape as before. It spawns exactly one
+cluster process when nodes are named, merges the file that cluster publishes
+into its own each round, and stops it when the rounds run out.
+
+The **cluster** (`src/bin/cluster.rs`) is a [`Cluster`] and nothing else. It
+takes `--name --shared --nodes --stress --rounds --snapshot`, with
+`--online`, `--scenarios` and `--interval-ms` optional; a value it cannot read
+is REFUSED with exit code 2, naming what was wrong and what would be right
+(ADR-0055). Its scope root is `XMIP_PLAYGROUND_CLUSTER`, which the roll sets
+on it and which its own nodes inherit, so all three agree without being told
+twice — and `--name` must be that same word. It publishes
+`<cluster>-cluster.toml` beside the roll's snapshot, atomically, each round,
+exactly as a node publishes its own.
+
+`stop` in the shared directory stops the whole tree: a node leaves between
+rounds, and so does its cluster, which stops its own nodes before it goes.
+`Stop-XmipTest` ends a run from the leaves up — nodes, then the cluster, then
+the roll — so `Get-Process xmip-*` is empty afterwards and nothing is
+orphaned. `Get-XmipProcess` shows all three kinds with the location and
+purpose each declared, and `Get-XmipTestNode` reports a node's roll, which is
+now its grandparent.
 
 ### A cluster and its nodes: the letter is the role, 2026-09-19
 

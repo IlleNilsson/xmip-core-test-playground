@@ -35,6 +35,10 @@ pub enum Stress {
 }
 
 impl Stress {
+    /// Every level's name, in order. A surface that takes a level offers this
+    /// set and names it when it refuses one (ADR-0055).
+    pub const NAMES: [&'static str; 4] = ["calm", "realistic", "harsh", "brutal"];
+
     /// The level a roll runs at: `XMIP_PLAYGROUND_STRESS` as one of the four
     /// names, `realistic` when unset or unrecognised.
     #[must_use]

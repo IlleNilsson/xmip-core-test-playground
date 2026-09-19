@@ -11,6 +11,11 @@
 //! cluster and its nodes; the word this file was named for until then is
 //! retired.
 //!
+//! 2026-09-19, the owner again: *even clusters have to be spawned as processes
+//! during tests.* This is that process's library. `xmip-playground-cluster`
+//! (`src/bin/cluster.rs`) is a [`Cluster`] and nothing else; the roll holds it
+//! from outside as a [`Spawned`] and reads the one file it publishes.
+//!
 //! [`Cluster::tick`] is the surface's half of ADR-0027 decision 8: a node
 //! answers for itself, and the cluster view is assembled by whoever asks each
 //! node. Every node's latest file is read and merged — scopes are disjoint per
@@ -23,7 +28,9 @@
 
 mod binary;
 mod member;
+mod orders;
 mod rollup;
+mod spawned;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -33,16 +40,19 @@ use std::time::{Duration, Instant};
 use observe::Snapshot;
 
 #[cfg(test)]
+pub(crate) use binary::built_cluster_binary;
+#[cfg(test)]
 pub(crate) use binary::built_node_binary;
-pub use binary::node_binary;
+pub use binary::{cluster_binary, node_binary};
 use member::Member;
+pub use orders::Orders;
 pub use rollup::merge;
 use rollup::rollup;
+pub use spawned::Spawned;
 
 use crate::handoff::Hop;
 use crate::stress::Stress;
 use crate::support::now_unix_nanos;
-use crate::switch::Switches;
 
 /// The fixture root this crate's tests publish under. A roll is a cluster the
 /// owner named; a test spawns nodes, never a cluster (ADR-0052, 2026-09-14).
@@ -59,88 +69,24 @@ const STOP_WAIT: Duration = Duration::from_secs(5);
 pub struct Cluster {
     binary: PathBuf,
     shared: PathBuf,
-    stress: Stress,
-    rounds: u64,
-    /// The scenarios every node is told to run; empty means every one.
-    scenarios: Vec<String>,
-    /// Every node's name, which each node is told: the letter is the role,
-    /// and a role node finds the others by it.
-    names: Vec<String>,
+    /// Who the nodes are and what they were told — the one value the cluster
+    /// hands on to every node it starts.
+    orders: Orders,
     nodes: Vec<Member>,
 }
 
 impl Cluster {
-    /// Spawn `stress.nodes()` node processes over `shared`, each publishing
-    /// to `snapshots/<name>.toml`, each running `rounds` rounds (`0` runs until
-    /// stopped).
-    ///
-    /// # Errors
-    ///
-    /// When the `node` binary cannot be found or a process cannot be started.
-    pub fn spawn(stress: Stress, shared: &Path, snapshots: &Path, rounds: u64) -> io::Result<Self> {
-        Self::spawn_binary(
-            &node_binary()?,
-            stress,
-            stress.nodes(),
-            shared,
-            snapshots,
-            rounds,
-        )
-    }
-
-    /// The same with the binary named and the count chosen — a test names
-    /// `env!("CARGO_BIN_EXE_xmip-playground-node")`, and a roll may override the count.
+    /// Spawn one node process per name in `orders` over `shared`, each
+    /// publishing to `snapshots/<name>.toml`.
     ///
     /// # Errors
     ///
     /// When a process cannot be started.
-    pub fn spawn_binary(
+    pub fn spawn(
         binary: &Path,
-        stress: Stress,
-        count: usize,
+        orders: &Orders,
         shared: &Path,
         snapshots: &Path,
-        rounds: u64,
-    ) -> io::Result<Self> {
-        let names: Vec<String> = (1..=count)
-            .map(|index| format!("node-{index:02}"))
-            .collect();
-        Self::spawn_named(binary, stress, &names, shared, snapshots, rounds)
-    }
-
-    /// The same with every node named by the caller — the owner's shape,
-    /// 2026-09-12: a test starts processes simulating nodes, and the nodes are
-    /// named, not numbered. `XMIP_PLAYGROUND_NODE_NAMES` carries them to a roll.
-    ///
-    /// # Errors
-    ///
-    /// When a process cannot be started.
-    pub fn spawn_named(
-        binary: &Path,
-        stress: Stress,
-        names: &[String],
-        shared: &Path,
-        snapshots: &Path,
-        rounds: u64,
-    ) -> io::Result<Self> {
-        Self::spawn_driving(binary, stress, names, &[], shared, snapshots, rounds)
-    }
-
-    /// The same with the scenarios named: every node is told them, and runs
-    /// its part of those and nothing else (the owner, 2026-09-19: nodes run
-    /// the test that was named). None named is every scenario.
-    ///
-    /// # Errors
-    ///
-    /// When a process cannot be started.
-    pub fn spawn_driving(
-        binary: &Path,
-        stress: Stress,
-        names: &[String],
-        scenarios: &[String],
-        shared: &Path,
-        snapshots: &Path,
-        rounds: u64,
     ) -> io::Result<Self> {
         std::fs::create_dir_all(shared)?;
         std::fs::create_dir_all(snapshots)?;
@@ -149,24 +95,19 @@ impl Cluster {
         let mut cluster = Self {
             binary: binary.to_path_buf(),
             shared: shared.to_path_buf(),
-            stress,
-            rounds,
-            scenarios: scenarios.to_vec(),
-            names: names.to_vec(),
+            orders: orders.clone(),
             nodes: Vec::new(),
         };
-        for name in names {
+        for name in orders.names.clone() {
             let path = snapshots.join(format!("{name}.toml"));
-            let child = cluster.start(name, &path)?;
-            cluster
-                .nodes
-                .push(Member::started(name.clone(), child, path));
+            let child = cluster.start(&name, &path)?;
+            cluster.nodes.push(Member::started(name, child, path));
         }
         Ok(cluster)
     }
 
-    /// Start the node called `name` — the name decides whether it may assume
-    /// the internet, `XMIP_PLAYGROUND_ONLINE_NODES` naming the ones that may.
+    /// Start the node called `name` — the orders decide whether it may assume
+    /// the internet, and what tests it is told to run.
     fn start(&self, name: &str, path: &Path) -> io::Result<Child> {
         /// How often a node ticks. A quarter second where a test wants
         /// contention now; two seconds in a brutal roll, where forty nodes
@@ -180,19 +121,23 @@ impl Cluster {
             }
         }
 
+        let orders = &self.orders;
         Command::new(&self.binary)
-            .args(["--name", name, "--stress", self.stress.name()])
-            .args(["--rounds", &self.rounds.to_string()])
-            .args(["--interval-ms", &node_interval_ms(self.stress).to_string()])
-            .args(["--nodes", &self.names.join(",")])
+            .args(["--name", name, "--stress", orders.stress.name()])
+            .args(["--rounds", &orders.rounds.to_string()])
+            .args([
+                "--interval-ms",
+                &node_interval_ms(orders.stress).to_string(),
+            ])
+            .args(["--nodes", &orders.names.join(",")])
             // None named is every scenario, which is what no flag means.
             .args(
-                (!self.scenarios.is_empty())
-                    .then(|| ["--scenarios".to_string(), self.scenarios.join(",")])
+                (!orders.scenarios.is_empty())
+                    .then(|| ["--scenarios".to_string(), orders.scenarios.join(",")])
                     .into_iter()
                     .flatten(),
             )
-            .args(Switches::for_node(name).flags())
+            .args(orders.switches(name).flags())
             .arg("--shared")
             .arg(&self.shared)
             .arg("--snapshot")
@@ -326,13 +271,11 @@ mod tests {
 
     fn spawn(stress: Stress, count: usize, rounds: u64) -> (PathBuf, Cluster) {
         let dir = scratch("cluster");
-        let cluster = Cluster::spawn_binary(
+        let cluster = Cluster::spawn(
             &built_node_binary(),
-            stress,
-            count,
+            &Orders::numbered(stress, count, rounds),
             &dir.join("shared"),
             &dir.join("snapshots"),
-            rounds,
         )
         .expect("the cluster spawns");
         (dir, cluster)
@@ -438,14 +381,12 @@ mod tests {
     fn role_nodes_run_the_named_test_and_hand_each_pair_r_to_p_to_s() {
         let dir = scratch("cluster-roles");
         let names = ["R1", "P1", "S1"].map(str::to_string);
-        let mut cluster = Cluster::spawn_driving(
+        let orders = Orders::of(Stress::Calm, &names, 0).driving(&["round-trip".to_string()]);
+        let mut cluster = Cluster::spawn(
             &built_node_binary(),
-            Stress::Calm,
-            &names,
-            &["round-trip".to_string()],
+            &orders,
             &dir.join("shared"),
             &dir.join("snapshots"),
-            0,
         )
         .expect("the cluster spawns");
 
