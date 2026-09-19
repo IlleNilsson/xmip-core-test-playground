@@ -159,8 +159,9 @@ pub fn node_toml(node: &str, snapshot: &Snapshot, hops: Vec<Hop>) -> String {
     toml::to_string(&report).unwrap_or_default()
 }
 
-/// Every kind a snapshot file carries, in the order it lists them.
-const COUNTED: [Counted; 6] = [
+/// Every kind a snapshot file carries, in the order it lists them, and the
+/// kinds `curve.rs` rolls up at the node for its history.
+pub(crate) const COUNTED: [Counted; 6] = [
     Counted::Streams,
     Counted::Messages,
     Counted::Journeys,
@@ -246,6 +247,10 @@ pub fn node_from_toml(text: &str) -> Result<(Snapshot, Vec<Hop>), toml::de::Erro
 
 /// The node's throughput over time as the TOML the history cmdlet and UI read:
 /// one point per counted kind per tick, oldest first. ADR-0029.
+///
+/// The series read is the node's own, at its exact scope, which is what
+/// [`crate::record_round`] puts there each round — a scenario counts beneath
+/// the node and a series is not rolled up on the way out.
 #[must_use]
 pub fn history_toml(node: &str, history: &History) -> String {
     let mut points = Vec::new();

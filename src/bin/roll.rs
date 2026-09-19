@@ -77,8 +77,8 @@ use xmip_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_test_playground::{
     Budget, DailyBacklog, ExclusiveClaim, FaultPlan, Filing, Headroom, HeavyLoad, LowLatency,
     Retention, Roster, Run, Schedule, Stress, Topology, activity_toml, cluster_name, cluster_root,
-    cluster_topology, complement, history_toml, now_unix_nanos, redraw, summarise, to_toml_run,
-    write_atomic,
+    cluster_topology, complement, history_toml, now_unix_nanos, record_round, redraw, summarise,
+    to_toml_run, write_atomic,
 };
 
 fn main() {
@@ -194,7 +194,11 @@ fn main() {
             cluster_topology(&snapshot, named, spawned.hops(), now_unix_nanos())
         });
 
-        history.record(&snapshot);
+        // Every scope's series, and the rollup at the root that the history
+        // file is written from: a scenario counts beneath the node, so a roll
+        // that recorded only the snapshot published `points = []` for as long
+        // as the Playground has had a history (curve.rs, 2026-09-19).
+        record_round(&mut history, root, &snapshot);
         publication.round(root, &snapshot, topology, &history, round_trip.activity());
 
         if live {
