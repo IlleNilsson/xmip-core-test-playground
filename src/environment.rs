@@ -92,6 +92,19 @@ pub fn publish_paths(cluster: &str) -> (PathBuf, PathBuf, PathBuf) {
     )
 }
 
+/// Where the per-instance images of this run go, from
+/// `XMIP_PLAYGROUND_IMAGES`: the device-local directory a cluster's roll, its
+/// cluster process and its nodes are linked into, so each runs under a name
+/// that says which cluster and which node it is (ADR-0053, amendment
+/// 2026-09-20). `None` where nothing named one, and then nothing is linked and
+/// every process keeps the binary's own name.
+#[must_use]
+pub fn image_directory() -> Option<PathBuf> {
+    std::env::var_os("XMIP_PLAYGROUND_IMAGES")
+        .filter(|named| !named.is_empty())
+        .map(PathBuf::from)
+}
+
 fn env_path(variable: &str, default: &str) -> PathBuf {
     std::env::var_os(variable).map_or_else(|| std::env::temp_dir().join(default), PathBuf::from)
 }

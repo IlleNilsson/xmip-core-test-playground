@@ -54,6 +54,7 @@ use std::time::Duration;
 
 use observe::Snapshot;
 use xmip_test_playground::cluster::merge;
+use xmip_test_playground::image;
 use xmip_test_playground::scenario::{self, DAILY_BACKLOG, EXCLUSIVE_CLAIM, ROUND_TRIP, drives};
 use xmip_test_playground::{
     Capability, DailyBacklog, ExclusiveClaim, Relay, Roster, Stress, cluster_root, node_toml,
@@ -97,8 +98,12 @@ fn main() -> ExitCode {
 
     let node = format!("{}/node/{}", cluster_root(), arguments.name);
 
-    // What this process says of itself while it runs (ADR-0053).
-    let _declared = ::node::Declaration::new("xmip-playground-node", &node, ::node::Purpose::Test)
+    // What this process says of itself while it runs (ADR-0053). The name is
+    // the image's own — xmip-playground-<cluster>-node-<node> where a cluster
+    // named it — so the declaration and the process list agree (amendment
+    // 2026-09-20).
+    let called = image::this_process("xmip-playground-node");
+    let _declared = ::node::Declaration::new(called, &node, ::node::Purpose::Test)
         .declare()
         .map_err(|error| eprintln!("node {}: could not declare itself: {error}", arguments.name));
 

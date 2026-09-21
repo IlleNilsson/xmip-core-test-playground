@@ -62,7 +62,11 @@ impl Spawned {
         path: &Path,
     ) -> io::Result<Self> {
         std::fs::create_dir_all(shared)?;
-        let mut command = Command::new(binary);
+        // The image says which cluster this is: xmip-playground-<cluster>-cluster
+        // rather than one more xmip-playground-cluster row (ADR-0053,
+        // amendment 2026-09-20).
+        let image = crate::image::of(binary, cluster, "cluster")?;
+        let mut command = Command::new(image);
         command
             .env("XMIP_PLAYGROUND_CLUSTER", cluster)
             .args(["--name", cluster, "--stress", orders.stress.name()])

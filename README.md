@@ -235,6 +235,39 @@ orphaned. `Get-XmipProcess` shows all three kinds with the location and
 purpose each declared, and `Get-XmipTestNode` reports a node's roll, which is
 now its grandparent.
 
+**Each of the three says which cluster and which node it is** (ADR-0053,
+amendment 2026-09-20). The owner, reading eleven identical rows: *these
+process names does not tell an operator or developer much. … Cluster, Node
+and test suite shall be incorporated in the process name.* So a roll on
+cluster `C1` over nodes `R1`, `P1` and `S1` is
+
+```text
+xmip-playground-C1-cluster
+xmip-playground-C1-node-P1
+xmip-playground-C1-node-R1
+xmip-playground-C1-node-S1
+xmip-playground-C1-roll
+```
+
+A process name is its image file's name and a running process cannot be
+renamed, so each of these is a **hard link** to the built binary, laid down
+under `.local-work/playground/image/<cluster>/` when `Start-XmipTest` starts
+the roll and taken away when the roll ends. A copy is the fallback where a
+link cannot be made. Nothing is written into the repository, and nothing is
+copied that can be linked: the node binary is twenty-one megabytes and a
+brutal level brings forty nodes.
+
+A roll started by hand — `cargo run --bin xmip-playground-roll` — names no
+cluster's images, so it and its tree keep the plain names
+`xmip-playground-roll`, `xmip-playground-cluster` and `xmip-playground-node`,
+as do this crate's own tests. Because a node's name is the last word of its
+process name, it is a file name: the same shape a cluster's name takes, and
+nothing further. A node may be called `roll` — the owner, 2026-09-20: *a node
+is a node and can have one or more roles, roll is something different* — and
+reads as `xmip-playground-C1-node-roll`, which is no roll of anything. The
+marker is what keeps the kinds apart, so no name is refused to make the shape
+convenient; only a name no file can carry is REFUSED before anything spawns.
+
 ### A cluster and its nodes: a node declares what it can do, 2026-09-19
 
 The owner: *Fleet is what I see in topology when running test, I would like to
@@ -253,13 +286,15 @@ node's own capability record says so rather than leaving it to be guessed.
 The rig read a node's stage out of the first letter of its name for one
 afternoon on 2026-09-19, until the owner said *I know, so why do you break
 it!* — ADR-0009 already had it that what a node does is its configuration, and
-ADR-0022 that placement must satisfy node capability. **Nothing at runtime
-reads a node's name.** The one exception is the operator's keyboard:
-`Start-XmipTest -Nodes R1, P1, S1` expands `R`, `P` and `S` into the receive,
-process and send capability inside the cmdlet, and `-NodeCapability
-@{ alpha = 'receive' }` says it outright and overrides the shorthand. What
-leaves PowerShell is `XMIP_PLAYGROUND_NODE_CAPABILITIES=R1=receive,…` — a
-declaration, not a name.
+ADR-0022 that placement must satisfy node capability. `Start-XmipTest` kept
+one shorthand at the operator's door for a day longer, and on 2026-09-20 the
+owner struck that too: *Rn, Pn and Sn are arbitrary node names* (ADR-0056,
+amendment). **Nowhere in Xmip is a node's name read.** A named node carries
+what `-NodeCapability @{ R1 = 'receive' }` states for it and nothing else; a
+node given none declares none, and `Start-XmipTest` says so in words before it
+spawns anything. Omit `-Nodes` and the level's complement deals the whole
+path by position, which reads no name either. What leaves PowerShell is
+`XMIP_PLAYGROUND_NODE_CAPABILITIES=R1=receive,…` — a declaration, not a name.
 
 **Nodes run the test that was named.** The roll passes the scenarios it was
 given to every node (`--scenarios`, with every node's name in `--nodes`), and a
@@ -362,9 +397,9 @@ process each; an empty list is `XMIP_PLAYGROUND_NODES=0`, no nodes; omitted,
 the cmdlet resolves the level's full complement and sets those names, so the
 run record says what an operator got), `-NodeCapability` is
 `XMIP_PLAYGROUND_NODE_CAPABILITIES` (what each declares it can do,
-`alpha=receive,beta=process+send`; a node it does not name declares nothing —
-and this is where the `R`/`P`/`S` shorthand of `-Nodes` has already been
-expanded), `-OnlineNodes` is `XMIP_PLAYGROUND_ONLINE_NODES`
+`alpha=receive,beta=process+send`; a node it does not name declares nothing,
+and nothing here is worked out from a name), `-OnlineNodes` is
+`XMIP_PLAYGROUND_ONLINE_NODES`
 (which of them may assume the internet, by name, ADR-0045; unset, every node
 reads `XMIP_ONLINE`), `-Duration` is
 `XMIP_PLAYGROUND_MAX_SECONDS`, `-TimeFactor` is `XMIP_PLAYGROUND_TIME_FACTOR`

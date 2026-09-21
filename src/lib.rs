@@ -65,6 +65,7 @@ pub mod handoff;
 pub mod headroom;
 pub mod heavy_load;
 pub mod identity;
+pub mod image;
 pub mod low_latency;
 pub mod relay;
 pub mod remote;

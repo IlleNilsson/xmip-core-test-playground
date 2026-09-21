@@ -38,6 +38,19 @@ pub enum Exchange {
 /// and the playground agree.
 pub const TIMEOUT: Duration = LOOPBACK_TIMEOUT;
 
+// The adapter retried a retryable failure for one afternoon of 2026-09-21 and
+// the retry is gone, because it was the wrong answer to the failure that
+// prompted it. A machine with no ephemeral port left is not having a blip; it
+// is out of a resource the whole suite is competing for, and every retry asks
+// for more of it. Three attempts with a rising pause turned a suite that ran
+// in a hundred and fifty-five seconds into one that ran for six thousand nine
+// hundred and eighty-one, with a single storm tick taking a hundred and
+// fourteen minutes against a three-minute budget.
+//
+// Retry is right for a blip and wrong for exhaustion, and nothing here can
+// tell them apart from one failure. What has to come down is the volume (the
+// owner, 2026-09-21, whose first answer this was).
+
 /// A transport the `RoundTrip` test can drive, behind one method. `Send`
 /// and `Sync` so a schedule can drive pairs from several threads at once —
 /// an adapter holds a directory or nothing, never a live socket.

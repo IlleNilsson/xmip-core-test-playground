@@ -43,6 +43,27 @@ pub fn now_unix_nanos() -> i64 {
         })
 }
 
+/// Three transports, one of each kind a schedule meets — a directory, a
+/// connection and a datagram — for a test about what a schedule reports rather
+/// than which transports carry it.
+///
+/// The whole matrix is 1,094 connections for one tick. Measured on 2026-09-21,
+/// the suite made 16,550 against a dynamic port range of 16,384, and eleven
+/// tests that ticked every transport made about 13,000 of them while testing
+/// curves, reports and counts; under cargo's parallel run they spent the range
+/// inside the two minutes a closed port is held, and every transport test
+/// after them failed for want of a port. The matrix is the subject of
+/// `a_tick_reports_every_pair_across_the_three_stages` and of the fault-free
+/// schedule's test, and it is exercised there.
+#[cfg(test)]
+pub(crate) fn three(dir: &std::path::Path) -> Vec<Box<dyn crate::roundtrip::RoundTrip>> {
+    vec![
+        Box::new(crate::roundtrip::FileRoundTrip::new(dir)),
+        Box::new(crate::roundtrip::TcpRoundTrip),
+        Box::new(crate::roundtrip::UdpRoundTrip),
+    ]
+}
+
 /// A fresh, empty scratch directory for a test, unique per name and run so
 /// parallel tests never collide. The test removes it when done.
 #[cfg(test)]

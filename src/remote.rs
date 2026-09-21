@@ -10,7 +10,7 @@
 //! one, so a far end that hangs is judged within [`TIMEOUT`] rather than
 //! waited on: the same rule `Loopback::round` keeps for the transports.
 
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
 use archive::ArchiveItem;
@@ -60,7 +60,14 @@ where
     let far_end = std::thread::spawn(move || serve(&listener));
     let filed = file(address);
     if matches!(filed, Filed::Failed(_)) {
-        let _ = TcpStream::connect(address);
+        // Bounded, like every poke in the estate since 2026-09-21: a bare
+        // connect on a machine out of ephemeral ports waits on the operating
+        // system's own SYN schedule, and a courtesy that takes twenty seconds
+        // is a hang with better manners.
+        drop(socket::connect_tcp(
+            address,
+            Some(std::time::Duration::from_millis(250)),
+        ));
     }
     match (far_end.join(), filed) {
         (_, Filed::Failed(why)) => Filed::Failed(why),

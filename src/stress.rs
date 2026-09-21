@@ -86,6 +86,14 @@ impl Stress {
     /// How many pairs a schedule runs at once. `brutal` drove every core
     /// until 2026-09-11 and drives the cores within the [`Headroom`] since:
     /// half of what was free when the tests started.
+    ///
+    /// `harsh` drives four. It was lowered to two for part of 2026-09-21 on
+    /// the theory that concurrency spent the machine's ephemeral ports, and
+    /// the theory was wrong: measured test by test, the suite made 16,550
+    /// connections against a dynamic range of 16,384, and eleven tests that
+    /// ticked every transport to test reports and curves made about 13,000 of
+    /// them. Those tests now tick three transports (`support::three`), and the
+    /// workers are back where the level was designed to put them.
     #[must_use]
     pub fn workers(self) -> usize {
         match self {

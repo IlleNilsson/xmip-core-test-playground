@@ -29,6 +29,11 @@ pub struct Orders {
     pub scenarios: Vec<String>,
     /// Rounds a node runs before it exits on its own; `0` runs until stopped.
     pub rounds: u64,
+    /// The cluster these nodes belong to, which each node's image is named
+    /// for — `xmip-playground-<cluster>-node-<node>` (ADR-0053, amendment
+    /// 2026-09-20). Empty where nobody said, and then nothing is linked and a
+    /// node keeps the binary's own name.
+    pub cluster: String,
 }
 
 impl Orders {
@@ -42,7 +47,16 @@ impl Orders {
             online: None,
             scenarios: Vec::new(),
             rounds,
+            cluster: String::new(),
         }
+    }
+
+    /// The same for the cluster called `cluster`, so every node it spawns runs
+    /// an image named for it (ADR-0053, amendment 2026-09-20).
+    #[must_use]
+    pub fn in_cluster(mut self, cluster: &str) -> Self {
+        self.cluster = cluster.to_string();
+        self
     }
 
     /// The same for `count` nodes numbered `node-01` up, none of them
@@ -96,9 +110,10 @@ impl Orders {
     }
 
     /// Why these orders cannot be carried out, if they cannot: no node at
-    /// all, an online node that is no node of the cluster, or a `RoundTrip`
-    /// whose roster leaves a capability of the path undeclared. Asked before a
-    /// process is spawned (ADR-0055 clause 2).
+    /// all, a node whose name no file can carry, an online node that is no
+    /// node of the cluster, or a `RoundTrip` whose roster leaves a capability
+    /// of the path undeclared. Asked before a process is spawned (ADR-0055
+    /// clause 2).
     #[must_use]
     pub fn refusal(&self) -> Option<String> {
         if self.roster.is_empty() {
@@ -109,6 +124,14 @@ impl Orders {
             );
         }
         let names = self.names();
+        // A node's name becomes a file name and the last word of its process
+        // name (ADR-0053, amendment 2026-09-20), so its shape is checked
+        // before a process is spawned rather than mangled into something that
+        // works. Nothing but the shape: no word is reserved, because the name
+        // carries a node marker of its own.
+        if let Some(refusal) = names.iter().find_map(|name| crate::image::refusal(name)) {
+            return Some(refusal);
+        }
         let strangers: Vec<&str> = self
             .online
             .iter()
@@ -198,6 +221,32 @@ mod tests {
                 .driving(&names(&["filing"]))
                 .refusal(),
             None
+        );
+    }
+
+    /// A node's name is its image's name (ADR-0053, amendment 2026-09-20), so
+    /// one no file can be called is refused before a process is spawned — and
+    /// one the tree's own words happen to spell is not, because the name
+    /// carries a node marker (the owner, 2026-09-20).
+    #[test]
+    fn a_node_whose_name_cannot_be_an_image_is_refused_before_anything_spawns() {
+        let wrong = Orders::of(Stress::Calm, roster("R1=receive,9lives=process"), 0)
+            .refusal()
+            .expect("no file is called 9lives here");
+        assert!(
+            wrong.starts_with("REFUSED") && wrong.contains("file name"),
+            "{wrong}"
+        );
+
+        assert_eq!(
+            Orders::of(
+                Stress::Calm,
+                roster("roll=receive,cluster=process,S1=send"),
+                0
+            )
+            .refusal(),
+            None,
+            "a node is a node, whatever it is called"
         );
     }
 }

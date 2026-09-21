@@ -478,32 +478,51 @@ mod tests {
     #[test]
     fn throughput_counts_per_stage() {
         let dir = scratch("throughput");
-        let mut schedule = Schedule::new("xmip:///playground", &dir);
+        let transports = crate::support::three(&dir);
+        let pairs = (CONTRACTS.len() * transports.len()) as u64;
+        let mut schedule = Schedule::new("xmip:///playground", &dir).over(transports);
 
         let snapshot = schedule.tick();
-        let transports = all_transports(&dir).len();
-        // A pair judged one-sided at Receive moved no Stream: the transport
-        // declared it could not carry the probe, so nothing went in.
-        let one_sided = snapshot
-            .health("xmip:///playground/receive")
-            .iter()
-            .filter(|record| record.health == Health::Stressed)
-            .count() as u64;
-        let pairs = (CONTRACTS.len() * transports) as u64 - one_sided;
+
+        // Every pair is judged at every stage, and the stages are judged
+        // apart: a pair that failed at Receive can still be delivered at
+        // Process, so each figure is counted against its own stage and not
+        // against one number for all three.
+        //
+        // A pair that did not deliver moved nothing: the transport either
+        // declared it could not carry the probe, which is Stressed, or tried
+        // and failed, which is Done. Only the Stressed ones were subtracted
+        // until 2026-09-21, and only at Receive, which was the same number
+        // only while nothing could fail. It could: once the transport's
+        // unbounded waits became bounded failures, a machine out of ephemeral
+        // ports produced the first real ones the estate had seen here and the
+        // assertion was thirty out at Receive and twenty-nine at Process.
+        //
+        // Counting the Fine records instead is not the fix — they are
+        // published at every scope under a stage, not one per pair, and that
+        // reads four times too high.
+        let delivered = |stage: &str| {
+            let undelivered = snapshot
+                .health(&format!("xmip:///playground/{stage}"))
+                .iter()
+                .filter(|record| matches!(record.health, Health::Stressed | Health::Done))
+                .count() as u64;
+            pairs - undelivered
+        };
 
         assert_eq!(
             snapshot
                 .measure("xmip:///playground", Counted::Streams)
                 .map(|c| c.value),
-            Some(pairs),
-            "one Stream in per delivered pair"
+            Some(delivered("receive")),
+            "one Stream in per pair delivered at Receive"
         );
         assert_eq!(
             snapshot
                 .measure("xmip:///playground", Counted::Journeys)
                 .map(|c| c.value),
-            Some(pairs),
-            "one Journey per delivered pair"
+            Some(delivered("process")),
+            "one Journey per pair delivered at Process"
         );
         std::fs::remove_dir_all(&dir).ok();
     }

@@ -77,7 +77,8 @@ pub struct Cluster {
 
 impl Cluster {
     /// Spawn one node process per name in `orders` over `shared`, each
-    /// publishing to `snapshots/<name>.toml`.
+    /// publishing to `snapshots/<name>.toml` and each running an image named
+    /// for the cluster the orders are for and for itself.
     ///
     /// # Errors
     ///
@@ -123,7 +124,10 @@ impl Cluster {
         }
 
         let orders = &self.orders;
-        Command::new(&self.binary)
+        // One image per node, so the operating system's list says which node
+        // of which cluster each row is (ADR-0053, amendment 2026-09-20).
+        let image = crate::image::of_node(&self.binary, &orders.cluster, name)?;
+        Command::new(image)
             .args(["--name", name, "--stress", orders.stress.name()])
             .args(["--rounds", &orders.rounds.to_string()])
             .args([

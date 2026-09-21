@@ -42,6 +42,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use xmip_test_playground::cluster::{Cluster, Orders, node_binary};
+use xmip_test_playground::image;
 use xmip_test_playground::roster::Roster;
 use xmip_test_playground::scenario;
 use xmip_test_playground::stress::Stress;
@@ -91,15 +92,18 @@ fn main() -> ExitCode {
     }
 
     // What this process says of itself while it runs (ADR-0053): the cluster
-    // is the scope it is, and everything the Playground runs is test.
-    let _declared =
-        ::node::Declaration::new("xmip-playground-cluster", &root, ::node::Purpose::Test)
-            .declare()
-            .map_err(|error| eprintln!("cluster {root}: could not declare itself: {error}"));
+    // is the scope it is, and everything the Playground runs is test. The name
+    // is the image's own, so the declaration says what Get-Process says
+    // (amendment 2026-09-20).
+    let called = image::this_process("xmip-playground-cluster");
+    let _declared = ::node::Declaration::new(called, &root, ::node::Purpose::Test)
+        .declare()
+        .map_err(|error| eprintln!("cluster {root}: could not declare itself: {error}"));
 
     let orders = Orders::of(arguments.stress, arguments.nodes.clone(), 0)
         .driving(&arguments.scenarios)
-        .with_online(arguments.online.clone());
+        .with_online(arguments.online.clone())
+        .in_cluster(&arguments.name);
     if let Some(refusal) = orders.refusal() {
         return refuse(&refusal);
     }
@@ -109,7 +113,8 @@ fn main() -> ExitCode {
         Err(error) => return refuse(&format!("REFUSED: {error}")),
     };
     let snapshots = arguments.shared.join("snapshots");
-    let mut cluster = match Cluster::spawn(&binary, &orders, &arguments.shared, &snapshots) {
+    let spawning = Cluster::spawn(&binary, &orders, &arguments.shared, &snapshots);
+    let mut cluster = match spawning {
         Ok(cluster) => cluster,
         Err(error) => {
             eprintln!("cluster {root}: no nodes: {error}");

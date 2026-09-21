@@ -387,7 +387,8 @@ mod tests {
     fn a_ticked_schedule_serialises_to_toml_with_records_and_counts() {
         let dir = std::env::temp_dir().join("xmip-report-test");
         std::fs::remove_dir_all(&dir).ok();
-        let mut schedule = Schedule::new("xmip:///playground", &dir);
+        let mut schedule =
+            Schedule::new("xmip:///playground", &dir).over(crate::support::three(&dir));
         let snapshot = schedule.tick();
 
         let text = to_toml("xmip:///playground", &snapshot);
@@ -403,7 +404,8 @@ mod tests {
     fn a_written_snapshot_reads_back_whole() {
         let dir = std::env::temp_dir().join("xmip-report-readback-test");
         std::fs::remove_dir_all(&dir).ok();
-        let mut schedule = Schedule::new("xmip:///playground", &dir);
+        let mut schedule =
+            Schedule::new("xmip:///playground", &dir).over(crate::support::three(&dir));
         let written = schedule.tick();
 
         let read = from_toml(&to_toml("xmip:///playground", &written)).expect("reads back");
@@ -427,7 +429,8 @@ mod tests {
     fn history_serialises_to_toml_points() {
         let dir = std::env::temp_dir().join("xmip-report-history-test");
         std::fs::remove_dir_all(&dir).ok();
-        let mut schedule = Schedule::new("xmip:///playground", &dir);
+        let mut schedule =
+            Schedule::new("xmip:///playground", &dir).over(crate::support::three(&dir));
         let mut history = History::default();
         history.record(&schedule.tick());
         history.record(&schedule.tick());

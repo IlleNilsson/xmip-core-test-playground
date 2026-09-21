@@ -27,6 +27,7 @@ pub struct Ledger {
     messages: u64,
     journeys: u64,
     moved_bytes: u64,
+    failed: u64,
 }
 
 impl Ledger {
@@ -42,6 +43,7 @@ impl Ledger {
             messages: 0,
             journeys: 0,
             moved_bytes: 0,
+            failed: 0,
         }
     }
 
@@ -71,6 +73,14 @@ impl Ledger {
             }
         }
 
+        // What the operator's F says. Counted at the transport verdict for the
+        // reason the throughput is: one round that failed is one failure, not
+        // one per identity step beneath it. A one-sided transport is not one —
+        // nothing is broken there, and the verdict already says so in yellow.
+        if is_transport && matches!(verdict.outcome, Outcome::Failed(_)) {
+            self.failed += 1;
+        }
+
         let scope = verdict.scope(&self.node);
         let tally = self.tallies.entry(scope.clone()).or_default();
         tally.fold(&verdict.outcome);
@@ -91,8 +101,9 @@ impl Ledger {
 
     /// Close a round: the pairs that waited keep their standing on the board,
     /// and the cumulative throughput is published at the node scope — Streams
-    /// in at Receive, Journeys through Process, Messages out at Send, and the
-    /// Bytes that moved. These are what the operator's stage cards count.
+    /// in at Receive, Journeys through Process, Messages out at Send, the
+    /// Bytes that moved, and the rounds that Failed. These are what the
+    /// operator's stage cards count and what the prompt's letters read.
     pub fn close(&self, snapshot: &mut Snapshot, now: i64) {
         let published: BTreeSet<String> = snapshot
             .health_records()
@@ -104,11 +115,18 @@ impl Ledger {
             }
         }
 
+        // `Counted::Retrying` is deliberately absent: nothing in the Playground
+        // retries, so there is no number to publish and a published zero would
+        // say *none retried* where the truth is *nobody counts*. A figure the
+        // publisher does not carry is a dash on every surface, which is what
+        // this is. The owner, 2026-09-20, looked for T and F in a run that had
+        // faults; F was never published and T has nothing behind it yet.
         for (counted, value) in [
             (Counted::Streams, self.streams),
             (Counted::Journeys, self.journeys),
             (Counted::Messages, self.messages),
             (Counted::Bytes, self.moved_bytes),
+            (Counted::Failed, self.failed),
         ] {
             snapshot.record_count(Count {
                 scope: self.node.clone(),

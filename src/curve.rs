@@ -54,7 +54,9 @@ mod tests {
     fn scenario(node: &str, name: &str) -> (Schedule, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("xmip-curve-test-{name}"));
         std::fs::remove_dir_all(&dir).ok();
-        (Schedule::new(format!("{node}/{name}"), &dir), dir)
+        let schedule =
+            Schedule::new(format!("{node}/{name}"), &dir).over(crate::support::three(&dir));
+        (schedule, dir)
     }
 
     #[test]

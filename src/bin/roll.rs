@@ -73,6 +73,7 @@ use xmip_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
 use xmip_test_playground::environment::{
     self, load_bytes, max_seconds, publish_paths, time_factor,
 };
+use xmip_test_playground::image;
 use xmip_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_test_playground::{
     Budget, DailyBacklog, ExclusiveClaim, FaultPlan, Filing, Headroom, HeavyLoad, LowLatency,
@@ -96,7 +97,11 @@ fn main() {
     // What this process says of itself while it runs (ADR-0053): the roll is
     // the test over the cluster it starts, and everything the Playground runs
     // is test.
-    let _declared = ::node::Declaration::new("xmip-playground-roll", root, ::node::Purpose::Test)
+    // The name is the image's own — xmip-playground-<cluster>-roll where
+    // Start-XmipTest linked one — so the declaration says what Get-Process
+    // says (amendment 2026-09-20).
+    let called = image::this_process("xmip-playground-roll");
+    let _declared = ::node::Declaration::new(called, root, ::node::Purpose::Test)
         .declare()
         .map_err(|error| eprintln!("roll: could not declare itself: {error}"));
     let stress = Stress::from_env();
@@ -222,6 +227,10 @@ fn main() {
     }
     std::fs::remove_dir_all(&base).ok();
     std::fs::remove_file(&cluster_path).ok();
+    // The images the cluster and its nodes ran under go with them. This
+    // process still holds its own, so Stop-XmipTest takes the rest, and the
+    // next roll on this cluster clears the directory before it starts.
+    image::clear();
 }
 
 /// The three files a round publishes, and the run header every snapshot
