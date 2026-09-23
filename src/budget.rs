@@ -83,9 +83,9 @@ mod tests {
     #[test]
     fn three_years_fit_in_fifteen_minutes_at_the_matching_factor() {
         let three_years: u64 = 3 * 365 * 24 * 60 * 60;
-        let factor = 900.0 / 94_608_000.0_f64; // 900 real seconds / three years
+        let factor = 900.0 / 94_608_000.0_f64; // fifteen real minutes / three years
         let budget = Budget::new(None, factor);
-        let simulated = budget.simulated(Duration::from_secs(900)).as_secs();
+        let simulated = budget.simulated(Duration::from_mins(15)).as_secs();
         // Within a day of three years, allowing for f64 rounding.
         assert!(simulated.abs_diff(three_years) < 86_400);
     }
