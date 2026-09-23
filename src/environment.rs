@@ -24,24 +24,33 @@ pub fn scenarios() -> Result<Vec<String>, String> {
     scenario::chosen(raw.as_deref())
 }
 
-/// The nodes a roll was **told** to spawn, if it was told at all:
-/// `XMIP_PLAYGROUND_NODE_NAMES` names them outright; else
-/// `XMIP_PLAYGROUND_NODES` names a count, numbered `node-01` up, of which `0`
-/// is none at any level. `None` when neither is set, and when the count is
-/// set but empty — nothing was said, which is the level's full complement
-/// (ADR-0059, amendment 2026-09-19), and [`roster`] deals it.
+/// What a roll was **told** to spawn, if it was told at all:
+/// `XMIP_PLAYGROUND_NODE_NAMES` names the nodes outright, and
+/// `XMIP_PLAYGROUND_NODES` says how many instead, of which `0` is none at any
+/// level. `None` when neither is set, and when the count is set but empty —
+/// nothing was said, which is the level's full complement (ADR-0059,
+/// amendment 2026-09-19).
 #[must_use]
-pub fn node_names() -> Option<Vec<String>> {
+pub fn told() -> Option<Told> {
     if let Ok(raw) = std::env::var("XMIP_PLAYGROUND_NODE_NAMES") {
-        return Some(names(&raw));
+        return Some(Told::Named(names(&raw)));
     }
     let count = std::env::var("XMIP_PLAYGROUND_NODES").ok()?;
-    let count = count.trim().parse::<usize>().ok()?;
-    Some(
-        (1..=count)
-            .map(|index| format!("node-{index:02}"))
-            .collect(),
-    )
+
+    Some(Told::Count(count.trim().parse::<usize>().ok()?))
+}
+
+/// How many nodes, or which: an operator says one or the other.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Told {
+    /// The nodes by name, each declaring what it was given and no more.
+    Named(Vec<String>),
+    /// How many, numbered `node-01` up and dealt over the message path, as
+    /// the level's own complement is: the owner, 2026-09-23, wanting to say
+    /// how many nodes a cluster has without naming each one. A count that
+    /// cannot cover the path leaves every node declaring nothing, which is
+    /// what `complement::of_count` already does for a small level.
+    Count(usize),
 }
 
 /// The roster a roll spawns: the nodes [`node_names`] was told, each declaring
@@ -58,8 +67,14 @@ pub fn node_names() -> Option<Vec<String>> {
 /// no node of this roll: REFUSED, naming both sides (ADR-0055).
 pub fn roster(stress: Stress) -> Result<Roster, String> {
     let declared = std::env::var("XMIP_PLAYGROUND_NODE_CAPABILITIES").unwrap_or_default();
-    let mut roster = match node_names() {
-        Some(named) => Roster::declaring(&named, &declared)?,
+    let mut roster = match told() {
+        Some(Told::Named(named)) => Roster::declaring(&named, &declared)?,
+        Some(Told::Count(count)) if declared.trim().is_empty() => complement::of_count(count),
+        Some(Told::Count(count)) => {
+            let dealt = complement::of_count(count);
+            let names: Vec<String> = dealt.names().into_iter().map(str::to_string).collect();
+            Roster::declaring(&names, &declared)?
+        }
         None => complement::full(stress),
     };
     let nodes: Vec<String> = roster.names().into_iter().map(str::to_string).collect();
