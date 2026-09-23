@@ -53,10 +53,12 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use observe::Snapshot;
-use xmip_test_playground::cluster::merge;
-use xmip_test_playground::image;
-use xmip_test_playground::scenario::{self, DAILY_BACKLOG, EXCLUSIVE_CLAIM, ROUND_TRIP, drives};
-use xmip_test_playground::{
+use xmip_core_test_playground::cluster::merge;
+use xmip_core_test_playground::image;
+use xmip_core_test_playground::scenario::{
+    self, DAILY_BACKLOG, EXCLUSIVE_CLAIM, ROUND_TRIP, drives,
+};
+use xmip_core_test_playground::{
     Capability, DailyBacklog, ExclusiveClaim, Relay, Roster, Stress, cluster_root, node_toml,
     write_atomic,
 };
@@ -225,7 +227,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
             "--snapshot" => snapshot = Some(PathBuf::from(value)),
             "--interval-ms" => interval = Duration::from_millis(number(&flag, &value)?),
             "--online" => {
-                online = xmip_test_playground::switch::parse(&value)
+                online = xmip_core_test_playground::switch::parse(&value)
                     .ok_or(format!("--online wants true or false, not {value}"))?;
             }
             "--can" => can = Capability::parse(&value)?,
@@ -258,7 +260,7 @@ fn record(scope: String, evidence: String) -> observe::HealthRecord {
         health: observe::Health::Fine,
         severity: 0,
         evidence,
-        observed_unix_nanos: xmip_test_playground::now_unix_nanos(),
+        observed_unix_nanos: xmip_core_test_playground::now_unix_nanos(),
     }
 }
 

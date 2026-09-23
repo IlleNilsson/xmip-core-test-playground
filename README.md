@@ -1,4 +1,4 @@
-# xmip-test-playground
+# xmip-core-test-playground
 
 **The Xmip Playground.** One integration test — the **RoundTrip test** — over
 the whole estate, over time.

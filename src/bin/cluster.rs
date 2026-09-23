@@ -41,13 +41,13 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use xmip_test_playground::cluster::{Cluster, Orders, node_binary};
-use xmip_test_playground::image;
-use xmip_test_playground::roster::Roster;
-use xmip_test_playground::scenario;
-use xmip_test_playground::stress::Stress;
-use xmip_test_playground::switch::names;
-use xmip_test_playground::{cluster_name, cluster_root, node_toml, write_atomic};
+use xmip_core_test_playground::cluster::{Cluster, Orders, node_binary};
+use xmip_core_test_playground::image;
+use xmip_core_test_playground::roster::Roster;
+use xmip_core_test_playground::scenario;
+use xmip_core_test_playground::stress::Stress;
+use xmip_core_test_playground::switch::names;
+use xmip_core_test_playground::{cluster_name, cluster_root, node_toml, write_atomic};
 
 /// What the command line said.
 struct Arguments {

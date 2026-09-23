@@ -69,13 +69,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use observe::{Activity, History, Snapshot};
-use xmip_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
-use xmip_test_playground::environment::{
+use xmip_core_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
+use xmip_core_test_playground::environment::{
     self, load_bytes, max_seconds, publish_paths, time_factor,
 };
-use xmip_test_playground::image;
-use xmip_test_playground::scenario::{ROUND_TRIP, drives};
-use xmip_test_playground::{
+use xmip_core_test_playground::image;
+use xmip_core_test_playground::scenario::{ROUND_TRIP, drives};
+use xmip_core_test_playground::{
     Budget, DailyBacklog, ExclusiveClaim, FaultPlan, Filing, Headroom, HeavyLoad, LowLatency,
     Retention, Roster, Run, Schedule, Stress, Topology, activity_toml, cluster_name, cluster_root,
     cluster_topology, complement, history_toml, now_unix_nanos, record_round, redraw, summarise,
