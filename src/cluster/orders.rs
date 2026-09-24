@@ -155,7 +155,7 @@ impl Orders {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::verdict::Stage;
+    use node::Stage;
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(ToString::to_string).collect()

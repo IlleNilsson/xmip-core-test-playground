@@ -11,7 +11,9 @@
 //! `--nodes` carries what each node is **declared** with — `R1=receive`,
 //! `P1=process+send`, or a bare name for a node that declares no stage of the
 //! message path — and the cluster passes each node's own to it as `--can`
-//! (ADR-0056). It infers nothing: a name is not a capability.
+//! (ADR-0056). A capability word is lowercase exactly, and any other word is
+//! REFUSED (`node::Stage::declared`). It infers nothing: a name is not a
+//! capability.
 //!
 //! The tree the owner asked for is three deep. `xmip-playground-roll` is the
 //! test: it chooses the scenarios, sets the stress, judges and draws the

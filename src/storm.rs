@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::{Duration, Instant};
 
+use node::Stage;
 use observe::{Count, Counted, Health, HealthRecord, Snapshot};
 
 use crate::fault::FaultPlan;
@@ -32,7 +33,7 @@ use crate::schedule::{CONTRACTS, drive_pairs};
 use crate::standing::{Mark, Standing};
 use crate::stress::{self, Stress};
 use crate::support::now_unix_nanos;
-use crate::verdict::{Contract, Outcome, Stage};
+use crate::verdict::{Contract, Outcome};
 
 /// One pair judged this round.
 struct Line {

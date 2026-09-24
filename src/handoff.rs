@@ -21,10 +21,11 @@ use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use node::Stage;
 use serde::{Deserialize, Serialize};
 
 use crate::schedule::CONTRACTS;
-use crate::verdict::{Contract, Stage};
+use crate::verdict::Contract;
 
 const READY: &str = "handoff";
 const MAGIC: &str = "xmip-handoff-1";

@@ -8,7 +8,8 @@
 //!
 //! **A node declares what it can do** (ADR-0056). `--can` says which stages of
 //! the message path this node serves — `receive`, `process`, `send`, or more
-//! than one — and `--nodes` says the same for every node of the cluster, so
+//! than one, in lowercase exactly (`Send` is no capability; the owner,
+//! 2026-09-24) — and `--nodes` says the same for every node of the cluster, so
 //! this one finds the others without asking. Nothing is read out of a name: on
 //! 2026-09-19 the rig took a node's stage from its first letter and the owner
 //! said *I know, so why do you break it!* A word that is no capability is

@@ -113,4 +113,4 @@ pub use schedule::{CONTRACTS, Schedule};
 pub use stress::Stress;
 pub use support::{cluster_name, cluster_root, now_unix_nanos};
 pub use topology::{Topology, cluster_topology};
-pub use verdict::{Contract, Outcome, Stage, Verdict};
+pub use verdict::{Contract, Outcome, Verdict};

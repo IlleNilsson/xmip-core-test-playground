@@ -6,8 +6,10 @@
 //! schedule publishes both ends; a node publishes its own — a receiving node
 //! the Receive steps, an `S` node the presentation.
 
+use node::Stage;
+
 use super::{IdentityFaults, receive, send};
-use crate::verdict::{Contract, Stage, Verdict};
+use crate::verdict::{Contract, Verdict};
 
 /// The Receive steps for one (transport, contract) in `round`, each a verdict
 /// at its step's point under the Receive stage.

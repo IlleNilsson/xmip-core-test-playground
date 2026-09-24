@@ -17,8 +17,10 @@
 //! `R1=receive,P1=process,S1=send`, or `node-01,node-02` where neither
 //! declares a stage.
 
+use node::Stage;
+
 use crate::capability::Capability;
-use crate::verdict::{Contract, Stage};
+use crate::verdict::Contract;
 
 /// Every node of a cluster, in the order they were named, with what each
 /// declared it can do.

@@ -25,10 +25,11 @@
 //! whole. [`covers_the_path`] is how a surface knows which of the two it got,
 //! so it can say so rather than leave it to be noticed.
 
+use node::Stage;
+
 use crate::capability::Capability;
 use crate::roster::Roster;
 use crate::stress::Stress;
-use crate::verdict::Stage;
 
 /// The complement `stress` brings: [`Stress::nodes`] nodes, dealt over the
 /// message path.

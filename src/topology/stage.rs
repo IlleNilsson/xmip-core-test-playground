@@ -3,13 +3,13 @@
 
 use std::collections::BTreeSet;
 
+use node::Stage;
 use observe::Snapshot;
 
 use super::{TopologyLink, TopologyNode, mood, node_id, origin, worst};
 use crate::capability::Capability;
 use crate::handoff::Hop;
 use crate::support::cluster_root;
-use crate::verdict::Stage;
 
 /// The stage nodes of the node called `name`, each followed by its
 /// endpoints: every stage the node **declared** it can serve, drawn before it
@@ -53,16 +53,17 @@ pub(super) fn nodes(snapshot: &Snapshot, name: &str, scope: &str) -> Vec<Topolog
 
 /// What the node published at `<scope>/capability`: what it declared it can
 /// do. Nothing published is nothing declared — the node has yet to say, and
-/// only what it reports is drawn.
+/// only what it reports is drawn. A record naming a word that is no
+/// capability is refused and draws no declared stage either; the record
+/// itself stays on the node's `capability` scope in the publisher's words.
 fn declared(snapshot: &Snapshot, scope: &str) -> Capability {
     let at = format!("{scope}/capability");
     snapshot
         .health(&at)
         .into_iter()
         .find(|record| record.scope == at)
-        .map_or_else(Capability::none, |record| {
-            Capability::from_evidence(&record.evidence)
-        })
+        .and_then(|record| Capability::from_evidence(&record.evidence).ok())
+        .unwrap_or_else(Capability::none)
 }
 
 /// The transports a stage has reported on: the segment after the stage in

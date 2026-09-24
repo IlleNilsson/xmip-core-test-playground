@@ -6,6 +6,7 @@
 //! reason as evidence.
 
 use contract::Contract as ContractTrait;
+use node::Stage;
 use observe::{Health, HealthRecord};
 use stream::Stream;
 use xcore::StreamId;
@@ -238,50 +239,6 @@ impl Contract {
                 .first()
                 .map_or_else(|| "invalid".to_string(), |issue| issue.message.clone())),
             Err(error) => Err(format!("validation failed: {error}")),
-        }
-    }
-}
-
-/// A stage of the message path, the axis an operator drills first. A `RoundTrip`
-/// round drives all three: Receive takes the Stream in, Process holds the
-/// contract over it, Send delivers it back out.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stage {
-    Receive,
-    Process,
-    Send,
-}
-
-impl Stage {
-    /// Every stage, in message-path order.
-    pub const ALL: [Stage; 3] = [Stage::Receive, Stage::Process, Stage::Send];
-
-    /// The token as it appears in a scope and on the landing page.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Stage::Receive => "receive",
-            Stage::Process => "process",
-            Stage::Send => "send",
-        }
-    }
-
-    /// The stage a token names, or `None` when no stage is called that. The
-    /// one place a word becomes a stage, so a capability, a hop and a scope
-    /// cannot disagree on what `process` means.
-    #[must_use]
-    pub fn named(token: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|stage| stage.name() == token)
-    }
-
-    /// The stage a handoff goes on to: receive to process, process to send.
-    /// Send closes the verdict and hands nothing on.
-    #[must_use]
-    pub const fn next(self) -> Option<Self> {
-        match self {
-            Self::Receive => Some(Self::Process),
-            Self::Process => Some(Self::Send),
-            Self::Send => None,
         }
     }
 }

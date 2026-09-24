@@ -12,10 +12,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use node::Stage;
 use observe::{Activity, Count, Counted, Item, ItemKind, Snapshot};
 
 use super::tally::{Tally, over_time};
-use crate::verdict::{Outcome, Stage, Verdict};
+use crate::verdict::{Outcome, Verdict};
 
 /// What the verdicts published under one node scope have added up to.
 pub struct Ledger {

@@ -25,8 +25,16 @@
 //! rig.** The Playground verifies no credential and isolates no identity
 //! context, so either would be a word with nothing behind it. ADR-0056 names
 //! all four; this file deliberately carries two.
+//!
+//! **The words are the node crate's.** `node::Stage::declared` is the one
+//! parse of a declared stage list — lowercase exactly, any other word refused —
+//! and every reading here goes through it (open problem 25, row i: *`node`
+//! parses, `cluster` places*).
 
-use crate::verdict::Stage;
+use node::Stage;
+
+/// What a node that declares no stage publishes in place of the words.
+const NO_STAGE: &str = "no stage of the message path";
 
 /// What one node declared it can do.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -60,32 +68,17 @@ impl Capability {
         }
     }
 
-    /// The capability a `--can` value declares: the stage words, separated by
-    /// commas or by `+`. Empty declares nothing.
+    /// The capability a `--can` value declares, read by
+    /// [`Stage::declared`]: the stage words, separated by commas or by `+`,
+    /// lowercase exactly. Empty declares nothing.
     ///
     /// # Errors
     ///
     /// When a word is no capability: REFUSED, naming the word and the values
     /// it would take (ADR-0055).
     pub fn parse(raw: &str) -> Result<Self, String> {
-        let mut stages = Vec::new();
-        for word in raw.split([',', '+']).map(str::trim) {
-            if word.is_empty() {
-                continue;
-            }
-            stages.push(Stage::named(&word.to_ascii_lowercase()).ok_or_else(|| {
-                format!(
-                    "REFUSED: no capability is called {word}; a node declares {}, \
-                     or nothing at all",
-                    Self::WORDS.join(", ")
-                )
-            })?);
-        }
-        Ok(Self::of(&stages))
+        Stage::declared(raw).map(|stages| Self::of(&stages))
     }
-
-    /// The capability words a node may declare, in message-path order.
-    pub const WORDS: [&'static str; 3] = ["receive", "process", "send"];
 
     /// The same capability with its online capability said (ADR-0045).
     #[must_use]
@@ -153,7 +146,7 @@ impl Capability {
     #[must_use]
     pub fn evidence(&self) -> String {
         let declared = if self.declares_no_stage() {
-            "no stage of the message path".to_string()
+            NO_STAGE.to_string()
         } else {
             self.words()
         };
@@ -165,19 +158,24 @@ impl Capability {
     }
 
     /// The capability an evidence line says, read back by a surface drawing a
-    /// node's stages. A line it does not recognise declares nothing.
-    #[must_use]
-    pub fn from_evidence(evidence: &str) -> Self {
+    /// node's stages, through the same parse as `--can`. A line that is no
+    /// declaration at all declares nothing.
+    ///
+    /// # Errors
+    ///
+    /// When the declaration names a word that is no capability: REFUSED, as
+    /// [`Stage::declared`] says it — never read as the words that were known.
+    pub fn from_evidence(evidence: &str) -> Result<Self, String> {
         let said = evidence
             .strip_prefix("declares ")
             .and_then(|rest| rest.split(';').next())
             .unwrap_or_default();
-        let stages: Vec<Stage> = said
-            .split(',')
-            .map(str::trim)
-            .filter_map(Stage::named)
-            .collect();
-        Self::of(&stages).with_online(evidence.contains("; online;"))
+        let stages = if said == NO_STAGE {
+            Vec::new()
+        } else {
+            Stage::declared(said)?
+        };
+        Ok(Self::of(&stages).with_online(evidence.contains("; online;")))
     }
 }
 
@@ -192,9 +190,11 @@ mod tests {
         assert!(one.can(Stage::Receive) && !one.can(Stage::Send));
         assert!(!one.declares_no_stage());
 
-        let two = Capability::parse(" Send + receive ,, ").expect("both, in path order");
+        let two = Capability::parse(" send + receive ,, ").expect("both, in path order");
         assert_eq!(two.features(), [Stage::Receive, Stage::Send]);
         assert_eq!(two.words(), "receive,send");
+        let cased = Capability::parse("Send + RECEIVE").expect_err("lowercase only");
+        assert!(cased.contains("called Send, RECEIVE;"), "{cased}");
 
         assert_eq!(Capability::parse(""), Ok(Capability::none()));
         assert!(Capability::none().declares_no_stage());
@@ -231,7 +231,7 @@ mod tests {
             let evidence = capability.evidence();
             assert_eq!(
                 Capability::from_evidence(&evidence),
-                capability,
+                Ok(capability),
                 "{evidence}"
             );
         }
@@ -241,6 +241,25 @@ mod tests {
                 .contains("not modelled in this rig"),
             "the two kinds this rig leaves out are said, not silent"
         );
-        assert_eq!(Capability::from_evidence("alive"), Capability::none());
+        assert_eq!(Capability::from_evidence("alive"), Ok(Capability::none()));
+    }
+
+    #[test]
+    fn a_published_declaration_reads_by_the_same_rule_as_the_flag() {
+        // Lowercase exactly, as `--can` takes it; any other case is refused.
+        assert_eq!(
+            Capability::from_evidence("declares receive,send; offline; x"),
+            Ok(Capability::of(&[Stage::Receive, Stage::Send]))
+        );
+        let cased = Capability::from_evidence("declares Receive,SEND; offline; x")
+            .expect_err("lowercase only");
+        assert!(cased.contains("called Receive, SEND;"), "{cased}");
+        // An unknown word is refused, never read as the words that were known.
+        let refusal = Capability::from_evidence("declares receive,relay; online; x")
+            .expect_err("relay is no capability");
+        assert!(
+            refusal.starts_with("REFUSED") && refusal.contains("relay"),
+            "{refusal}"
+        );
     }
 }

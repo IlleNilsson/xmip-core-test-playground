@@ -28,6 +28,7 @@
 
 use std::path::Path;
 
+use node::Stage;
 use observe::{Health, HealthRecord, Snapshot};
 
 use crate::fault::FaultPlan;
@@ -40,7 +41,7 @@ use crate::roundtrip::{RoundTrip, all_transports};
 use crate::schedule::{Ledger, all_pairs, drive_each, slice};
 use crate::stress::Stress;
 use crate::support::now_unix_nanos;
-use crate::verdict::{Contract, Outcome, Stage, Verdict};
+use crate::verdict::{Contract, Outcome, Verdict};
 
 /// What one pair came to at this node's stage: the stage's verdict first,
 /// then any identity steps, and what to hand on when the stage delivered.

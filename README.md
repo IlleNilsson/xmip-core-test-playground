@@ -283,6 +283,15 @@ kinds are modelled here, feature capability (the stages) and online capability
 (`--online`, ADR-0045); authentication and runtime capability are not, and the
 node's own capability record says so rather than leaving it to be guessed.
 
+The words are not the Playground's. `node::Stage` (`xmip-core-node`) is the
+message-path stage every verdict, hop and scope here uses, and
+`Stage::declared` is the one parse of a declaration: `--can`, `--nodes` and a
+published capability record all read through it. A word is lowercase exactly
+(the owner, 2026-09-24: `RECEIVE` or `Send` is an unknown word), and an
+unknown word is REFUSED by name, never dropped (open problem 25, row i).
+Placement — which node receives a pair and which one it is handed to — is
+the roster's (`roster.rs`).
+
 The rig read a node's stage out of the first letter of its name for one
 afternoon on 2026-09-19, until the owner said *I know, so why do you break
 it!* — ADR-0009 already had it that what a node does is its configuration, and

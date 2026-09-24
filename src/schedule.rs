@@ -20,6 +20,7 @@ pub mod ledger;
 pub mod tally;
 pub(crate) mod workers;
 
+use node::Stage;
 use observe::{Activity, Snapshot};
 
 use crate::fault::FaultPlan;
@@ -29,7 +30,7 @@ use crate::round_trip::{round_trip, round_trip_with};
 use crate::roundtrip::{RoundTrip, all_transports};
 use crate::stress::{self, Stress};
 use crate::support::now_unix_nanos;
-use crate::verdict::{Contract, Outcome, Stage, Verdict};
+use crate::verdict::{Contract, Outcome, Verdict};
 
 pub use ledger::Ledger;
 pub use tally::Tally;

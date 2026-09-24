@@ -20,7 +20,9 @@
 //! faults the same way, so a test can assert it and a run reproduces, while
 //! across rounds it looks varied.
 
-use crate::verdict::{Contract, Stage};
+use node::Stage;
+
+use crate::verdict::Contract;
 
 /// The kind of transport-and-content fault an operator triages by. Identity
 /// faults are not here: they belong to the identity pipeline (`identity.rs`),
