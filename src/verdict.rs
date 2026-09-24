@@ -5,8 +5,8 @@
 //! payload went out, came back and matched; red when it did not, with the
 //! reason as evidence.
 
+use contract::Contract as ContractTrait;
 use observe::{Health, HealthRecord};
-use sdk::contract::Contract as ContractTrait;
 use stream::Stream;
 use xcore::StreamId;
 
