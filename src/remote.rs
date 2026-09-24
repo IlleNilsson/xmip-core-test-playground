@@ -21,6 +21,7 @@ use archive_postgresql::PostgreSql;
 use archive_s3::S3Archive;
 use codec::sql::Delimiter;
 use transport::error::protocol_error;
+use transport::loopback::{both_ends, poke};
 use transport::socket;
 use transport_postgresql::{Answer, Session};
 
@@ -51,33 +52,26 @@ const ROW_ID: u64 = 1;
 
 /// The serve-and-file shape the four share: the far end serves on its own
 /// thread, the filing runs on this one, and when the filing fails before the
-/// far end has served its last request the listener is poked with a
-/// throwaway connect so the accept returns and the round is judged rather
-/// than waited on forever.
+/// far end has served its last request the listener is poked so the accept
+/// returns and the round is judged rather than waited on forever — the
+/// capability's `both_ends` and `poke`, which a loopback round is too.
 pub(crate) fn serve_filing<S, F>(listener: TcpListener, address: &str, serve: S, file: F) -> Filed
 where
     S: FnOnce(&TcpListener) -> transport::Result<()> + Send + 'static,
     F: FnOnce(&str) -> Filed,
 {
-    let far_end = std::thread::spawn(move || serve(&listener));
-    let filed = file(address);
-    if matches!(filed, Filed::Failed(_)) {
-        // Bounded, like every poke in the estate since 2026-09-21: a bare
-        // connect on a machine out of ephemeral ports waits on the operating
-        // system's own SYN schedule, and a courtesy that takes twenty seconds
-        // is a hang with better manners.
-        drop(socket::connect_tcp(
-            address,
-            Some(std::time::Duration::from_millis(250)),
-        ));
-    }
-    match (far_end.join(), filed) {
-        (_, Filed::Failed(why)) => Filed::Failed(why),
-        (Ok(Ok(())), Filed::Returned(item)) => Filed::Returned(item),
-        (Ok(Err(error)), Filed::Returned(_)) => {
-            Filed::Failed(format!("the far end failed: {error}"))
-        }
-        (Err(_), Filed::Returned(_)) => Filed::Failed("the far end thread panicked".to_string()),
+    let (filed, served) = both_ends(
+        move || serve(&listener),
+        || match file(address) {
+            Filed::Returned(item) => Ok(item),
+            Filed::Failed(why) => Err(why),
+        },
+        || poke(address),
+    );
+    match (filed, served) {
+        (Err(why), _) => Filed::Failed(why),
+        (Ok(item), Ok(())) => Filed::Returned(item),
+        (Ok(_), Err(error)) => Filed::Failed(format!("the far end failed: {error}")),
     }
 }
 

@@ -68,7 +68,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use observe::{Activity, History, Snapshot};
+use observe::{Activity, History, Run, Snapshot, Topology};
 use xmip_core_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
 use xmip_core_test_playground::environment::{
     self, load_bytes, max_seconds, publish_paths, time_factor,
@@ -77,9 +77,9 @@ use xmip_core_test_playground::image;
 use xmip_core_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_core_test_playground::{
     Budget, DailyBacklog, ExclusiveClaim, FaultPlan, Filing, Headroom, HeavyLoad, LowLatency,
-    Retention, Roster, Run, Schedule, Stress, Topology, activity_toml, cluster_name, cluster_root,
-    cluster_topology, complement, history_toml, now_unix_nanos, record_round, redraw, summarise,
-    to_toml_run, write_atomic,
+    Retention, Roster, Schedule, Stress, activity_toml, cluster_name, cluster_root,
+    cluster_topology, complement, history_toml, now_unix_nanos, record_round, redraw, roll_toml,
+    started, summarise, write_atomic,
 };
 
 fn main() {
@@ -108,7 +108,7 @@ fn main() {
     let chosen = or_refuse(environment::scenarios());
     let roster = or_refuse(environment::roster(stress));
     let relayed = relayed_or_refuse(&chosen, &roster);
-    let run = Run::of(&cluster, &chosen, &roster, stress);
+    let run = started(&cluster, &chosen, &roster, stress);
 
     announce(&cluster, stress, &roster);
 
@@ -270,7 +270,7 @@ impl Publication {
         history: &History,
         activity: &Activity,
     ) {
-        let text = to_toml_run(root, snapshot, topology, Some(self.run.clone()));
+        let text = roll_toml(root, snapshot, topology, Some(self.run.clone()));
         write(&self.snapshot, &text, "snapshot");
         write(&self.history, &history_toml(root, history), "history");
         write(&self.activity, &activity_toml(root, activity), "activity");

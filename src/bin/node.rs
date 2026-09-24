@@ -53,6 +53,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use node::Capability;
 use observe::Snapshot;
 use xmip_core_test_playground::cluster::merge;
 use xmip_core_test_playground::image;
@@ -60,8 +61,7 @@ use xmip_core_test_playground::scenario::{
     self, DAILY_BACKLOG, EXCLUSIVE_CLAIM, ROUND_TRIP, drives,
 };
 use xmip_core_test_playground::{
-    Capability, DailyBacklog, ExclusiveClaim, Relay, Roster, Stress, cluster_root, node_toml,
-    write_atomic,
+    DailyBacklog, ExclusiveClaim, Relay, Roster, Stress, cluster_root, node_toml, write_atomic,
 };
 
 /// What the command line said.
@@ -177,7 +177,7 @@ fn main() -> ExitCode {
             ),
         ));
         snapshot.record_health(record(
-            format!("{node}/capability"),
+            observe::capability::scope(&node),
             arguments.capability.evidence(),
         ));
 

@@ -17,6 +17,7 @@
 
 use std::time::Duration;
 
+use transport::ceiling;
 use transport::{LOOPBACK_TIMEOUT, Loopback};
 use transport_file::FileTransport;
 use transport_tcp::TcpTransport;
@@ -102,14 +103,11 @@ impl<L: Loopback> RoundTrip for Looped<L> {
     /// transport declared the size it carries, and a probe past it is
     /// one-sided with the reason, never a red for a fact about the protocol.
     fn refuses(&self, payload: &[u8]) -> Option<String> {
-        if let Some(limit) = self.0.ceiling()
-            && payload.len() > limit
-        {
-            return Some(format!(
-                "{} bytes is over the {limit} {} carries in one round",
-                payload.len(),
-                self.0.name()
-            ));
+        if let Some(limit) = self.0.ceiling() {
+            let carrier = format!("{} carries in one round", self.0.name());
+            if let Err(refused) = ceiling::within(payload.len(), limit, &carrier) {
+                return Some(refused.message);
+            }
         }
         self.0.refuses(payload)
     }

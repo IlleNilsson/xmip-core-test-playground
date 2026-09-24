@@ -9,62 +9,20 @@
 //! send*. The cluster holds its nodes; a node holds the stages of the message
 //! path it declared; a receive or a send stage holds one endpoint per transport
 //! it reported on. Between them run the handoffs, receive to process to send,
-//! one link per pair of stages that exchanged any, its volume the hops. The
-//! shared
-//! directory is drawn only when a node ran a test over it. The surface reads
-//! the words this file writes (`Xmip.Surface`, `SnapshotOperator`), so they
-//! are the surface's, not chosen here.
+//! one link per pair of stages that exchanged any, its volume the hops. A
+//! drawn thing above its leaves is Fine or Holding (`Health::rolled`,
+//! ADR-0041); a link shows the worst leaf at either end. The
+//! shared directory is drawn only when a node ran a test over it. The model
+//! and its words are `observe::topology`'s, which writes and reads them; this
+//! file only draws (open problem 25).
 
 mod shared;
 mod stage;
 
-use observe::{Health, HealthRecord, Snapshot};
-use serde::{Deserialize, Serialize};
+use observe::{Health, HealthRecord, NodeKind, Origin, Scope, Snapshot, Topology, TopologyNode};
 
 use crate::handoff::Hop;
 use crate::support::cluster_root;
-
-/// The nodes and links a snapshot carries under `[topology]`.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct Topology {
-    pub source: String,
-    pub observed_unix_nanos: i64,
-    pub nodes: Vec<TopologyNode>,
-    pub links: Vec<TopologyLink>,
-}
-
-/// One thing that communicates. `parent` is empty at the top.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TopologyNode {
-    pub id: String,
-    pub parent: String,
-    pub label: String,
-    pub kind: String,
-    pub scope: String,
-    pub state: String,
-    pub origin: String,
-    pub load: f64,
-    pub activity: f64,
-    pub evidence: String,
-}
-
-/// One communication relationship, `from` one node id `to` another.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TopologyLink {
-    pub id: String,
-    pub from: String,
-    pub to: String,
-    pub pattern: String,
-    pub origin: String,
-    pub protocol: String,
-    pub state: String,
-    pub volume: u64,
-    pub rate: f64,
-    pub latency_ms: f64,
-    pub progress: f64,
-    pub attempts: u32,
-    pub evidence: String,
-}
 
 /// The id of the cluster, the one node with no parent.
 const CLUSTER: &str = "cluster";
@@ -113,16 +71,26 @@ fn worst(snapshot: &Snapshot, scope: &str) -> Option<HealthRecord> {
     snapshot.health(scope).into_iter().next()
 }
 
-/// The mood word and the evidence of a record, or what an empty scope says.
-fn mood(record: Option<&HealthRecord>) -> (String, String) {
+/// What a drawn thing at `scope` shows (ADR-0041): the mood of the record
+/// at the scope itself, or — for a parent — `Health::rolled` over the worst
+/// record beneath it, Fine or Holding; the evidence is the worst record's
+/// either way, so a Holding cluster says what it is holding on.
+fn drawn(record: Option<&HealthRecord>, scope: &str) -> (Health, String) {
+    let (health, evidence) = mood(record);
+    match record {
+        Some(record) if Scope::new(&record.scope) != Scope::new(scope) => {
+            (health.rolled(), evidence)
+        }
+        _ => (health, evidence),
+    }
+}
+
+/// The mood and the evidence of a record, or what an empty scope says: what
+/// a link between two things shows, which is no parent of anything.
+fn mood(record: Option<&HealthRecord>) -> (Health, String) {
     record.map_or_else(
-        || {
-            (
-                Health::Working.word().to_string(),
-                "nothing published yet".to_string(),
-            )
-        },
-        |record| (record.health.word().to_string(), record.evidence.clone()),
+        || (Health::Working, "nothing published yet".to_string()),
+        |record| (record.health, record.evidence.clone()),
     )
 }
 
@@ -135,7 +103,7 @@ fn alive(snapshot: &Snapshot, scope: &str) -> bool {
 /// The cluster: its mood the rollup over its nodes, its activity the share
 /// of them running.
 fn cluster_node(snapshot: &Snapshot, root: &str, names: &[&str]) -> TopologyNode {
-    let (state, evidence) = mood(worst(snapshot, &format!("{root}/node")).as_ref());
+    let (state, evidence) = drawn(worst(snapshot, &format!("{root}/node")).as_ref(), root);
     let running = names
         .iter()
         .filter(|name| alive(snapshot, &format!("{root}/node/{name}")))
@@ -144,10 +112,10 @@ fn cluster_node(snapshot: &Snapshot, root: &str, names: &[&str]) -> TopologyNode
         id: CLUSTER.to_string(),
         parent: String::new(),
         label: label(root).to_string(),
-        kind: "cluster".to_string(),
+        kind: NodeKind::Cluster,
         scope: root.to_string(),
         state,
-        origin: "configured".to_string(),
+        origin: Origin::Configured,
         load: 0.0,
         activity: fraction(running, names.len()),
         evidence,
@@ -156,12 +124,12 @@ fn cluster_node(snapshot: &Snapshot, root: &str, names: &[&str]) -> TopologyNode
 
 /// One node of the cluster, the System Process it is (ADR-0028 clause 2).
 fn node(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyNode {
-    let (state, evidence) = mood(worst(snapshot, scope).as_ref());
+    let (state, evidence) = drawn(worst(snapshot, scope).as_ref(), scope);
     TopologyNode {
         id: node_id(name),
         parent: CLUSTER.to_string(),
         label: name.to_string(),
-        kind: "node".to_string(),
+        kind: NodeKind::Node,
         scope: scope.to_string(),
         state,
         origin: origin(snapshot, scope),
@@ -172,11 +140,11 @@ fn node(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyNode {
 }
 
 /// Configured by the cluster, and observed too once something reported on it.
-fn origin(snapshot: &Snapshot, scope: &str) -> String {
+fn origin(snapshot: &Snapshot, scope: &str) -> Origin {
     if snapshot.health(scope).is_empty() {
-        "configured".to_string()
+        Origin::Configured
     } else {
-        "both".to_string()
+        Origin::Both
     }
 }
 
@@ -192,10 +160,10 @@ fn fraction(part: usize, whole: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability::Capability;
     use crate::cluster::ROOT;
-    use crate::report::{from_toml, to_toml_with};
-    use observe::{Count, Counted};
+    use crate::report::roll_toml;
+    use node::Capability;
+    use observe::{Count, Counted, Publication};
 
     fn record(scope: &str, health: Health, evidence: &str) -> HealthRecord {
         HealthRecord {
@@ -292,7 +260,7 @@ mod tests {
         let shape: Vec<(&str, &str, &str)> = topology
             .nodes
             .iter()
-            .map(|node| (node.id.as_str(), node.kind.as_str(), node.parent.as_str()))
+            .map(|node| (node.id.as_str(), node.kind.word(), node.parent.as_str()))
             .collect();
         assert_eq!(
             shape,
@@ -318,23 +286,26 @@ mod tests {
             (
                 cluster.label.as_str(),
                 cluster.scope.as_str(),
-                cluster.state.as_str()
+                cluster.state.word()
             ),
-            ("playground", ROOT, "stressed")
+            ("playground", ROOT, "holding")
         );
         assert!((cluster.activity - 0.75).abs() < f64::EPSILON);
+        // ADR-0041: a parent is Fine or Holding, never its leaf's mood.
+        assert_eq!(find(&topology, "node/R1").state, Health::Fine);
+        assert_eq!(find(&topology, "node/S1").state, Health::Holding);
         let endpoint = find(&topology, "node/S1/send/tcp");
         assert_eq!(
             (
                 endpoint.label.as_str(),
                 endpoint.scope.as_str(),
-                endpoint.state.as_str()
+                endpoint.state.word()
             ),
-            ("tcp", "xmip:///playground/node/S1/send/tcp", "stressed")
+            ("tcp", "xmip:///playground/node/S1/send/tcp", "holding")
         );
         let idle = find(&topology, "node/S2/send");
         assert_eq!(
-            (idle.origin.as_str(), idle.state.as_str()),
+            (idle.origin.word(), idle.state.word()),
             ("configured", "working")
         );
     }
@@ -349,7 +320,7 @@ mod tests {
                 (
                     link.from.as_str(),
                     link.to.as_str(),
-                    link.pattern.as_str(),
+                    link.pattern.word(),
                     link.protocol.as_str(),
                     link.volume,
                 )
@@ -376,12 +347,13 @@ mod tests {
                 ("node/S1", "shared", "publish-consume", "file", 6),
             ]
         );
-        assert_eq!(topology.links[0].state, "fine");
+        assert_eq!(topology.links[0].state, Health::Fine);
         assert_eq!(
-            topology.links[1].state, "stressed",
+            topology.links[1].state,
+            Health::Stressed,
             "the worst leaf involved"
         );
-        assert_eq!(topology.links[1].origin, "both");
+        assert_eq!(topology.links[1].origin, Origin::Both);
         assert!((topology.links[3].progress - 0.75).abs() < f64::EPSILON);
 
         let bare = cluster_topology(&Snapshot::new(), ["node-01"].into_iter(), &[], 9);
@@ -399,7 +371,7 @@ mod tests {
         let snapshot = published();
         let topology = drawn();
 
-        let text = to_toml_with(ROOT, &snapshot, Some(topology.clone()));
+        let text = roll_toml(ROOT, &snapshot, Some(topology.clone()), None);
         assert!(text.contains("[[topology.nodes]]"));
         assert!(text.contains("[[topology.links]]"));
         let parsed: toml::Value = text.parse().expect("valid TOML");
@@ -408,7 +380,8 @@ mod tests {
             Some(topology.nodes.len())
         );
 
-        let back = from_toml(&text).expect("reads back");
-        assert_eq!(back.health(ROOT).len(), snapshot.health(ROOT).len());
+        let back = Publication::read(&text).expect("reads back");
+        assert_eq!(back.records.len(), snapshot.health(ROOT).len());
+        assert_eq!(back.topology, Some(topology));
     }
 }

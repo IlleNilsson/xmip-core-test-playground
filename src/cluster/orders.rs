@@ -7,7 +7,8 @@
 //! decided twice — least of all a node's capability, which is declared and
 //! never inferred (ADR-0056).
 
-use crate::capability::Capability;
+use node::Capability;
+
 use crate::roster::Roster;
 use crate::scenario::{ROUND_TRIP, drives};
 use crate::stress::Stress;

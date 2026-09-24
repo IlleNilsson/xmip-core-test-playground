@@ -142,7 +142,7 @@ impl Cluster {
                     .into_iter()
                     .flatten(),
             )
-            .args(orders.capability(name).flags())
+            .args(crate::capability::flags(&orders.capability(name)))
             .arg("--shared")
             .arg(&self.shared)
             .arg("--snapshot")

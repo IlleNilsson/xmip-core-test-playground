@@ -17,11 +17,12 @@
 
 use std::path::PathBuf;
 
+use archive::sql::SqlArchive;
 use archive::{ArchiveItem, ArchiveStore};
 use archive_file::FileArchive;
 use archive_parquet::ParquetArchive;
 use archive_sql::SqlScriptArchive;
-use archive_sqlite::SqliteArchive;
+use archive_sqlite::Sqlite;
 
 /// What one filing returned.
 #[derive(Debug, PartialEq, Eq)]
@@ -105,14 +106,14 @@ impl Cabinet for ParquetCabinet {
 /// `SQLite`: one item is one row of one database file under the directory,
 /// restored by row id.
 pub struct SqliteCabinet {
-    store: SqliteArchive,
+    store: SqlArchive<Sqlite>,
 }
 
 impl SqliteCabinet {
     #[must_use]
     pub fn new(dir: impl Into<PathBuf>) -> Self {
         Self {
-            store: SqliteArchive::new(dir.into().join("archive.sqlite")),
+            store: archive_sqlite::at(dir.into().join("archive.sqlite")),
         }
     }
 }

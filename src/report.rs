@@ -5,133 +5,51 @@
 //! flushed to the device and renamed over the target — so a reader never
 //! catches a half-written file, or an empty one, even after a week of ticks.
 //!
+//! **The snapshot's shape is not this file's.** It is `observe::Publication`'s,
+//! which writes it and reads it, and which a surface reads through the
+//! runtime's library (open problem 25): this file names the publisher, adds
+//! the handoffs a node's own file carries for the cluster. The history and
+//! the activity are `observe::Curve`'s and `observe::Recent`'s the same way.
+//!
 //! **TOML, not JSON.** On disk the estate is TOML — the owner's rule, the same
 //! reason `architecture.json` was deleted for `architecture.toml`; JSON is
-//! reserved for what lives in memory or on the wire. These files persist, so
-//! they are TOML. (Content that happens to be JSON, like a probe's payload, is
-//! a different thing entirely — that is data being carried, not a file the
-//! estate configures itself from.)
+//! reserved for what lives in memory or on the wire.
 
 use std::io::{self, Write};
 use std::path::Path;
 
-use observe::{Activity, Count, Counted, Health, HealthRecord, History, ItemKind, Snapshot};
+use observe::{Activity, Curve, History, Publication, Recent, Run, Snapshot, Topology};
 use serde::{Deserialize, Serialize};
 
 use crate::handoff::Hop;
-use crate::run::Run;
-use crate::topology::Topology;
 
-#[derive(Serialize, Deserialize)]
-struct SnapshotReport {
-    source: String,
-    node: String,
-    records: Vec<RecordReport>,
-    counts: Vec<CountReport>,
-    /// What the run was started with, when a roll says (2026-09-19); a node
-    /// writes none, and a reader that does not know the table skips it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    run: Option<Run>,
-    /// The handoffs a node delivered, per link; a roll writes none —
-    /// it draws them as the topology's links.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+/// The handoffs a node delivered, per link, beside its publication in its
+/// own file; a roll writes none — it draws them as the topology's links.
+#[derive(Default, Serialize, Deserialize)]
+struct Handoffs {
+    #[serde(default)]
     hops: Vec<Hop>,
-    /// The cluster's communication, when a roll has one to publish (ADR-0052,
-    /// amendment 2026-09-14); a node writes none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    topology: Option<Topology>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct RecordReport {
-    scope: String,
-    state: String,
-    severity: u8,
-    evidence: String,
-    observed_unix_nanos: i64,
+/// What the Playground calls itself as the publisher at `node`.
+fn source(node: &str) -> String {
+    format!("playground — {node}")
 }
 
-#[derive(Serialize, Deserialize)]
-struct CountReport {
-    counted: String,
-    value: u64,
-    /// Where the count was recorded, in a node's own file; empty in a roll's,
-    /// whose counts are the sums at its root, as the surfaces read them.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    scope: String,
-}
-
-#[derive(Serialize)]
-struct HistoryReport {
-    node: String,
-    points: Vec<PointReport>,
-}
-
-#[derive(Serialize)]
-struct ActivityReport {
-    node: String,
-    items: Vec<ItemReport>,
-}
-
-#[derive(Serialize)]
-struct ItemReport {
-    kind: String,
-    scope: String,
-    id: String,
-    bytes: u64,
-    detail: String,
-    observed_unix_nanos: i64,
-}
-
-#[derive(Serialize)]
-struct PointReport {
-    counted: String,
-    observed_unix_nanos: i64,
-    value: u64,
-}
-
-/// The snapshot beneath `node` as the TOML the GUI's file surface reads: health
-/// records and the node's throughput counts.
+/// A roll's snapshot: the records beneath `node`, every kind summed at
+/// `node`, and — when the roll has them — the communication topology under
+/// `[topology]` and what the run was started with under `[run]`.
 #[must_use]
-pub fn to_toml(node: &str, snapshot: &Snapshot) -> String {
-    to_toml_with(node, snapshot, None)
-}
-
-/// [`to_toml`] with the communication topology a roll publishes beside the
-/// snapshot: the cluster's nodes and links, under `[topology]`.
-#[must_use]
-pub fn to_toml_with(node: &str, snapshot: &Snapshot, topology: Option<Topology>) -> String {
-    to_toml_run(node, snapshot, topology, None)
-}
-
-/// [`to_toml_with`] with what the run was started with, under `[run]`.
-#[must_use]
-pub fn to_toml_run(
+pub fn roll_toml(
     node: &str,
     snapshot: &Snapshot,
     topology: Option<Topology>,
     run: Option<Run>,
 ) -> String {
-    let counts = COUNTED
-        .into_iter()
-        .filter_map(|counted| {
-            snapshot.measure(node, counted).map(|count| CountReport {
-                counted: counted_name(counted).to_string(),
-                value: count.value,
-                scope: String::new(),
-            })
-        })
-        .collect();
-    let report = SnapshotReport {
-        source: format!("playground — {node}"),
-        node: node.to_string(),
-        records: records(node, snapshot),
-        counts,
-        run,
-        hops: Vec::new(),
-        topology,
-    };
-    toml::to_string(&report).unwrap_or_default()
+    Publication::of(&source(node), node, snapshot)
+        .with_topology(topology)
+        .with_run(run)
+        .to_toml()
 }
 
 /// A node's own file: its records, every count at the scope it was recorded
@@ -139,163 +57,41 @@ pub fn to_toml_run(
 /// tell them apart — and the handoffs it delivered, per link.
 #[must_use]
 pub fn node_toml(node: &str, snapshot: &Snapshot, hops: Vec<Hop>) -> String {
-    let counts = snapshot
-        .all_counts()
-        .map(|count| CountReport {
-            counted: counted_name(count.counted).to_string(),
-            value: count.value,
-            scope: count.scope.clone(),
-        })
-        .collect();
-    let report = SnapshotReport {
-        source: format!("playground — {node}"),
-        node: node.to_string(),
-        records: records(node, snapshot),
-        counts,
-        run: None,
-        hops,
-        topology: None,
-    };
-    toml::to_string(&report).unwrap_or_default()
+    let mut text = Publication::whole(&source(node), node, snapshot).to_toml();
+    if !hops.is_empty() {
+        text.push('\n');
+        text.push_str(&toml::to_string(&Handoffs { hops }).unwrap_or_default());
+    }
+    text
 }
 
-/// Every kind a snapshot file carries, in the order it lists them, and the
-/// kinds `curve.rs` rolls up at the node for its history.
-pub(crate) const COUNTED: [Counted; 6] = [
-    Counted::Streams,
-    Counted::Messages,
-    Counted::Journeys,
-    Counted::Bytes,
-    Counted::Retrying,
-    Counted::Failed,
-];
-
-fn records(node: &str, snapshot: &Snapshot) -> Vec<RecordReport> {
-    snapshot
-        .health(node)
-        .into_iter()
-        .map(|record| RecordReport {
-            scope: record.scope,
-            state: record.health.word().to_string(),
-            severity: record.severity,
-            evidence: record.evidence,
-            observed_unix_nanos: record.observed_unix_nanos,
-        })
-        .collect()
-}
-
-/// The snapshot a node published, read back from the TOML [`to_toml`] wrote —
-/// the other half of the bridge, for a surface assembling a cluster from the
-/// files its nodes wrote (ADR-0027 decision 8). The counts come back at the
-/// node's own scope, dated by the newest record; a mood or a counted kind the
-/// reader does not know is skipped rather than guessed at.
+/// The snapshot a node published and the handoffs it delivered, read back
+/// from the file [`node_toml`] wrote — the other half of the bridge, for a
+/// cluster assembling itself from the files its nodes wrote (ADR-0027
+/// decision 8).
 ///
 /// # Errors
 ///
-/// When the text is not the TOML this module writes.
-pub fn from_toml(text: &str) -> Result<Snapshot, toml::de::Error> {
-    node_from_toml(text).map(|(snapshot, _)| snapshot)
+/// When the text is not a publication, in the reader's words.
+pub fn node_from_toml(text: &str) -> Result<(Snapshot, Vec<Hop>), String> {
+    let publication = Publication::read(text)?;
+    let handoffs: Handoffs = toml::from_str(text).map_err(|error| error.to_string())?;
+    Ok((publication.snapshot(), handoffs.hops))
 }
 
-/// [`from_toml`] with the handoffs the node delivered, per link.
-///
-/// # Errors
-///
-/// When the text is not the TOML this module writes.
-pub fn node_from_toml(text: &str) -> Result<(Snapshot, Vec<Hop>), toml::de::Error> {
-    let report: SnapshotReport = toml::from_str(text)?;
-    let mut snapshot = Snapshot::new();
-    let newest = report
-        .records
-        .iter()
-        .map(|record| record.observed_unix_nanos)
-        .max()
-        .unwrap_or(0);
-
-    for record in report.records {
-        if let Some(health) = Health::named(&record.state) {
-            snapshot.record_health(HealthRecord {
-                scope: record.scope,
-                health,
-                severity: record.severity,
-                evidence: record.evidence,
-                observed_unix_nanos: record.observed_unix_nanos,
-            });
-        }
-    }
-
-    for count in report.counts {
-        if let Some(counted) = counted_named(&count.counted) {
-            let scope = if count.scope.is_empty() {
-                report.node.clone()
-            } else {
-                count.scope
-            };
-            snapshot.record_count(Count {
-                scope,
-                counted,
-                value: count.value,
-                window_start_unix_nanos: newest,
-                window_end_unix_nanos: newest,
-                observed_unix_nanos: newest,
-            });
-        }
-    }
-
-    Ok((snapshot, report.hops))
-}
-
-/// The node's throughput over time as the TOML the history cmdlet and UI read:
-/// one point per counted kind per tick, oldest first. ADR-0029.
-///
-/// The series read is the node's own, at its exact scope, which is what
-/// [`crate::record_round`] puts there each round — a scenario counts beneath
-/// the node and a series is not rolled up on the way out.
+/// The node's throughput over time as the file `Get-XmipHistory` reads:
+/// `observe::Curve`, its own series at its exact scope, oldest first.
+/// ADR-0029.
 #[must_use]
 pub fn history_toml(node: &str, history: &History) -> String {
-    let mut points = Vec::new();
-
-    for counted in [Counted::Streams, Counted::Messages, Counted::Bytes] {
-        for point in history.count_series(node, counted) {
-            points.push(PointReport {
-                counted: counted_name(counted).to_string(),
-                observed_unix_nanos: point.observed_unix_nanos,
-                value: point.value,
-            });
-        }
-    }
-
-    let report = HistoryReport {
-        node: node.to_string(),
-        points,
-    };
-
-    toml::to_string(&report).unwrap_or_default()
+    Curve::of(node, history).to_toml()
 }
 
-/// The recent individual items beneath `node` as the TOML the item view reads:
-/// the Streams, Messages and Journeys of the last rounds, newest first. ADR-0032.
+/// The recent individual items beneath `node`, newest first, as
+/// `observe::Recent` writes them. ADR-0032.
 #[must_use]
 pub fn activity_toml(node: &str, activity: &Activity) -> String {
-    let items = activity
-        .recent(node, None, 400)
-        .into_iter()
-        .map(|item| ItemReport {
-            kind: kind_name(item.kind).to_string(),
-            scope: item.scope,
-            id: item.id,
-            bytes: item.bytes,
-            detail: item.detail,
-            observed_unix_nanos: item.observed_unix_nanos,
-        })
-        .collect();
-
-    let report = ActivityReport {
-        node: node.to_string(),
-        items,
-    };
-
-    toml::to_string(&report).unwrap_or_default()
+    Recent::of(node, activity).to_toml()
 }
 
 /// Write `contents` to `path` atomically: a sibling temp file, flushed to the
@@ -326,35 +122,11 @@ pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     std::fs::rename(&temp, path)
 }
 
-fn counted_named(name: &str) -> Option<Counted> {
-    COUNTED
-        .into_iter()
-        .find(|counted| counted_name(*counted) == name)
-}
-
-const fn kind_name(kind: ItemKind) -> &'static str {
-    match kind {
-        ItemKind::Stream => "stream",
-        ItemKind::Message => "message",
-        ItemKind::Journey => "journey",
-    }
-}
-
-const fn counted_name(counted: Counted) -> &'static str {
-    match counted {
-        Counted::Streams => "streams",
-        Counted::Messages => "messages",
-        Counted::Journeys => "journeys",
-        Counted::Bytes => "bytes",
-        Counted::Retrying => "retrying",
-        Counted::Failed => "failed",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Schedule;
+    use observe::Counted;
 
     #[test]
     fn a_ticked_schedule_serialises_to_toml_with_records_and_counts() {
@@ -364,7 +136,7 @@ mod tests {
             Schedule::new("xmip:///playground", &dir).over(crate::support::three(&dir));
         let snapshot = schedule.tick();
 
-        let text = to_toml("xmip:///playground", &snapshot);
+        let text = roll_toml("xmip:///playground", &snapshot, None, None);
         let parsed: toml::Value = text.parse().expect("valid TOML");
 
         assert_eq!(parsed["node"].as_str(), Some("xmip:///playground"));
@@ -381,7 +153,9 @@ mod tests {
             Schedule::new("xmip:///playground", &dir).over(crate::support::three(&dir));
         let written = schedule.tick();
 
-        let read = from_toml(&to_toml("xmip:///playground", &written)).expect("reads back");
+        let (read, hops) = node_from_toml(&roll_toml("xmip:///playground", &written, None, None))
+            .expect("reads back");
+        assert!(hops.is_empty(), "a roll writes no handoffs");
 
         let before: Vec<_> = written.health("xmip:///playground");
         let after: Vec<_> = read.health("xmip:///playground");
@@ -394,8 +168,34 @@ mod tests {
                 .map(|count| count.value),
             "the node's counts survive at the node's scope"
         );
-        assert!(from_toml("not = [toml").is_err());
+        assert!(node_from_toml("not = [toml").is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_nodes_file_carries_its_handoffs_beside_its_publication() {
+        let hop = Hop {
+            from: "R1".to_string(),
+            from_stage: "receive".to_string(),
+            to: "P1".to_string(),
+            to_stage: "process".to_string(),
+            count: 3,
+            last_unix_nanos: 7,
+        };
+        let mut snapshot = Snapshot::new();
+        snapshot.record_health(observe::HealthRecord {
+            scope: "xmip:///R1/receive/tcp".to_string(),
+            health: observe::Health::Fine,
+            severity: 0,
+            evidence: "3/3".to_string(),
+            observed_unix_nanos: 7,
+        });
+
+        let text = node_toml("xmip:///R1", &snapshot, vec![hop.clone()]);
+        let (read, hops) = node_from_toml(&text).expect("reads back");
+
+        assert_eq!(hops, [hop]);
+        assert_eq!(read.health("xmip:///R1"), snapshot.health("xmip:///R1"));
     }
 
     #[test]

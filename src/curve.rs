@@ -17,9 +17,7 @@
 //! keeps every scope's own series, and the node's rollup beside it, which is
 //! the curve the file carries.
 
-use observe::{History, Snapshot};
-
-use crate::report::COUNTED;
+use observe::{Counted, History, Snapshot};
 
 /// Record one round of `snapshot` in `history`: every scope's own series, and
 /// the rollup at `node` that [`crate::history_toml`] writes the file from.
@@ -35,7 +33,7 @@ pub fn record_round(history: &mut History, node: &str, snapshot: &Snapshot) {
 fn rollup(node: &str, snapshot: &Snapshot) -> Snapshot {
     let mut rolled = Snapshot::new();
 
-    for counted in COUNTED {
+    for counted in Counted::ALL {
         if let Some(count) = snapshot.measure(node, counted) {
             rolled.record_count(count);
         }

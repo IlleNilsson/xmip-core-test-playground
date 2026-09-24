@@ -2,7 +2,7 @@
 //!
 //! The owner's shape, 2026-09-19: *I would like to see cluster, nodes,
 //! receive, process, send.* Which node serves which stage comes from what the
-//! node **declared** (`capability.rs`, ADR-0056), never from what it is
+//! node **declared** (`node::Capability`, ADR-0056), never from what it is
 //! called. A node that declares no stage runs whole tests itself, as every
 //! node did before capabilities.
 //!
@@ -17,9 +17,8 @@
 //! `R1=receive,P1=process,S1=send`, or `node-01,node-02` where neither
 //! declares a stage.
 
-use node::Stage;
+use node::{Capability, Stage};
 
-use crate::capability::Capability;
 use crate::verdict::Contract;
 
 /// Every node of a cluster, in the order they were named, with what each
@@ -58,8 +57,8 @@ impl Roster {
             if entry.is_empty() {
                 continue;
             }
-            let (name, declared) = entry.split_once('=').unwrap_or((entry, ""));
-            nodes.push((name.trim().to_string(), Capability::parse(declared)?));
+            let (name, capability) = Capability::from_entry(entry);
+            nodes.push((name.to_string(), capability?));
         }
         Ok(Self { nodes })
     }
@@ -100,13 +99,7 @@ impl Roster {
     pub fn text(&self) -> String {
         self.nodes
             .iter()
-            .map(|(name, capability)| {
-                if capability.declares_no_stage() {
-                    name.clone()
-                } else {
-                    format!("{name}={}", capability.words().replace(',', "+"))
-                }
-            })
+            .map(|(name, capability)| capability.entry(name))
             .collect::<Vec<String>>()
             .join(",")
     }

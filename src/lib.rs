@@ -88,7 +88,6 @@ pub mod verdict;
 pub use board::{redraw, summarise};
 pub use budget::Budget;
 pub use cabinet::{Cabinet, Filed, all_cabinets};
-pub use capability::Capability;
 pub use cluster::Cluster;
 pub use contracts::ContentContract;
 pub use curve::record_round;
@@ -101,16 +100,14 @@ pub use heavy_load::HeavyLoad;
 pub use identity::{IdentityFaults, Step};
 pub use low_latency::LowLatency;
 pub use relay::Relay;
-pub use report::{
-    activity_toml, history_toml, node_toml, to_toml, to_toml_run, to_toml_with, write_atomic,
-};
+pub use report::{activity_toml, history_toml, node_toml, roll_toml, write_atomic};
 pub use retention::Retention;
 pub use roster::Roster;
 pub use round_trip::round_trip;
 pub use roundtrip::{Exchange, FileRoundTrip, RoundTrip, TcpRoundTrip, UdpRoundTrip};
-pub use run::Run;
+pub use run::started;
 pub use schedule::{CONTRACTS, Schedule};
 pub use stress::Stress;
 pub use support::{cluster_name, cluster_root, now_unix_nanos};
-pub use topology::{Topology, cluster_topology};
+pub use topology::cluster_topology;
 pub use verdict::{Contract, Outcome, Verdict};

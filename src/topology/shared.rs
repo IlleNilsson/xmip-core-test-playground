@@ -1,9 +1,11 @@
 //! The shared store — the one directory the nodes claim from and drain — and
 //! the links to it, drawn only for the nodes that ran a test over it.
 
-use observe::{Counted, Snapshot};
+use observe::{
+    Counted, Health, NodeKind, Origin, Pattern, Snapshot, Topology, TopologyLink, TopologyNode,
+};
 
-use super::{CLUSTER, Topology, TopologyLink, TopologyNode, fraction, mood, node_id, worst};
+use super::{CLUSTER, drawn, fraction, mood, node_id, worst};
 use crate::scenario::{DAILY_BACKLOG, EXCLUSIVE_CLAIM};
 use crate::support::cluster_root;
 
@@ -34,8 +36,8 @@ fn reported(snapshot: &Snapshot, scope: &str, test: &str) -> bool {
     !snapshot.health(&format!("{scope}/{test}")).is_empty()
 }
 
-/// The one directory every node claims from and drains: its mood is the worst
-/// any node reported over it.
+/// The one directory every node claims from and drains: Fine or Holding over
+/// the worst any node reported over it (ADR-0041).
 fn store(snapshot: &Snapshot, names: &[&str]) -> TopologyNode {
     let root = cluster_root();
     let over_store = names
@@ -49,15 +51,15 @@ fn store(snapshot: &Snapshot, names: &[&str]) -> TopologyNode {
         })
         .flatten()
         .max_by_key(|record| (record.health, record.severity));
-    let (state, evidence) = mood(over_store.as_ref());
+    let (state, evidence) = drawn(over_store.as_ref(), &format!("{root}/{SHARED}"));
     TopologyNode {
         id: SHARED.to_string(),
         parent: CLUSTER.to_string(),
         label: "shared store".to_string(),
-        kind: "location".to_string(),
+        kind: NodeKind::Location,
         scope: format!("{root}/{SHARED}"),
         state,
-        origin: "both".to_string(),
+        origin: Origin::Both,
         load: 0.0,
         activity: 0.0,
         evidence,
@@ -94,13 +96,13 @@ fn daily_backlog_link(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyL
     link
 }
 
-fn link(name: &str, what: &str, state: String, evidence: String) -> TopologyLink {
+fn link(name: &str, what: &str, state: Health, evidence: String) -> TopologyLink {
     TopologyLink {
         id: format!("{name}/{what}"),
         from: node_id(name),
         to: SHARED.to_string(),
-        pattern: "publish-consume".to_string(),
-        origin: "both".to_string(),
+        pattern: Pattern::PublishConsume,
+        origin: Origin::Both,
         protocol: "file".to_string(),
         state,
         volume: 0,

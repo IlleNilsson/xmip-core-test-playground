@@ -274,7 +274,7 @@ The owner: *Fleet is what I see in topology when running test, I would like to
 see cluster, nodes, receive, process, send.* What the Playground spawns is a
 cluster and its nodes, and the word it used until then is retired (ADR-0028).
 
-**A node declares what it can do** (`capability.rs`, `roster.rs`; ADR-0056). A
+**A node declares what it can do** (`node::Capability`, `roster.rs`; ADR-0056). A
 node is started with a capability — `--can receive`, `--can process,send` —
 and serves the stages of the message path it declared, no more and no fewer. A
 node that declares none behaves as every node did before: it runs the
@@ -286,7 +286,10 @@ node's own capability record says so rather than leaving it to be guessed.
 The words are not the Playground's. `node::Stage` (`xmip-core-node`) is the
 message-path stage every verdict, hop and scope here uses, and
 `Stage::declared` is the one parse of a declaration: `--can`, `--nodes` and a
-published capability record all read through it. A word is lowercase exactly
+published capability record all read through it. The declaration itself —
+the evidence a node publishes and the `R1=receive` entry a run lists — is
+`node::Capability`; `capability.rs` keeps only the `--can`/`--online` flags
+the cluster starts a node process with. A word is lowercase exactly
 (the owner, 2026-09-24: `RECEIVE` or `Send` is an unknown word), and an
 unknown word is REFUSED by name, never dropped (open problem 25, row i).
 Placement — which node receives a pair and which one it is handed to — is
@@ -352,7 +355,8 @@ false` gates what is outside the cluster only: an offline node takes handoffs
 like any other. This rehearses option A of `doc/planning/open-problems.md`
 problem 17 in the rig; it rules nothing for the runtime.
 
-**The topology** (`topology.rs`) a roll publishes is the cluster (kind
+**The topology** (`topology.rs` draws it; the model and its words are
+`observe::topology`'s) a roll publishes is the cluster (kind
 `cluster`), its nodes (`node`), the stages each runs (`stage`), and under a
 receive or a send stage one endpoint per transport it reported on (`endpoint`).
 A node's stages are the ones it **declared**, read from the capability record
@@ -362,7 +366,7 @@ stages that exchanged any — pattern `send-receive`, protocol `handoff`, volume
 the hops, mood the worst leaf at either end — and the shared store with its
 ExclusiveClaim and DailyBacklog links only when those tests ran on a node.
 
-**The run says what it was started with** (`run.rs`): the snapshot carries a
+**The run says what it was started with** (`run.rs` fills `observe::Run`): the snapshot carries a
 `[run]` table — `cluster`, `tests`, `nodes`, `capabilities`, `online`,
 `stress` — that a reader which does not know it skips, and the web GUI shows as
 one line on every view. `capabilities` is what each node was started with,
@@ -418,7 +422,7 @@ and `Get-XmipTestStatus` lists it too.
 
 Everything a run writes on this machine goes under `.local-work/playground`
 at the repository root: `<cluster>-snapshot.toml`, `<cluster>-history.toml`
-and `<cluster>-activity.toml` for the monitors, named for the cluster the roll
+and `<cluster>-activity.toml` for the monitors (their shapes are `observe::Publication`'s, `observe::Curve`'s and `observe::Recent`'s), named for the cluster the roll
 was started as (`-Cluster`, required: the owner names the cluster), `roll-<pid>.toml` saying what
 each roll was started with, the roll's own lines in `roll-<start time>.log`,
 and under `node/` each hand-started node's snapshot and log. The folder is

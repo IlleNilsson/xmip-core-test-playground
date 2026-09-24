@@ -304,7 +304,7 @@ fn ordered_per_key(processed: &[Processed]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::report::from_toml;
+    use crate::report::node_from_toml;
     use crate::support::scratch;
     use observe::Health;
 
@@ -427,7 +427,7 @@ mod tests {
 
         for name in ["left", "right"] {
             let text = std::fs::read_to_string(dir.join(format!("{name}.toml"))).expect("snapshot");
-            let snapshot = from_toml(&text).expect("a node's snapshot parses");
+            let (snapshot, _) = node_from_toml(&text).expect("a node's snapshot parses");
             let scope = format!("xmip:///playground/node/{name}/exclusive-claim/file");
             for record in snapshot.health(&scope) {
                 assert_eq!(

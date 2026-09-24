@@ -4,7 +4,7 @@
 //!
 //! The capability itself lives in `capability.rs` — online capability is one
 //! of ADR-0056's four kinds, not a notion of its own, and what a node carries
-//! is one [`Capability`](crate::capability::Capability). This file stayed for
+//! is one [`Capability`](node::Capability). This file stayed for
 //! the environment it reads.
 //!
 //! False unless set. Nothing in the estate reaches out at runtime, so at

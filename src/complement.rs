@@ -25,9 +25,8 @@
 //! whole. [`covers_the_path`] is how a surface knows which of the two it got,
 //! so it can say so rather than leave it to be noticed.
 
-use node::Stage;
+use node::{Capability, Stage};
 
-use crate::capability::Capability;
 use crate::roster::Roster;
 use crate::stress::Stress;
 

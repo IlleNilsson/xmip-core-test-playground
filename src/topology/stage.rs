@@ -3,11 +3,10 @@
 
 use std::collections::BTreeSet;
 
-use node::Stage;
-use observe::Snapshot;
+use node::{Capability, Stage};
+use observe::{NodeKind, Origin, Pattern, Snapshot, TopologyLink, TopologyNode};
 
-use super::{TopologyLink, TopologyNode, mood, node_id, origin, worst};
-use crate::capability::Capability;
+use super::{drawn, mood, node_id, origin, worst};
 use crate::handoff::Hop;
 use crate::support::cluster_root;
 
@@ -29,7 +28,7 @@ pub(super) fn nodes(snapshot: &Snapshot, name: &str, scope: &str) -> Vec<Topolog
             &id,
             &node_id(name),
             stage.name(),
-            "stage",
+            NodeKind::Stage,
             &at,
         ));
         // A process stage touches no transport: it has no endpoints.
@@ -42,7 +41,7 @@ pub(super) fn nodes(snapshot: &Snapshot, name: &str, scope: &str) -> Vec<Topolog
                     &endpoint_id,
                     &id,
                     &transport,
-                    "endpoint",
+                    NodeKind::Endpoint,
                     &endpoint,
                 ));
             }
@@ -57,12 +56,15 @@ pub(super) fn nodes(snapshot: &Snapshot, name: &str, scope: &str) -> Vec<Topolog
 /// capability is refused and draws no declared stage either; the record
 /// itself stays on the node's `capability` scope in the publisher's words.
 fn declared(snapshot: &Snapshot, scope: &str) -> Capability {
-    let at = format!("{scope}/capability");
+    let at = observe::capability::scope(scope);
     snapshot
         .health(&at)
         .into_iter()
         .find(|record| record.scope == at)
-        .and_then(|record| Capability::from_evidence(&record.evidence).ok())
+        .and_then(|record| {
+            observe::capability::declared(&record.scope, &record.evidence)
+                .and_then(|(_, said)| said.ok())
+        })
         .unwrap_or_else(Capability::none)
 }
 
@@ -80,21 +82,22 @@ fn transports(snapshot: &Snapshot, stage_scope: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// A stage or an endpoint: its mood the worst beneath its scope.
+/// A stage or an endpoint: its own mood, or the rollup over the worst
+/// beneath its scope (ADR-0041).
 fn part(
     snapshot: &Snapshot,
     id: &str,
     parent: &str,
     label: &str,
-    kind: &str,
+    kind: NodeKind,
     scope: &str,
 ) -> TopologyNode {
-    let (state, evidence) = mood(worst(snapshot, scope).as_ref());
+    let (state, evidence) = drawn(worst(snapshot, scope).as_ref(), scope);
     TopologyNode {
         id: id.to_string(),
         parent: parent.to_string(),
         label: label.to_string(),
-        kind: kind.to_string(),
+        kind,
         scope: scope.to_string(),
         state,
         origin: origin(snapshot, scope),
@@ -127,8 +130,8 @@ pub(super) fn handoff_links(snapshot: &Snapshot, hops: &[Hop]) -> Vec<TopologyLi
                 id: format!("handoff/{}/{}", hop.from, hop.to),
                 from: format!("{}/{}", node_id(&hop.from), from.name()),
                 to: format!("{}/{}", node_id(&hop.to), to.name()),
-                pattern: "send-receive".to_string(),
-                origin: "both".to_string(),
+                pattern: Pattern::SendReceive,
+                origin: Origin::Both,
                 protocol: "handoff".to_string(),
                 state,
                 volume: hop.count,
