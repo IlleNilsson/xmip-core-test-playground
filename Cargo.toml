@@ -190,6 +190,9 @@ contract_fhir = { package = "xmip-core-contract-fhir", git = "https://github.com
 contract_edi_x12 = { package = "xmip-core-contract-edi-x12", git = "https://github.com/IlleNilsson/xmip-core-contract-edi-x12", branch = "main" }
 contract_avro = { package = "xmip-core-contract-avro", git = "https://github.com/IlleNilsson/xmip-core-contract-avro", branch = "main" }
 contract_protobuf = { package = "xmip-core-contract-protobuf", git = "https://github.com/IlleNilsson/xmip-core-contract-protobuf", branch = "main" }
+# The protobuf probe is written with the wire format's own encoders, beside
+# the walk every protobuf reader in Xmip shares (open-problems.md, 25).
+message = { package = "xmip-core-message", git = "https://github.com/IlleNilsson/xmip-core-message", branch = "main" }
 contract_asyncapi = { package = "xmip-core-contract-asyncapi", git = "https://github.com/IlleNilsson/xmip-core-contract-asyncapi", branch = "main" }
 contract_openapi = { package = "xmip-core-contract-openapi", git = "https://github.com/IlleNilsson/xmip-core-contract-openapi", branch = "main" }
 contract_wsdl = { package = "xmip-core-contract-wsdl", git = "https://github.com/IlleNilsson/xmip-core-contract-wsdl", branch = "main" }

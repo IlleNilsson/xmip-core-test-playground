@@ -93,8 +93,9 @@ pub const ASYNCAPI_PROBE: &[u8] = concat!(
 /// then `n` length-delimited field 3 entries carrying `text`.
 #[must_use]
 pub fn protobuf_message(n: usize, text: &str) -> Vec<u8> {
-    use contract_protobuf::wire::{encode_delimited, encode_tag, encode_varint};
-    let mut out = encode_tag(1, 0);
+    use message::protobuf::{WireType, encode_delimited, encode_tag};
+    use message::scan::encode_varint;
+    let mut out = encode_tag(1, WireType::Varint);
     out.extend(encode_varint(1));
     out.extend(encode_delimited(2, b"round-trip"));
     for _ in 0..n {
