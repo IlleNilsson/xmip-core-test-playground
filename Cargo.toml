@@ -40,6 +40,7 @@ name = "xmip-playground-node"
 path = "src/bin/node.rs"
 
 [dependencies]
+sdk = { package = "xmip-core-sdk", git = "https://github.com/IlleNilsson/xmip-core-sdk", branch = "main" }
 # The transports it round-trips over, and the snapshot it publishes verdicts
 # into. observe carries Health; transport carries the Transport trait whose
 # send/receive is the round trip.

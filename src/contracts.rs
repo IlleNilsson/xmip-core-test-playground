@@ -2,7 +2,7 @@
 //!
 //! ADR-0028's contract axis, made real: a probe does not just send bytes and
 //! compare them back, it sends an actual [`Stream`] and, on arrival, a real
-//! [`contract::Contract`] validates it. A pair is delivered only if the
+//! [`sdk::contract::Contract`] validates it. A pair is delivered only if the
 //! bytes round-tripped *and* the contract held — which is the difference between
 //! testing a transport and testing an integration. JSON well-formedness leans on
 //! a real parser; XML on a small well-formedness scan; text and html on lighter
@@ -13,10 +13,6 @@
 //! 2026-09-07 — the swap the shape here was kept for. Text, html and bytes stay
 //! local: no contract technology claims them.
 
-use contract::{
-    Contract as ContractTrait, ContractDescriptor, ContractError, ContractId, ValidationIssue,
-    ValidationResult,
-};
 use contract_asyncapi::AsyncApi;
 use contract_avro::Avro;
 use contract_csv::Csv;
@@ -34,6 +30,10 @@ use contract_schematron::Schematron;
 use contract_sql::SqlContract;
 use contract_wsdl::Wsdl;
 use contract_xml_schema::XmlSchema;
+use sdk::contract::{
+    Contract as ContractTrait, ContractDescriptor, ContractError, ContractId, ValidationIssue,
+    ValidationResult,
+};
 use stream::Stream;
 
 use crate::verdict::Contract;
