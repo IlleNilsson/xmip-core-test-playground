@@ -22,7 +22,6 @@ use observe::{Health, HealthRecord, Snapshot};
 use serde::{Deserialize, Serialize};
 
 use crate::handoff::Hop;
-use crate::report::state;
 use crate::support::cluster_root;
 
 /// The nodes and links a snapshot carries under `[topology]`.
@@ -119,11 +118,11 @@ fn mood(record: Option<&HealthRecord>) -> (String, String) {
     record.map_or_else(
         || {
             (
-                state(Health::Working).to_string(),
+                Health::Working.word().to_string(),
                 "nothing published yet".to_string(),
             )
         },
-        |record| (state(record.health).to_string(), record.evidence.clone()),
+        |record| (record.health.word().to_string(), record.evidence.clone()),
     )
 }
 

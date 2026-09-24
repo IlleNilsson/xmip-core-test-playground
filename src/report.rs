@@ -176,7 +176,7 @@ fn records(node: &str, snapshot: &Snapshot) -> Vec<RecordReport> {
         .into_iter()
         .map(|record| RecordReport {
             scope: record.scope,
-            state: state(record.health).to_string(),
+            state: record.health.word().to_string(),
             severity: record.severity,
             evidence: record.evidence,
             observed_unix_nanos: record.observed_unix_nanos,
@@ -213,7 +213,7 @@ pub fn node_from_toml(text: &str) -> Result<(Snapshot, Vec<Hop>), toml::de::Erro
         .unwrap_or(0);
 
     for record in report.records {
-        if let Some(health) = health_named(&record.state) {
+        if let Some(health) = Health::named(&record.state) {
             snapshot.record_health(HealthRecord {
                 scope: record.scope,
                 health,
@@ -324,33 +324,6 @@ pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     file.sync_all()?;
     drop(file);
     std::fs::rename(&temp, path)
-}
-
-pub(crate) const fn state(health: Health) -> &'static str {
-    // The mood, not a colour — the surface reading this paints it (ADR-0041).
-    match health {
-        Health::Fine => "fine",
-        Health::Paused => "paused",
-        Health::Working => "working",
-        Health::Stressed => "stressed",
-        Health::Exhausted => "exhausted",
-        Health::Holding => "holding",
-        Health::Done => "done",
-    }
-}
-
-fn health_named(state: &str) -> Option<Health> {
-    [
-        Health::Fine,
-        Health::Paused,
-        Health::Working,
-        Health::Stressed,
-        Health::Exhausted,
-        Health::Holding,
-        Health::Done,
-    ]
-    .into_iter()
-    .find(|health| self::state(*health) == state)
 }
 
 fn counted_named(name: &str) -> Option<Counted> {

@@ -95,9 +95,8 @@ pub const ASYNCAPI_PROBE: &[u8] = concat!(
 #[must_use]
 pub fn protobuf_message(n: usize, text: &str) -> Vec<u8> {
     use message::protobuf::{WireType, encode_delimited, encode_tag};
-    use message::scan::encode_varint;
     let mut out = encode_tag(1, WireType::Varint);
-    out.extend(encode_varint(1));
+    out.extend(codec::varint::encode(1));
     out.extend(encode_delimited(2, b"round-trip"));
     for _ in 0..n {
         out.extend(encode_delimited(3, text.as_bytes()));

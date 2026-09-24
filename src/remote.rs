@@ -14,10 +14,12 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
 use archive::ArchiveItem;
+use archive::sql::SqlArchive;
 use archive_azure_blob::AzureBlobArchive;
 use archive_gcs::GcsArchive;
-use archive_postgresql::PostgresqlArchive;
+use archive_postgresql::PostgreSql;
 use archive_s3::S3Archive;
+use codec::sql::Delimiter;
 use transport::error::protocol_error;
 use transport::socket;
 use transport_postgresql::{Answer, Session};
@@ -86,23 +88,13 @@ where
 /// went over the wire, not a canned copy.
 pub(crate) fn literals(sql: &str) -> Vec<String> {
     let mut found = Vec::new();
-    let mut chars = sql.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\'' {
-            continue;
-        }
-        let mut literal = String::new();
-        loop {
-            match chars.next() {
-                Some('\'') if chars.peek() == Some(&'\'') => {
-                    chars.next();
-                    literal.push('\'');
-                }
-                Some('\'') | None => break,
-                Some(other) => literal.push(other),
-            }
-        }
+    let mut rest = sql;
+    while let Some(at) = rest.find('\'') {
+        let Ok((literal, after)) = Delimiter::STRING.unquote_prefix(&rest[at..]) else {
+            break;
+        };
         found.push(literal);
+        rest = after;
     }
     found
 }
@@ -156,8 +148,8 @@ impl Cabinet for PostgresqlCabinet {
             Err(error) => return Filed::Failed(format!("bind failed: {error}")),
         };
         serve_filing(listener, &address, Self::serve, |address| {
-            let store =
-                PostgresqlArchive::new(address, "playground", "xmip").timing_out_after(TIMEOUT);
+            let store = SqlArchive::<PostgreSql>::new(address, "playground", "xmip")
+                .timing_out_after(TIMEOUT);
             file_through(&store, item)
         })
     }

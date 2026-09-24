@@ -15,8 +15,9 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
 use archive::ArchiveItem;
-use archive_mssql::MssqlArchive;
-use archive_mysql::MysqlArchive;
+use archive::sql::SqlArchive;
+use archive_mssql::SqlServer;
+use archive_mysql::MySql;
 use transport::error::protocol_error;
 use transport::socket;
 
@@ -100,7 +101,8 @@ impl Cabinet for MssqlCabinet {
             Err(error) => return Filed::Failed(format!("bind failed: {error}")),
         };
         serve_filing(listener, &address, Self::serve, |address| {
-            let store = MssqlArchive::new(address, "playground", "xmip").timing_out_after(TIMEOUT);
+            let store = SqlArchive::<SqlServer>::new(address, "playground", "xmip")
+                .timing_out_after(TIMEOUT);
             file_through(&store, item)
         })
     }
@@ -162,7 +164,8 @@ impl Cabinet for MysqlCabinet {
             Err(error) => return Filed::Failed(format!("bind failed: {error}")),
         };
         serve_filing(listener, &address, Self::serve, |address| {
-            let store = MysqlArchive::new(address, "playground", "xmip").timing_out_after(TIMEOUT);
+            let store =
+                SqlArchive::<MySql>::new(address, "playground", "xmip").timing_out_after(TIMEOUT);
             file_through(&store, item)
         })
     }

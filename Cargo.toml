@@ -143,6 +143,10 @@ transport_unix_socket = { package = "xmip-core-transport-unix-socket", git = "ht
 stream = { package = "xmip-core-stream", git = "https://github.com/IlleNilsson/xmip-core-stream", branch = "main" }
 xcore = { package = "xmip-core", git = "https://github.com/IlleNilsson/xmip-core", branch = "main" }
 contract = { package = "xmip-core-contract", git = "https://github.com/IlleNilsson/xmip-core-contract", branch = "main" }
+# SQL's string literal, read back once for every far end that answers an
+# archive's INSERT with the row it carried; and the varint a protobuf probe
+# is written with.
+codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNilsson/xmip-core-library-codec", branch = "main" }
 
 # The identity axis: a Receive Location identifies, authenticates and authorizes;
 # a Send Location presents identity (ADR-0019, ADR-0033). The playground drives
