@@ -207,9 +207,9 @@ purpose Test where it starts (ADR-0053):
 ```text
 xmip-playground-roll             the test: chooses scenarios, sets stress, judges, draws
 └─ xmip-playground-cluster C1    the cluster: owns the shared store, spawns and watches
-   ├─ xmip-playground-node alpha  the nodes, one process each
-   ├─ xmip-playground-node beta
-   └─ xmip-playground-node gamma
+   ├─ xmip-playground-node R1     the nodes, one process each
+   ├─ xmip-playground-node P1
+   └─ xmip-playground-node S1
 ```
 
 The **roll** keeps what a test driver owns: the scenarios that stay in its own
@@ -242,13 +242,14 @@ now its grandparent.
 amendment 2026-09-20). The owner, reading eleven identical rows: *these
 process names does not tell an operator or developer much. … Cluster, Node
 and test suite shall be incorporated in the process name.* So a roll on
-cluster `C1` over nodes `alpha`, `beta` and `gamma` is
+cluster `C1` over nodes `R1`, `P1` and `S1` — names the tester chose, which
+mean nothing to Xmip — is
 
 ```text
 xmip-playground-C1-cluster
-xmip-playground-C1-node-alpha
-xmip-playground-C1-node-beta
-xmip-playground-C1-node-gamma
+xmip-playground-C1-node-P1
+xmip-playground-C1-node-R1
+xmip-playground-C1-node-S1
 xmip-playground-C1-roll
 ```
 
@@ -305,7 +306,7 @@ The words are not the Playground's. `node::Stage` (`xmip-core-node`) is the
 message-path stage every verdict, hop and scope here uses, and
 `Stage::declared` is the one parse of a declaration: `--can`, `--nodes` and a
 published capability record all read through it. The declaration itself —
-the evidence a node publishes and the `alpha=receive` entry a run lists — is
+the evidence a node publishes and the `R1=receive` entry a run lists — is
 `node::Capability`; `capability.rs` keeps only the `--can`/`--online` flags
 the cluster starts a node process with. A word is lowercase exactly
 (the owner, 2026-09-24: `RECEIVE` or `Send` is an unknown word), and an
@@ -320,11 +321,14 @@ ADR-0022 that placement must satisfy node capability. `Start-XmipTest` kept
 one shorthand at the operator's door for a day longer, and on 2026-09-20 the
 owner struck that too: *Rn, Pn and Sn are arbitrary node names* (ADR-0056,
 amendment). **Nowhere in Xmip is a node's name read.** A named node carries
-what `-NodeCapability @{ alpha = 'receive' }` states for it and nothing else; a
+what `-NodeCapability @{ R1 = 'receive' }` states for it and nothing else; a
 node given none declares none, and `Start-XmipTest` says so in words before it
 spawns anything. Omit `-Nodes` and the level's complement deals the whole
 path by position, which reads no name either. What leaves PowerShell is
-`XMIP_PLAYGROUND_NODE_CAPABILITIES=alpha=receive,…` — a declaration, not a name.
+`XMIP_PLAYGROUND_NODE_CAPABILITIES=R1=receive,…` — a declaration, not a name.
+The examples here name clusters `C1`, `C2` and nodes `R1`, `P1`, `S1`, as the
+owner does when he tests (ADR-0056, amendment 2026-09-25): the letter reminds
+the person, and the declaration beside it is all Xmip reads.
 
 **Nodes run the test that was named.** The roll passes the scenarios it was
 given to every node (`--scenarios`, with every node's name in `--nodes`), and a
@@ -393,7 +397,7 @@ ExclusiveClaim and DailyBacklog links only when those tests ran on a node.
 `[run]` table — `cluster`, `tests`, `nodes`, `capabilities`, `online`,
 `stress` — that a reader which does not know it skips, and the web GUI shows as
 one line on every view. `capabilities` is what each node was started with,
-`alpha=receive` or `beta=process+send`, a node that declared nothing listed by name
+`R1=receive` or `P1=process+send`, a node that declared nothing listed by name
 alone.
 
 
@@ -433,7 +437,7 @@ process each; an empty list is `XMIP_PLAYGROUND_NODES=0`, no nodes; omitted,
 the cmdlet resolves the level's full complement and sets those names, so the
 run record says what an operator got), `-NodeCapability` is
 `XMIP_PLAYGROUND_NODE_CAPABILITIES` (what each declares it can do,
-`alpha=receive,beta=process+send`; a node it does not name declares nothing,
+`R1=receive,P1=process+send`; a node it does not name declares nothing,
 and nothing here is worked out from a name), `-OnlineNodes` is
 `XMIP_PLAYGROUND_ONLINE_NODES`
 (which of them may assume the internet, by name, ADR-0045; unset, every node

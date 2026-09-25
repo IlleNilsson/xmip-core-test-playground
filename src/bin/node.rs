@@ -94,7 +94,10 @@ struct Arguments {
 const USAGE: &str = "usage: node --name <name> --shared <dir> --stress <level> --rounds <n> \
      --snapshot <path> [--interval-ms <ms>] [--online true|false] \
      [--can receive,process] [--nodes <name[=capability],...>] \
-     [--scenarios <scenarios>]";
+     [--scenarios <scenarios>]\n\
+     example: node --name R1 --shared shared --stress calm --rounds 0 \
+     --snapshot R1.toml --can receive\n\
+     The name is the tester's and means nothing to Xmip; --can says what the node does.";
 
 fn main() -> ExitCode {
     // The name is the image's own — xmip-playground-<cluster>-node-<node>

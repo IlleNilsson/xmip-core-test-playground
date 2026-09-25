@@ -84,7 +84,11 @@ struct Arguments {
 
 const USAGE: &str = "usage: cluster --name <cluster> --shared <dir> \
      --nodes <a[=capability],b,...> --stress <level> --rounds <n> \
-     --snapshot <path> [--online <a,b>] [--scenarios <a,b>] [--interval-ms <ms>]";
+     --snapshot <path> [--online <a,b>] [--scenarios <a,b>] [--interval-ms <ms>]\n\
+     example: cluster --name C1 --shared shared --nodes R1=receive,P1=process,S1=send \
+     --stress calm --rounds 0 --snapshot C1-snapshot.toml\n\
+     The names are the tester's and mean nothing to Xmip; each node's capability is \
+     what follows its =.";
 
 fn main() -> ExitCode {
     // The name is the image's own, so the declaration and the audit say what
