@@ -57,19 +57,22 @@ mod tests {
 
     #[test]
     fn a_run_names_its_tests_and_what_each_node_was_started_with() {
-        let roster = Roster::parse("R1=receive,P1=process+send,n1")
+        let roster = Roster::parse("alpha=receive,beta=process+send,n1")
             .expect("a well-formed roster")
             .declared(
-                "R1",
+                "alpha",
                 node::Capability::parse("receive")
                     .expect("receive")
                     .with_online(true),
             );
         let run = started("C1", &["round-trip".to_string()], &roster, Stress::Harsh);
         assert_eq!(run.tests, ["RoundTrip"]);
-        assert_eq!(run.nodes, ["R1", "P1", "n1"]);
-        assert_eq!(run.capabilities, ["R1=receive", "P1=process+send", "n1"]);
-        assert_eq!(run.online, ["R1"]);
+        assert_eq!(run.nodes, ["alpha", "beta", "n1"]);
+        assert_eq!(
+            run.capabilities,
+            ["alpha=receive", "beta=process+send", "n1"]
+        );
+        assert_eq!(run.online, ["alpha"]);
         assert_eq!((run.cluster.as_str(), run.stress.as_str()), ("C1", "harsh"));
 
         let every = started("C1", &[], &Roster::default(), Stress::Calm);

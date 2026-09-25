@@ -14,7 +14,7 @@
 //!
 //! A roster is written as the `--nodes` flag takes it: `name`, or
 //! `name=capability`, or `name=capability+capability`, comma separated —
-//! `R1=receive,P1=process,S1=send`, or `node-01,node-02` where neither
+//! `alpha=receive,beta=process,gamma=send`, or `node-01,node-02` where neither
 //! declares a stage.
 
 use node::{Capability, Stage};
@@ -235,44 +235,42 @@ mod tests {
 
     #[test]
     fn a_node_serves_what_it_declared_and_a_name_decides_nothing() {
-        let declared = roster("R1=receive,P1=process,S1=send,node-01");
-        assert_eq!(declared.with(Stage::Receive), ["R1"]);
-        assert_eq!(declared.with(Stage::Send), ["S1"]);
+        let declared = roster("alpha=receive,beta=process,gamma=send,node-01");
+        assert_eq!(declared.with(Stage::Receive), ["alpha"]);
+        assert_eq!(declared.with(Stage::Send), ["gamma"]);
         assert!(declared.capability("node-01").declares_no_stage());
-        assert_eq!(declared.names(), ["R1", "P1", "S1", "node-01"]);
+        assert_eq!(declared.names(), ["alpha", "beta", "gamma", "node-01"]);
 
-        // The same three stages under names that say nothing at all.
-        let anonymous = roster("alpha=receive,beta=process,gamma=send");
-        assert_eq!(anonymous.with(Stage::Receive), ["alpha"]);
-        assert_eq!(anonymous.with(Stage::Process), ["beta"]);
-        assert_eq!(anonymous.with(Stage::Send), ["gamma"]);
-        assert_eq!(anonymous.refusal(), None);
+        assert_eq!(declared.refusal(), None);
 
-        // And a name that looks like a role decides nothing on its own.
-        let misleading = roster("R1=send,P1,S1=receive+process");
-        assert_eq!(misleading.with(Stage::Receive), ["S1"]);
-        assert_eq!(misleading.with(Stage::Process), ["S1"]);
-        assert_eq!(misleading.with(Stage::Send), ["R1"]);
-        assert!(misleading.capability("P1").declares_no_stage());
+        // And a name that sounds like a stage decides nothing on its own.
+        let misleading = roster("receiver=send,processor,sender=receive+process");
+        assert_eq!(misleading.with(Stage::Receive), ["sender"]);
+        assert_eq!(misleading.with(Stage::Process), ["sender"]);
+        assert_eq!(misleading.with(Stage::Send), ["receiver"]);
+        assert!(misleading.capability("processor").declares_no_stage());
         assert_eq!(misleading.refusal(), None);
     }
 
     #[test]
     fn a_missing_capability_is_refused_by_capability_and_no_stage_is_no_refusal() {
         assert_eq!(Roster::of(&["node-01".to_string()]).refusal(), None);
-        assert_eq!(roster("R1=receive,P1=process,S1=send,x").refusal(), None);
-        let refusal = roster("R1=receive,R2=receive,S1=send")
+        assert_eq!(
+            roster("alpha=receive,beta=process,gamma=send,x").refusal(),
+            None
+        );
+        let refusal = roster("alpha=receive,delta=receive,gamma=send")
             .refusal()
             .expect("nobody processes");
         assert!(refusal.starts_with("REFUSED"), "{refusal}");
         assert!(refusal.ends_with("no node declares process."), "{refusal}");
-        let refusal = roster("R1=receive").refusal().expect("two missing");
+        let refusal = roster("alpha=receive").refusal().expect("two missing");
         assert!(refusal.ends_with("declares process or send."), "{refusal}");
     }
 
     #[test]
     fn a_roster_is_written_read_back_and_a_node_has_the_last_word_on_itself() {
-        let text = "R1=receive,P1=process+send,node-01";
+        let text = "alpha=receive,beta=process+send,node-01";
         assert_eq!(roster(text).text(), text);
         assert_eq!(Roster::of(&["a".to_string(), "b".into()]).text(), "a,b");
 
@@ -297,9 +295,12 @@ mod tests {
 
     #[test]
     fn every_pair_has_one_receiver_and_one_stable_target_per_stage() {
-        let roster = roster("R1=receive,R2=receive,P1=process,P2=process,S1=send,S2=send,n1");
+        let roster = roster(concat!(
+            "alpha=receive,delta=receive,beta=process,",
+            "epsilon=process,gamma=send,zeta=send,n1"
+        ));
         for index in 0..40 {
-            let takers = ["R1", "R2", "P1", "n1"]
+            let takers = ["alpha", "delta", "beta", "n1"]
                 .into_iter()
                 .filter(|name| roster.receives(name, index))
                 .count();
@@ -316,12 +317,12 @@ mod tests {
         let crossed = CONTRACTS.into_iter().any(|contract| {
             let process = roster.target(Stage::Process, "tcp", contract);
             let send = roster.target(Stage::Send, "tcp", contract);
-            process == Some("P1") && send == Some("S2")
+            process == Some("beta") && send == Some("zeta")
         });
         let straight = CONTRACTS.into_iter().any(|contract| {
             let process = roster.target(Stage::Process, "tcp", contract);
             let send = roster.target(Stage::Send, "tcp", contract);
-            process == Some("P1") && send == Some("S1")
+            process == Some("beta") && send == Some("gamma")
         });
         assert!(
             crossed && straight,

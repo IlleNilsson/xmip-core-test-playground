@@ -316,7 +316,7 @@ mod tests {
     fn arguments(extra: &[&str]) -> Result<Arguments, String> {
         let required = [
             "--name",
-            "R1",
+            "alpha",
             "--shared",
             "s",
             "--stress",
@@ -324,7 +324,7 @@ mod tests {
             "--rounds",
             "1",
             "--snapshot",
-            "r1.toml",
+            "alpha.toml",
         ];
         parse(required.iter().chain(extra).map(ToString::to_string))
     }
@@ -342,13 +342,13 @@ mod tests {
             "--scenarios",
             "Round-Trip",
             "--nodes",
-            "R1=receive, P1=process,S1=send",
+            "alpha=receive, beta=process,gamma=send",
             "--can",
             "receive",
         ])
         .expect("all three are well formed");
         assert_eq!(told.scenarios, ["round-trip"]);
-        assert_eq!(told.roster.names(), ["R1", "P1", "S1"]);
+        assert_eq!(told.roster.names(), ["alpha", "beta", "gamma"]);
         assert_eq!(told.capability.words(), "receive");
         assert!(
             arguments(&["--scenarios", ""])
@@ -369,7 +369,7 @@ mod tests {
             "{refusal}"
         );
 
-        for extra in [["--can", "relay"], ["--nodes", "R1=relay"]] {
+        for extra in [["--can", "relay"], ["--nodes", "alpha=relay"]] {
             let refusal = arguments(&extra)
                 .err()
                 .unwrap_or_else(|| panic!("{extra:?}"));

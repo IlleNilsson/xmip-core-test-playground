@@ -24,7 +24,10 @@
 //! `xmip:///<cluster>/node`, worst of all. A node whose snapshot has not
 //! changed for longer than three rounds is hung: it is killed and restarted,
 //! and the restart is recorded as a fault — a yellow that stays for the
-//! cluster's life — never silently.
+//! cluster's life — never silently. A node that has not published once is
+//! starting, not hung, until it has had two minutes for its first round
+//! (2026-09-25: a brutal roll's first round outlasted three, and killing it
+//! for that restarted every node into the same wait, over and over).
 
 mod binary;
 mod member;
@@ -199,17 +202,13 @@ impl Cluster {
         } else {
             node.silent += 1;
         }
-        if node.alive() && node.silent > SILENT_ROUNDS {
+        if node.hung() {
             node.kill();
             node.restarts += 1;
             node.silent = 0;
             let (name, path) = (node.name.clone(), node.path.clone());
             match self.start(&name, &path) {
-                Ok(child) => {
-                    let node = &mut self.nodes[index];
-                    node.child = Some(child);
-                    node.exit = None;
-                }
+                Ok(child) => self.nodes[index].restarted(child),
                 Err(error) => eprintln!("cluster: could not restart {name}: {error}"),
             }
         }
@@ -378,6 +377,31 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// 2026-09-25: a node slow over its first round is starting, not hung.
+    /// One that has published nothing is left to finish that round however
+    /// many rounds it takes, and said to be starting.
+    #[test]
+    fn a_node_that_has_not_published_yet_is_starting_and_not_restarted() {
+        let (dir, mut cluster) = spawn(Stress::Calm, 1, 0);
+        // A file the node never writes: it has, as far as the cluster can
+        // tell, not published once.
+        cluster.nodes[0].path = dir.join("never-written.toml");
+        let mut last = cluster.tick();
+        for _ in 0..=SILENT_ROUNDS + 1 {
+            last = cluster.tick();
+        }
+        assert_eq!(cluster.restarts(), 0, "a starting node is not hung");
+        assert_eq!(cluster.alive(), 1);
+        let process = snapshot_record(&last, &format!("{ROOT}/node/node-01/system-process"));
+        assert!(
+            process.evidence.starts_with("starting"),
+            "{}",
+            process.evidence
+        );
+        cluster.stop();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// The owner's shape, 2026-09-19: nodes run the test that was named, and
     /// a node serves the stages it declared. `RoundTrip` alone over three
     /// nodes whose **names say nothing** is three processes handing each pair
@@ -386,8 +410,8 @@ mod tests {
     #[test]
     fn declared_nodes_run_the_named_test_and_hand_each_pair_along_the_path() {
         let dir = scratch("cluster-declared");
-        let roster =
-            crate::Roster::parse("R1=receive,P1=process,S1=send").expect("a well-formed roster");
+        let roster = crate::Roster::parse("alpha=receive,beta=process,gamma=send")
+            .expect("a well-formed roster");
         let orders = Orders::of(Stress::Calm, roster, 0).driving(&["round-trip".to_string()]);
         let mut cluster = Cluster::spawn(
             &built_node_binary(),
@@ -400,11 +424,14 @@ mod tests {
         let mut snapshot = cluster.tick();
         for _ in 0..40 {
             snapshot = merge_into(snapshot, &cluster.tick());
-            if !snapshot.health(&format!("{ROOT}/node/S1/send")).is_empty() {
+            if !snapshot
+                .health(&format!("{ROOT}/node/gamma/send"))
+                .is_empty()
+            {
                 break;
             }
         }
-        for (name, stage) in [("R1", "receive"), ("P1", "process"), ("S1", "send")] {
+        for (name, stage) in [("alpha", "receive"), ("beta", "process"), ("gamma", "send")] {
             let leaves = snapshot.health(&format!("{ROOT}/node/{name}/{stage}"));
             assert!(!leaves.is_empty(), "{name} published its {stage} stage");
             for other in [
@@ -425,11 +452,11 @@ mod tests {
             .map(|hop| (hop.from, hop.to))
             .collect();
         assert!(
-            links.contains(&("R1".to_string(), "P1".to_string())),
+            links.contains(&("alpha".to_string(), "beta".to_string())),
             "{links:?}"
         );
         assert!(
-            links.contains(&("P1".to_string(), "S1".to_string())),
+            links.contains(&("beta".to_string(), "gamma".to_string())),
             "{links:?}"
         );
 
@@ -442,13 +469,13 @@ mod tests {
     fn a_node_told_an_unknown_scenario_is_refused_with_exit_code_two() {
         let dir = scratch("cluster-refused");
         let output = Command::new(built_node_binary())
-            .args(["--name", "R1", "--stress", "calm", "--rounds", "1"])
+            .args(["--name", "alpha", "--stress", "calm", "--rounds", "1"])
             .args(["--can", "receive"])
             .args(["--scenarios", "round-trip,pingpong"])
             .arg("--shared")
             .arg(dir.join("shared"))
             .arg("--snapshot")
-            .arg(dir.join("R1.toml"))
+            .arg(dir.join("alpha.toml"))
             .output()
             .expect("the node binary runs");
         assert_eq!(output.status.code(), Some(2));
@@ -458,7 +485,7 @@ mod tests {
             said.contains("pingpong") && said.contains("daily-backlog"),
             "{said}"
         );
-        assert!(!dir.join("R1.toml").exists(), "nothing ran");
+        assert!(!dir.join("alpha.toml").exists(), "nothing ran");
         std::fs::remove_dir_all(&dir).ok();
     }
 

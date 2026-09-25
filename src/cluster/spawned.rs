@@ -191,11 +191,11 @@ mod tests {
     #[test]
     fn a_spawned_cluster_publishes_its_nodes_and_stops_them_with_itself() {
         let dir = scratch("spawned");
-        let roster =
-            crate::Roster::parse("R1=receive,P1=process,S1=send").expect("a well-formed roster");
+        let roster = crate::Roster::parse("alpha=receive,beta=process,gamma=send")
+            .expect("a well-formed roster");
         let orders = Orders::of(Stress::Calm, roster, 0)
             .driving(&["round-trip".to_string()])
-            .with_online(Some(vec!["R1".to_string()]));
+            .with_online(Some(vec!["alpha".to_string()]));
         let path = dir.join("Zt-cluster.toml");
         let mut cluster = Spawned::start(
             &built_cluster_binary(),
@@ -210,15 +210,20 @@ mod tests {
         let mut published = false;
         for _ in 0..40 {
             let snapshot = cluster.tick();
-            published = !snapshot.health(&format!("{root}/node/S1/send")).is_empty();
+            published = !snapshot
+                .health(&format!("{root}/node/gamma/send"))
+                .is_empty();
             if published {
                 break;
             }
         }
-        assert!(published, "S1 published its send stage through the cluster");
+        assert!(
+            published,
+            "gamma published its send stage through the cluster"
+        );
 
         let snapshot = cluster.tick();
-        for name in ["R1", "P1", "S1"] {
+        for name in ["alpha", "beta", "gamma"] {
             let process = format!("{root}/node/{name}/system-process");
             assert!(
                 !snapshot.health(&process).is_empty(),
@@ -234,8 +239,8 @@ mod tests {
             .iter()
             .map(|hop| (hop.from.as_str(), hop.to.as_str()))
             .collect();
-        assert!(links.contains(&("R1", "P1")), "{links:?}");
-        assert!(links.contains(&("P1", "S1")), "{links:?}");
+        assert!(links.contains(&("alpha", "beta")), "{links:?}");
+        assert!(links.contains(&("beta", "gamma")), "{links:?}");
 
         cluster.stop();
         assert!(!cluster.alive(), "the cluster left when it was asked");

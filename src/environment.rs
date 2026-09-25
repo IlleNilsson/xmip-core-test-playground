@@ -54,8 +54,8 @@ pub enum Told {
 }
 
 /// The roster a roll spawns: the nodes [`node_names`] was told, each declaring
-/// what `XMIP_PLAYGROUND_NODE_CAPABILITIES` gives it — `R1=receive,
-/// P1=process+send`, comma separated, a node it does not name declaring
+/// what `XMIP_PLAYGROUND_NODE_CAPABILITIES` gives it — `alpha=receive,
+/// beta=process+send`, comma separated, a node it does not name declaring
 /// nothing — or, told nothing, the level's full complement dealt over the
 /// message path (`complement.rs`). Every node carries the online capability
 /// the environment says (ADR-0045, ADR-0056). Nothing is read out of a node's

@@ -162,9 +162,9 @@ mod tests {
     fn a_name_says_the_suite_the_cluster_and_which_of_the_tree_it_is() {
         assert_eq!(named("W1", "roll"), "xmip-playground-W1-roll");
         assert_eq!(named("W1", "cluster"), "xmip-playground-W1-cluster");
-        assert_eq!(node_named("W1", "R1"), "xmip-playground-W1-node-R1");
+        assert_eq!(node_named("W1", "alpha"), "xmip-playground-W1-node-alpha");
         // Every one still answers the owner's one line, Get-Process xmip-*.
-        for name in [named("W1", "roll"), node_named("W1", "R1")] {
+        for name in [named("W1", "roll"), node_named("W1", "alpha")] {
             assert!(name.starts_with("xmip-"), "{name}");
         }
     }
@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn a_node_named_what_no_file_can_be_called_is_refused_before_anything_spawns() {
-        assert_eq!(refusal("R1"), None);
+        assert_eq!(refusal("alpha"), None);
         assert_eq!(refusal("node-01"), None);
         for wrong in ["", "9lives", "a/b", "a b", "a.b", "a:b"] {
             let refusal = refusal(wrong).unwrap_or_else(|| panic!("{wrong}"));
@@ -198,7 +198,7 @@ mod tests {
     fn no_image_directory_is_the_binary_itself() {
         let base = Path::new("target/debug/xmip-playground-node");
         assert_eq!(
-            of_node(base, "W1", "R1").expect("nothing to do"),
+            of_node(base, "W1", "alpha").expect("nothing to do"),
             base.to_path_buf()
         );
     }

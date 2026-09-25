@@ -175,27 +175,30 @@ mod tests {
     #[test]
     fn a_nodes_file_carries_its_handoffs_beside_its_publication() {
         let hop = Hop {
-            from: "R1".to_string(),
+            from: "alpha".to_string(),
             from_stage: "receive".to_string(),
-            to: "P1".to_string(),
+            to: "beta".to_string(),
             to_stage: "process".to_string(),
             count: 3,
             last_unix_nanos: 7,
         };
         let mut snapshot = Snapshot::new();
         snapshot.record_health(observe::HealthRecord {
-            scope: "xmip:///R1/receive/tcp".to_string(),
+            scope: "xmip:///alpha/receive/tcp".to_string(),
             health: observe::Health::Fine,
             severity: 0,
             evidence: "3/3".to_string(),
             observed_unix_nanos: 7,
         });
 
-        let text = node_toml("xmip:///R1", &snapshot, vec![hop.clone()]);
+        let text = node_toml("xmip:///alpha", &snapshot, vec![hop.clone()]);
         let (read, hops) = node_from_toml(&text).expect("reads back");
 
         assert_eq!(hops, [hop]);
-        assert_eq!(read.health("xmip:///R1"), snapshot.health("xmip:///R1"));
+        assert_eq!(
+            read.health("xmip:///alpha"),
+            snapshot.health("xmip:///alpha")
+        );
     }
 
     #[test]

@@ -232,7 +232,7 @@ mod tests {
             transport: "tcp".to_string(),
             contract: Contract::FixedWidth,
             round,
-            from: "R1".to_string(),
+            from: "alpha".to_string(),
             bytes: bytes.to_vec(),
         }
     }
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn what_is_delivered_is_claimed_once_whole_and_oldest_first() {
         let shared = scratch("handoff");
-        let inbox = Inbox::of(&shared, "P1", Stage::Process);
+        let inbox = Inbox::of(&shared, "beta", Stage::Process);
         let binary = [0x00, b'\n', 0xff, b' ', b'\n'];
         inbox.deliver(&handoff(2, b"second"), 1).expect("delivered");
         inbox.deliver(&handoff(1, &binary), 2).expect("delivered");
@@ -250,15 +250,15 @@ mod tests {
         let (first, unreadable) = inbox.claim(2);
         assert_eq!(unreadable, 0);
         assert_eq!(first, [handoff(1, &binary), handoff(2, b"second")]);
-        let (rest, _) = Inbox::of(&shared, "P1", Stage::Process).claim(8);
+        let (rest, _) = Inbox::of(&shared, "beta", Stage::Process).claim(8);
         assert_eq!(rest, [handoff(3, b"")], "a claimed handoff is gone");
         assert_eq!(inbox.claim(8), (Vec::new(), 0));
         assert_eq!(
-            Inbox::of(&shared, "P2", Stage::Process).claim(8),
+            Inbox::of(&shared, "epsilon", Stage::Process).claim(8),
             (Vec::new(), 0)
         );
         assert_eq!(
-            Inbox::of(&shared, "P1", Stage::Send).claim(8),
+            Inbox::of(&shared, "beta", Stage::Send).claim(8),
             (Vec::new(), 0),
             "one node's two stages do not share an inbox"
         );
@@ -268,25 +268,25 @@ mod tests {
     #[test]
     fn a_half_written_file_is_never_claimed_and_a_torn_one_is_counted() {
         let shared = scratch("handoff-torn");
-        let inbox = Inbox::of(&shared, "S1", Stage::Send);
+        let inbox = Inbox::of(&shared, "gamma", Stage::Send);
         inbox.deliver(&handoff(1, b"whole"), 1).expect("delivered");
-        let dir = shared.join("handoff/S1/send");
-        std::fs::write(dir.join("0000000002-R1-x.writing"), b"half").expect("written");
-        std::fs::write(dir.join("0000000003-R1-x.handoff"), b"not a handoff").expect("written");
+        let dir = shared.join("handoff/gamma/send");
+        std::fs::write(dir.join("0000000002-alpha-x.writing"), b"half").expect("written");
+        std::fs::write(dir.join("0000000003-alpha-x.handoff"), b"not a handoff").expect("written");
 
         let (claimed, unreadable) = inbox.claim(8);
         assert_eq!(claimed, [handoff(1, b"whole")]);
         assert_eq!(unreadable, 1);
-        assert!(dir.join("0000000002-R1-x.writing").exists());
+        assert!(dir.join("0000000002-alpha-x.writing").exists());
         std::fs::remove_dir_all(&shared).ok();
     }
 
     #[test]
     fn hops_count_per_link_with_the_stages_at_each_end_and_the_last_time() {
         let mut hops = Hops::default();
-        hops.record(("R1", Stage::Receive), ("P1", Stage::Process), 5);
-        hops.record(("R1", Stage::Receive), ("P2", Stage::Process), 6);
-        hops.record(("R1", Stage::Receive), ("P1", Stage::Process), 9);
+        hops.record(("alpha", Stage::Receive), ("beta", Stage::Process), 5);
+        hops.record(("alpha", Stage::Receive), ("epsilon", Stage::Process), 6);
+        hops.record(("alpha", Stage::Receive), ("beta", Stage::Process), 9);
         let links: Vec<_> = hops.links().cloned().collect();
         assert_eq!(links.len(), 2);
         assert_eq!(
@@ -295,13 +295,13 @@ mod tests {
                 links[0].count,
                 links[0].last_unix_nanos
             ),
-            ("P1", 2, 9)
+            ("beta", 2, 9)
         );
         assert_eq!(
             (links[0].from_stage.as_str(), links[0].to_stage.as_str()),
             ("receive", "process"),
             "the link says which stages it runs between"
         );
-        assert_eq!((links[1].to.as_str(), links[1].count), ("P2", 1));
+        assert_eq!((links[1].to.as_str(), links[1].count), ("epsilon", 1));
     }
 }

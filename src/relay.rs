@@ -423,14 +423,14 @@ mod tests {
         let dir = scratch("relay");
         // Names that say nothing: the stages come from the declarations.
         let roster = "alpha=receive,beta=process,gamma=send";
-        let mut r1 = relay("alpha", roster, &dir);
-        let mut p1 = relay("beta", roster, &dir);
-        let mut s1 = relay("gamma", roster, &dir);
+        let mut alpha = relay("alpha", roster, &dir);
+        let mut beta = relay("beta", roster, &dir);
+        let mut gamma = relay("gamma", roster, &dir);
         let pairs = 2 * CONTRACTS.len();
 
-        let received = r1.tick();
-        let processed = p1.tick();
-        let sent = s1.tick();
+        let received = alpha.tick();
+        let processed = beta.tick();
+        let sent = gamma.tick();
 
         for (snapshot, node, stage) in [
             (&received, "alpha", "receive"),
@@ -454,7 +454,7 @@ mod tests {
                 );
             }
         }
-        let hops: Vec<_> = r1.hops().links().chain(p1.hops().links()).collect();
+        let hops: Vec<_> = alpha.hops().links().chain(beta.hops().links()).collect();
         assert_eq!(hops.len(), 2);
         assert_eq!(
             (hops[0].from.as_str(), hops[0].to.as_str()),
@@ -470,7 +470,7 @@ mod tests {
         );
         assert!(hops.iter().all(|hop| hop.count == pairs as u64));
         assert!(
-            s1.hops().links().next().is_none(),
+            gamma.hops().links().next().is_none(),
             "send closes the verdict"
         );
         assert_eq!(
@@ -484,9 +484,9 @@ mod tests {
     #[test]
     fn two_receivers_share_the_matrix_and_a_bounded_round_rotates_through_it() {
         let dir = scratch("relay-share");
-        let roster = "R1=receive,R2=receive,P1=process,S1=send";
+        let roster = "alpha=receive,delta=receive,beta=process,gamma=send";
         let mut scopes = std::collections::BTreeSet::new();
-        for name in ["R1", "R2"] {
+        for name in ["alpha", "delta"] {
             let mut receive = relay(name, roster, &dir).bounded(7, 1);
             let mut last = receive.tick();
             for _ in 0..2 {
@@ -516,15 +516,15 @@ mod tests {
     #[test]
     fn a_faulted_stage_hands_nothing_on_and_an_uncovered_path_has_no_relay() {
         let dir = scratch("relay-fault");
-        let names = "R1=receive,P1=process,S1=send";
-        let mut receive = relay("R1", names, &dir)
+        let names = "alpha=receive,beta=process,gamma=send";
+        let mut receive = relay("alpha", names, &dir)
             .over(vec![Box::new(UdpRoundTrip)])
             .with_faults(FaultPlan::realistic());
         let mut failed = 0;
         for _ in 0..12 {
             let snapshot = receive.tick();
             failed += snapshot
-                .health(&format!("{ROOT}/node/R1/receive/udp"))
+                .health(&format!("{ROOT}/node/alpha/receive/udp"))
                 .iter()
                 .filter(|record| record.health == Health::Done)
                 .count();
@@ -537,13 +537,13 @@ mod tests {
             "{handed} of {rounds}: a failed arrival is not handed on"
         );
 
-        let short = Roster::parse("R1=receive,S1=send").expect("a roster with no process");
-        assert!(Relay::new("R1", ROOT, Stage::Receive, &short, &dir, &dir).is_none());
+        let short = Roster::parse("alpha=receive,gamma=send").expect("a roster with no process");
+        assert!(Relay::new("alpha", ROOT, Stage::Receive, &short, &dir, &dir).is_none());
         let whole = Roster::of(&["node-01".to_string()]);
         assert!(Relay::new("node-01", ROOT, Stage::Receive, &whole, &dir, &dir).is_none());
-        let full = Roster::parse("R1=receive,P1=process,S1=send").expect("a whole path");
+        let full = Roster::parse("alpha=receive,beta=process,gamma=send").expect("a whole path");
         assert!(
-            Relay::new("R1", ROOT, Stage::Send, &full, &dir, &dir).is_none(),
+            Relay::new("alpha", ROOT, Stage::Send, &full, &dir, &dir).is_none(),
             "a node runs only the stages it declared"
         );
         std::fs::remove_dir_all(&dir).ok();

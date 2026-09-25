@@ -3,13 +3,16 @@
 //! nodes reported (ADR-0052, amendment 2026-09-14, ruling 3). Nothing here is
 //! inferred from a socket — a node is in the picture because `-Nodes` named
 //! it, a stage because the node declared it (ADR-0056) or reported on
-//! it, and a link because a handoff was delivered over it.
+//! it, and a link because the roster configures a handoff there or one was
+//! delivered over it — configured, observed or both, said on the link.
 //!
 //! The picture is the owner's, 2026-09-19: *cluster, nodes, receive, process,
 //! send*. The cluster holds its nodes; a node holds the stages of the message
 //! path it declared; a receive or a send stage holds one endpoint per transport
 //! it reported on. Between them run the handoffs, receive to process to send,
-//! one link per pair of stages that exchanged any, its volume the hops. A
+//! one link per pair of stages configured to exchange them or that exchanged
+//! any, its volume the hops and its rate their rise per second since the
+//! roll's last publication (`Topology::rate_since`). A
 //! drawn thing above its leaves is Fine or Holding (`Health::rolled`,
 //! ADR-0041); a link shows the worst leaf at either end. The
 //! shared directory is drawn only when a node ran a test over it. The model
@@ -22,23 +25,28 @@ mod stage;
 use observe::{Health, HealthRecord, NodeKind, Origin, Scope, Snapshot, Topology, TopologyNode};
 
 use crate::handoff::Hop;
+use crate::roster::Roster;
 use crate::support::cluster_root;
 
 /// The id of the cluster, the one node with no parent.
 const CLUSTER: &str = "cluster";
 
-/// The cluster's topology from what its nodes published this round and the
-/// handoffs they delivered: the cluster, one node per name, each node's
-/// stages and their endpoints, the handoff links, and the shared store with
-/// its links when a node ran a test over it.
+/// The cluster's topology from what it was configured with, what its nodes
+/// published this round and the handoffs they delivered: the cluster, one
+/// node per name on the roster, each node's stages and their endpoints, the
+/// handoff links — configured where `relayed` says the run hands `RoundTrip`
+/// along the stages the roster declares, observed where a hop was
+/// delivered — and the shared store with its links when a node ran a test
+/// over it.
 #[must_use]
-pub fn cluster_topology<'a>(
+pub fn cluster_topology(
     snapshot: &Snapshot,
-    names: impl Iterator<Item = &'a str>,
+    roster: &Roster,
+    relayed: bool,
     hops: &[Hop],
     now: i64,
 ) -> Topology {
-    let names: Vec<&str> = names.collect();
+    let names: Vec<&str> = roster.names();
     let root = cluster_root();
     let mut topology = Topology {
         source: format!("playground — cluster {}", label(&root)),
@@ -51,7 +59,10 @@ pub fn cluster_topology<'a>(
         topology.nodes.push(node(snapshot, name, &scope));
         topology.nodes.extend(stage::nodes(snapshot, name, &scope));
     }
-    topology.links.extend(stage::handoff_links(snapshot, hops));
+    let configured = relayed.then_some(roster);
+    topology
+        .links
+        .extend(stage::handoff_links(snapshot, configured, hops));
     shared::draw(snapshot, &names, &mut topology);
     topology
 }
@@ -192,42 +203,46 @@ mod tests {
         Capability::parse(stages).expect("a capability").evidence()
     }
 
-    /// `R1` received over tcp and file, `P1` processed, `S1` sent over tcp
-    /// with one pair stressed; `S1` also ran the two shared-directory tests.
-    /// `S2` has only said what it can do and reported nothing yet.
+    /// `alpha` received over tcp and file, `beta` processed, `gamma` sent over tcp
+    /// with one pair stressed; `gamma` also ran the two shared-directory tests.
+    /// `zeta` has only said what it can do and reported nothing yet.
     fn published() -> Snapshot {
         let mut snapshot = Snapshot::new();
         for (leaf, capability) in [
-            ("R1", "receive"),
-            ("P1", "process"),
-            ("S1", "send"),
-            ("S2", "send"),
+            ("alpha", "receive"),
+            ("beta", "process"),
+            ("gamma", "send"),
+            ("zeta", "send"),
         ] {
             let scope = format!("{ROOT}/node/{leaf}/capability");
             snapshot.record_health(record(&scope, Health::Fine, &declares(capability)));
         }
         for (leaf, health, evidence) in [
-            ("R1/system-process", Health::Fine, "alive"),
-            ("R1/receive/tcp/json", Health::Fine, "3/3 rounds passed"),
-            ("R1/receive/tcp/json/identification", Health::Fine, "held"),
-            ("R1/receive/file/text", Health::Fine, "3/3 rounds passed"),
-            ("P1/system-process", Health::Fine, "alive"),
-            ("P1/process/tcp/json", Health::Fine, "3/3 rounds passed"),
-            ("S1/system-process", Health::Fine, "alive"),
+            ("alpha/system-process", Health::Fine, "alive"),
+            ("alpha/receive/tcp/json", Health::Fine, "3/3 rounds passed"),
             (
-                "S1/send/tcp/json",
+                "alpha/receive/tcp/json/identification",
+                Health::Fine,
+                "held",
+            ),
+            ("alpha/receive/file/text", Health::Fine, "3/3 rounds passed"),
+            ("beta/system-process", Health::Fine, "alive"),
+            ("beta/process/tcp/json", Health::Fine, "3/3 rounds passed"),
+            ("gamma/system-process", Health::Fine, "alive"),
+            (
+                "gamma/send/tcp/json",
                 Health::Stressed,
                 "2/3 rounds passed, 1 failed",
             ),
-            ("S1/exclusive-claim/file", Health::Fine, "one holder"),
-            ("S1/daily-backlog/drain", Health::Fine, "drained"),
+            ("gamma/exclusive-claim/file", Health::Fine, "one holder"),
+            ("gamma/daily-backlog/drain", Health::Fine, "drained"),
         ] {
             snapshot.record_health(record(&format!("{ROOT}/node/{leaf}"), health, evidence));
         }
         snapshot.record_health(record(&format!("{ROOT}/node"), Health::Stressed, "3 nodes"));
         for (counted, value) in [(Counted::Streams, 6), (Counted::Messages, 2)] {
             snapshot.record_count(Count {
-                scope: format!("{ROOT}/node/S1/daily-backlog"),
+                scope: format!("{ROOT}/node/gamma/daily-backlog"),
                 counted,
                 value,
                 window_start_unix_nanos: 7,
@@ -238,12 +253,18 @@ mod tests {
         snapshot
     }
 
+    /// What the run configured: `alpha` receives, `beta` processes, `gamma` and `zeta`
+    /// send.
+    fn roster() -> Roster {
+        Roster::parse("alpha=receive,beta=process,gamma=send,zeta=send").expect("a roster")
+    }
+
     fn drawn() -> Topology {
         let hops = [
-            hop("R1", "receive", "P1", "process", 3),
-            hop("P1", "process", "S1", "send", 2),
+            hop("alpha", "receive", "beta", "process", 3),
+            hop("beta", "process", "gamma", "send", 2),
         ];
-        cluster_topology(&published(), ["R1", "P1", "S1", "S2"].into_iter(), &hops, 9)
+        cluster_topology(&published(), &roster(), true, &hops, 9)
     }
 
     fn find<'a>(topology: &'a Topology, id: &str) -> &'a TopologyNode {
@@ -266,17 +287,17 @@ mod tests {
             shape,
             [
                 ("cluster", "cluster", ""),
-                ("node/R1", "node", "cluster"),
-                ("node/R1/receive", "stage", "node/R1"),
-                ("node/R1/receive/file", "endpoint", "node/R1/receive"),
-                ("node/R1/receive/tcp", "endpoint", "node/R1/receive"),
-                ("node/P1", "node", "cluster"),
-                ("node/P1/process", "stage", "node/P1"),
-                ("node/S1", "node", "cluster"),
-                ("node/S1/send", "stage", "node/S1"),
-                ("node/S1/send/tcp", "endpoint", "node/S1/send"),
-                ("node/S2", "node", "cluster"),
-                ("node/S2/send", "stage", "node/S2"),
+                ("node/alpha", "node", "cluster"),
+                ("node/alpha/receive", "stage", "node/alpha"),
+                ("node/alpha/receive/file", "endpoint", "node/alpha/receive"),
+                ("node/alpha/receive/tcp", "endpoint", "node/alpha/receive"),
+                ("node/beta", "node", "cluster"),
+                ("node/beta/process", "stage", "node/beta"),
+                ("node/gamma", "node", "cluster"),
+                ("node/gamma/send", "stage", "node/gamma"),
+                ("node/gamma/send/tcp", "endpoint", "node/gamma/send"),
+                ("node/zeta", "node", "cluster"),
+                ("node/zeta/send", "stage", "node/zeta"),
                 ("shared", "location", "cluster"),
             ]
         );
@@ -292,18 +313,18 @@ mod tests {
         );
         assert!((cluster.activity - 0.75).abs() < f64::EPSILON);
         // ADR-0041: a parent is Fine or Holding, never its leaf's mood.
-        assert_eq!(find(&topology, "node/R1").state, Health::Fine);
-        assert_eq!(find(&topology, "node/S1").state, Health::Holding);
-        let endpoint = find(&topology, "node/S1/send/tcp");
+        assert_eq!(find(&topology, "node/alpha").state, Health::Fine);
+        assert_eq!(find(&topology, "node/gamma").state, Health::Holding);
+        let endpoint = find(&topology, "node/gamma/send/tcp");
         assert_eq!(
             (
                 endpoint.label.as_str(),
                 endpoint.scope.as_str(),
                 endpoint.state.word()
             ),
-            ("tcp", "xmip:///playground/node/S1/send/tcp", "holding")
+            ("tcp", "xmip:///playground/node/gamma/send/tcp", "holding")
         );
-        let idle = find(&topology, "node/S2/send");
+        let idle = find(&topology, "node/zeta/send");
         assert_eq!(
             (idle.origin.word(), idle.state.word()),
             ("configured", "working")
@@ -330,21 +351,28 @@ mod tests {
             links,
             [
                 (
-                    "node/R1/receive",
-                    "node/P1/process",
+                    "node/alpha/receive",
+                    "node/beta/process",
                     "send-receive",
                     "handoff",
                     3
                 ),
                 (
-                    "node/P1/process",
-                    "node/S1/send",
+                    "node/beta/process",
+                    "node/gamma/send",
                     "send-receive",
                     "handoff",
                     2
                 ),
-                ("node/S1", "shared", "publish-consume", "file", 0),
-                ("node/S1", "shared", "publish-consume", "file", 6),
+                (
+                    "node/beta/process",
+                    "node/zeta/send",
+                    "send-receive",
+                    "handoff",
+                    0
+                ),
+                ("node/gamma", "shared", "publish-consume", "file", 0),
+                ("node/gamma", "shared", "publish-consume", "file", 6),
             ]
         );
         assert_eq!(topology.links[0].state, Health::Fine);
@@ -354,9 +382,15 @@ mod tests {
             "the worst leaf involved"
         );
         assert_eq!(topology.links[1].origin, Origin::Both);
-        assert!((topology.links[3].progress - 0.75).abs() < f64::EPSILON);
+        assert!((topology.links[4].progress - 0.75).abs() < f64::EPSILON);
 
-        let bare = cluster_topology(&Snapshot::new(), ["node-01"].into_iter(), &[], 9);
+        let bare = cluster_topology(
+            &Snapshot::new(),
+            &Roster::of(&["node-01".into()]),
+            false,
+            &[],
+            9,
+        );
         let ids: Vec<&str> = bare.nodes.iter().map(|node| node.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -364,6 +398,63 @@ mod tests {
             "no store until a test runs over it"
         );
         assert!(bare.links.is_empty());
+    }
+
+    /// The owner, 2026-09-25: *even when testing, the topology does not show
+    /// configured traffic or its usage.* Every path the roster configures is
+    /// drawn, handed over or not, and says which; a hop no configuration
+    /// declares is observed; and the rate is the rise since the last round.
+    #[test]
+    fn a_configured_path_is_drawn_before_its_first_handoff_and_says_so() {
+        let topology = drawn();
+        let idle = topology
+            .links
+            .iter()
+            .find(|link| link.to == "node/zeta/send")
+            .expect("beta to zeta is configured and drawn");
+        assert_eq!((idle.origin, idle.volume), (Origin::Configured, 0));
+        assert!(
+            idle.evidence
+                .starts_with("configured beta to zeta; no handoff observed yet"),
+            "{}",
+            idle.evidence
+        );
+
+        let stray = [hop("gamma", "process", "alpha", "send", 1)];
+        let observed = cluster_topology(&published(), &roster(), true, &stray, 9);
+        let link = observed
+            .links
+            .iter()
+            .find(|link| link.from == "node/gamma/process")
+            .expect("a delivered hop is drawn");
+        assert_eq!(link.origin, Origin::Observed);
+
+        // Not relaying RoundTrip over stages: nothing is configured between
+        // the nodes, and only what was delivered is drawn.
+        let unrelayed = cluster_topology(&published(), &roster(), false, &[], 9);
+        assert!(
+            unrelayed
+                .links
+                .iter()
+                .all(|link| link.protocol != "handoff")
+        );
+
+        let earlier = cluster_topology(
+            &published(),
+            &roster(),
+            true,
+            &[hop("alpha", "receive", "beta", "process", 1)],
+            1_000_000_009,
+        );
+        let mut later = cluster_topology(
+            &published(),
+            &roster(),
+            true,
+            &[hop("alpha", "receive", "beta", "process", 5)],
+            3_000_000_009,
+        );
+        later.rate_since(&earlier);
+        assert!((later.links[0].rate - 2.0).abs() < f64::EPSILON);
     }
 
     #[test]

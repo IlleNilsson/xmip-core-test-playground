@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 use std::process::{Child, ExitStatus};
+use std::time::{Duration, Instant};
 
 use observe::{Health, HealthRecord, Snapshot};
 
@@ -24,7 +25,21 @@ pub(super) struct Member {
     pub(super) fresh: bool,
     pub(super) silent: u32,
     pub(super) restarts: u32,
+    /// When the running process was started, and whether it has published
+    /// anything since: silence counts only once it has spoken, or once it
+    /// has had [`STARTING`] to do so.
+    since: Instant,
+    spoke: bool,
 }
+
+/// How long a node that has published nothing yet may take over its first
+/// round before its silence is a hang. A brutal roll's first round runs every
+/// scenario at once on every node; on 2026-09-25 seventeen nodes on sixteen
+/// cores took longer than three rounds over it, each was killed as hung and
+/// restarted into the same wait, and the cluster churned through hundreds of
+/// processes that Get-XmipTestStatus could not follow and Stop-XmipTest left
+/// behind.
+pub(super) const STARTING: Duration = Duration::from_secs(120);
 
 impl Member {
     /// A node just started as `child`, publishing to `path`.
@@ -40,11 +55,29 @@ impl Member {
             fresh: false,
             silent: 0,
             restarts: 0,
+            since: Instant::now(),
+            spoke: false,
         }
     }
 
     pub(super) fn alive(&self) -> bool {
         self.child.is_some()
+    }
+
+    /// The node runs again as `child`, restarted: it has not spoken yet.
+    pub(super) fn restarted(&mut self, child: Child) {
+        self.child = Some(child);
+        self.exit = None;
+        self.since = Instant::now();
+        self.spoke = false;
+    }
+
+    /// Alive and silent past [`SILENT_ROUNDS`] after it has spoken, or past
+    /// [`STARTING`] without ever having spoken.
+    pub(super) fn hung(&self) -> bool {
+        self.alive()
+            && self.silent > SILENT_ROUNDS
+            && (self.spoke || self.since.elapsed() > STARTING)
     }
 
     /// Read the node's file; a changed one is parsed and marks the node fresh.
@@ -60,6 +93,7 @@ impl Member {
             self.hops = hops;
             self.text = text;
             self.fresh = true;
+            self.spoke = true;
         }
     }
 

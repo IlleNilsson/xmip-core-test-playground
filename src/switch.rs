@@ -91,14 +91,14 @@ mod tests {
 
     #[test]
     fn a_list_names_the_online_nodes_and_no_list_defers_to_all() {
-        let online = names(" R1, p1 ,, ");
-        assert_eq!(online, ["R1", "p1"]);
-        assert!(node_online("R1", Some(&online), false));
-        assert!(node_online("p1", Some(&online), false));
-        assert!(!node_online("S1", Some(&online), true));
-        assert!(!node_online("R1", Some(&[]), true));
-        assert!(node_online("S1", None, true));
-        assert!(!node_online("S1", None, false));
+        let online = names(" alpha, Beta ,, ");
+        assert_eq!(online, ["alpha", "Beta"]);
+        assert!(node_online("alpha", Some(&online), false));
+        assert!(node_online("Beta", Some(&online), false));
+        assert!(!node_online("gamma", Some(&online), true));
+        assert!(!node_online("alpha", Some(&[]), true));
+        assert!(node_online("gamma", None, true));
+        assert!(!node_online("gamma", None, false));
     }
 
     #[test]

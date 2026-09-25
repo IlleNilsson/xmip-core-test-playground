@@ -8,8 +8,8 @@
 //!         [--online <a,b>] [--scenarios <a,b>] [--interval-ms <ms>]
 //! ```
 //!
-//! `--nodes` carries what each node is **declared** with — `R1=receive`,
-//! `P1=process+send`, or a bare name for a node that declares no stage of the
+//! `--nodes` carries what each node is **declared** with — `alpha=receive`,
+//! `beta=process+send`, or a bare name for a node that declares no stage of the
 //! message path — and the cluster passes each node's own to it as `--can`
 //! (ADR-0056). A capability word is lowercase exactly, and any other word is
 //! REFUSED (`node::Stage::declared`). It infers nothing: a name is not a
@@ -233,7 +233,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
         name: name.ok_or("REFUSED: --name is required; a cluster is named, never invented")?,
         shared: shared.ok_or("REFUSED: --shared is required; it is the store the nodes share")?,
         nodes: nodes.ok_or(
-            "REFUSED: --nodes is required; --nodes R1=receive,P1=process,S1=send \
+            "REFUSED: --nodes is required; --nodes alpha=receive,beta=process,gamma=send \
              names them and what each declares",
         )?,
         online,
@@ -294,7 +294,7 @@ mod tests {
             "--shared",
             "s",
             "--nodes",
-            "R1=receive,P1=process,S1=send",
+            "alpha=receive,beta=process,gamma=send",
             "--stress",
             "calm",
             "--rounds",
@@ -309,15 +309,15 @@ mod tests {
     fn the_required_flags_are_read_and_the_optional_ones_have_the_nodes_defaults() {
         let bare = arguments(&[]).expect("the required flags suffice");
         assert_eq!(bare.name, "Zt");
-        assert_eq!(bare.nodes.names(), ["R1", "P1", "S1"]);
-        assert_eq!(bare.nodes.capability("P1").words(), "process");
+        assert_eq!(bare.nodes.names(), ["alpha", "beta", "gamma"]);
+        assert_eq!(bare.nodes.capability("beta").words(), "process");
         assert_eq!(bare.stress, Stress::Calm);
         assert_eq!(bare.interval, Duration::from_millis(250));
         assert!(bare.online.is_none() && bare.scenarios.is_empty());
 
         let told = arguments(&[
             "--online",
-            "R1, S1",
+            "alpha, gamma",
             "--scenarios",
             "Round-Trip",
             "--interval-ms",
@@ -326,7 +326,7 @@ mod tests {
         .expect("all three are well formed");
         assert_eq!(
             told.online.as_deref(),
-            Some(["R1".to_string(), "S1".into()].as_slice())
+            Some(["alpha".to_string(), "gamma".into()].as_slice())
         );
         assert_eq!(told.scenarios, ["round-trip"]);
         assert_eq!(told.interval, Duration::from_millis(500));
@@ -341,7 +341,11 @@ mod tests {
             (["--name", "9lives"], "9lives", "starting with a letter"),
             (["--rounds", "many"], "many", "whole number"),
             (["--scenarios", "pingpong"], "pingpong", "exclusive-claim"),
-            (["--nodes", "R1=relay"], "relay", "receive, process, send"),
+            (
+                ["--nodes", "alpha=relay"],
+                "relay",
+                "receive, process, send",
+            ),
             (["--wobble", "yes"], "--wobble", "the flags are"),
         ] {
             let refusal = arguments(&extra)
@@ -360,7 +364,7 @@ mod tests {
             "--rounds",
             "--snapshot",
         ] {
-            let given: Vec<String> = ["--name", "Zt", "--shared", "s", "--nodes", "R1=receive"]
+            let given: Vec<String> = ["--name", "Zt", "--shared", "s", "--nodes", "alpha=receive"]
                 .into_iter()
                 .chain(["--stress", "calm", "--rounds", "0", "--snapshot", "z.toml"])
                 .map(ToString::to_string)

@@ -56,7 +56,7 @@
 //!
 //! **A node declares what it can do** (ADR-0056).
 //! `XMIP_PLAYGROUND_NODE_CAPABILITIES` says which stages of the message path
-//! each node serves — `R1=receive,P1=process+send` — and every node runs its
+//! each node serves — `alpha=receive,beta=process+send` — and every node runs its
 //! part of the scenarios named. Where a node declares a stage, `RoundTrip` is
 //! the nodes' — each pair handed receive to process to send between the
 //! processes — and the roll does not also run it in-process; a stage no node
@@ -152,6 +152,7 @@ fn main() {
     }
 
     let mut round: u64 = 0;
+    let mut drawn_before = None;
     loop {
         round += 1;
 
@@ -162,11 +163,18 @@ fn main() {
 
         let mut snapshot = in_process.tick(budget.simulated_elapsed());
         // The cluster's own file, and from it what the topology draws.
+        // Each link's rate is its rise since the round before (ADR-0052,
+        // amendment 2026-09-25).
         let topology = spawned.as_mut().map(|spawned| {
             merge(&mut snapshot, spawned.tick());
-            let named = roster.names().into_iter();
-            cluster_topology(&snapshot, named, spawned.hops(), now_unix_nanos())
+            let hops = spawned.hops();
+            let mut drawn = cluster_topology(&snapshot, &roster, relayed, hops, now_unix_nanos());
+            if let Some(before) = &drawn_before {
+                drawn.rate_since(before);
+            }
+            drawn
         });
+        drawn_before.clone_from(&topology);
 
         // Every scope's series, and the rollup at the root that the history
         // file is written from: a scenario counts beneath the node, so a roll
@@ -337,7 +345,7 @@ mod tests {
 
     #[test]
     fn round_trip_is_the_nodes_when_any_declares_a_stage_and_it_was_chosen() {
-        let path = roster("R1=receive,P1=process,S1=send");
+        let path = roster("alpha=receive,beta=process,gamma=send");
         assert_eq!(relayed(&[], &path), Ok(true));
         assert_eq!(relayed(&names(&["round-trip"]), &path), Ok(true));
         assert_eq!(relayed(&names(&["heavy-load"]), &path), Ok(false));
@@ -345,10 +353,10 @@ mod tests {
         assert_eq!(relayed(&[], &Roster::default()), Ok(false));
         // A capability missing is no refusal when RoundTrip was not chosen.
         assert_eq!(
-            relayed(&names(&["filing"]), &roster("R1=receive")),
+            relayed(&names(&["filing"]), &roster("alpha=receive")),
             Ok(false)
         );
-        let refused = relayed(&[], &roster("R1=receive")).expect_err("no node processes");
+        let refused = relayed(&[], &roster("alpha=receive")).expect_err("no node processes");
         assert!(refused.starts_with("REFUSED"), "{refused}");
     }
 

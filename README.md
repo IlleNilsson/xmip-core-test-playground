@@ -187,7 +187,10 @@ cluster shares and publishes its own snapshot under
 `xmip:///<cluster>/node/<name>`; the cluster spawns one per name, or the level's
 count of them, merges their snapshots each round, adds the rollup the surface
 owes at `xmip:///<cluster>/node` (ADR-0027 decision 8), and kills and restarts a
-node whose snapshot stops moving — a recorded yellow, never silent. Exclusive
+node whose snapshot stops moving — a recorded yellow, never silent. A node that
+has not published once is starting, not hung, for its first two minutes: a
+brutal roll's first round outlasts three, and killing a node for that once
+restarted every node into the same wait (2026-09-25). Exclusive
 pickup and backlog draining are thereby contended by real processes, which is
 the property ADR-0024's claim exists to prove and a thread could only imitate.
 `XMIP_PLAYGROUND_NODES` or a harsh or brutal level puts the nodes on the board
@@ -204,9 +207,9 @@ purpose Test where it starts (ADR-0053):
 ```text
 xmip-playground-roll             the test: chooses scenarios, sets stress, judges, draws
 └─ xmip-playground-cluster C1    the cluster: owns the shared store, spawns and watches
-   ├─ xmip-playground-node R1    the nodes, one process each
-   ├─ xmip-playground-node P1
-   └─ xmip-playground-node S1
+   ├─ xmip-playground-node alpha  the nodes, one process each
+   ├─ xmip-playground-node beta
+   └─ xmip-playground-node gamma
 ```
 
 The **roll** keeps what a test driver owns: the scenarios that stay in its own
@@ -239,13 +242,13 @@ now its grandparent.
 amendment 2026-09-20). The owner, reading eleven identical rows: *these
 process names does not tell an operator or developer much. … Cluster, Node
 and test suite shall be incorporated in the process name.* So a roll on
-cluster `C1` over nodes `R1`, `P1` and `S1` is
+cluster `C1` over nodes `alpha`, `beta` and `gamma` is
 
 ```text
 xmip-playground-C1-cluster
-xmip-playground-C1-node-P1
-xmip-playground-C1-node-R1
-xmip-playground-C1-node-S1
+xmip-playground-C1-node-alpha
+xmip-playground-C1-node-beta
+xmip-playground-C1-node-gamma
 xmip-playground-C1-roll
 ```
 
@@ -302,7 +305,7 @@ The words are not the Playground's. `node::Stage` (`xmip-core-node`) is the
 message-path stage every verdict, hop and scope here uses, and
 `Stage::declared` is the one parse of a declaration: `--can`, `--nodes` and a
 published capability record all read through it. The declaration itself —
-the evidence a node publishes and the `R1=receive` entry a run lists — is
+the evidence a node publishes and the `alpha=receive` entry a run lists — is
 `node::Capability`; `capability.rs` keeps only the `--can`/`--online` flags
 the cluster starts a node process with. A word is lowercase exactly
 (the owner, 2026-09-24: `RECEIVE` or `Send` is an unknown word), and an
@@ -317,11 +320,11 @@ ADR-0022 that placement must satisfy node capability. `Start-XmipTest` kept
 one shorthand at the operator's door for a day longer, and on 2026-09-20 the
 owner struck that too: *Rn, Pn and Sn are arbitrary node names* (ADR-0056,
 amendment). **Nowhere in Xmip is a node's name read.** A named node carries
-what `-NodeCapability @{ R1 = 'receive' }` states for it and nothing else; a
+what `-NodeCapability @{ alpha = 'receive' }` states for it and nothing else; a
 node given none declares none, and `Start-XmipTest` says so in words before it
 spawns anything. Omit `-Nodes` and the level's complement deals the whole
 path by position, which reads no name either. What leaves PowerShell is
-`XMIP_PLAYGROUND_NODE_CAPABILITIES=R1=receive,…` — a declaration, not a name.
+`XMIP_PLAYGROUND_NODE_CAPABILITIES=alpha=receive,…` — a declaration, not a name.
 
 **Nodes run the test that was named.** The roll passes the scenarios it was
 given to every node (`--scenarios`, with every node's name in `--nodes`), and a
@@ -377,15 +380,20 @@ receive or a send stage one endpoint per transport it reported on (`endpoint`).
 A node's stages are the ones it **declared**, read from the capability record
 it publishes, and any it has reported on — never its name. The links are the
 handoffs, receive stage to process stage to send stage, for every pair of
-stages that exchanged any — pattern `send-receive`, protocol `handoff`, volume
-the hops, mood the worst leaf at either end — and the shared store with its
+stages the roster configures when the run hands RoundTrip along declared
+stages, and every pair that exchanged any — pattern `send-receive`, protocol
+`handoff`, origin `configured` for a path nothing has crossed yet (volume
+zero, and its evidence says so), `both` once it has carried a hop and
+`observed` for a hop no configuration declares, volume the hops, rate their
+rise per second since the roll's last publication (`Topology::rate_since`),
+mood the worst leaf at either end — and the shared store with its
 ExclusiveClaim and DailyBacklog links only when those tests ran on a node.
 
 **The run says what it was started with** (`run.rs` fills `observe::Run`): the snapshot carries a
 `[run]` table — `cluster`, `tests`, `nodes`, `capabilities`, `online`,
 `stress` — that a reader which does not know it skips, and the web GUI shows as
 one line on every view. `capabilities` is what each node was started with,
-`R1=receive` or `P1=process+send`, a node that declared nothing listed by name
+`alpha=receive` or `beta=process+send`, a node that declared nothing listed by name
 alone.
 
 

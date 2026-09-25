@@ -120,7 +120,7 @@ impl Orders {
         if self.roster.is_empty() {
             return Some(
                 "REFUSED: a cluster supervises nodes and none was named; \
-                 --nodes R1=receive,P1=process,S1=send names them."
+                 --nodes alpha=receive,beta=process,gamma=send names them."
                     .to_string(),
             );
         }
@@ -168,13 +168,17 @@ mod tests {
 
     #[test]
     fn the_online_nodes_are_the_ones_named_and_nobody_else() {
-        let orders = Orders::of(Stress::Calm, roster("R1=receive,P1=process,S1=send"), 0)
-            .with_online(Some(names(&["r1"])));
-        assert!(orders.is_online("R1"), "named, whatever the case");
-        assert!(!orders.is_online("P1"));
-        assert_eq!(orders.capability("R1").word(), "online");
-        assert_eq!(orders.capability("S1").word(), "offline");
-        assert!(orders.capability("S1").can(Stage::Send));
+        let orders = Orders::of(
+            Stress::Calm,
+            roster("alpha=receive,beta=process,gamma=send"),
+            0,
+        )
+        .with_online(Some(names(&["ALPHA"])));
+        assert!(orders.is_online("alpha"), "named, whatever the case");
+        assert!(!orders.is_online("beta"));
+        assert_eq!(orders.capability("alpha").word(), "online");
+        assert_eq!(orders.capability("gamma").word(), "offline");
+        assert!(orders.capability("gamma").can(Stage::Send));
         assert_eq!(orders.refusal(), None);
     }
 
@@ -202,23 +206,27 @@ mod tests {
             "{none}"
         );
 
-        let stranger = Orders::of(Stress::Calm, roster("R1=receive,P1=process,S1=send"), 0)
-            .with_online(Some(names(&["Q9"])))
-            .refusal()
-            .expect("Q9 is no node");
+        let stranger = Orders::of(
+            Stress::Calm,
+            roster("alpha=receive,beta=process,gamma=send"),
+            0,
+        )
+        .with_online(Some(names(&["Q9"])))
+        .refusal()
+        .expect("Q9 is no node");
         assert!(
-            stranger.contains("Q9") && stranger.contains("R1, P1, S1"),
+            stranger.contains("Q9") && stranger.contains("alpha, beta, gamma"),
             "{stranger}"
         );
 
-        let missing = Orders::of(Stress::Calm, roster("R1=receive,S1=send"), 0)
+        let missing = Orders::of(Stress::Calm, roster("alpha=receive,gamma=send"), 0)
             .refusal()
             .expect("nobody processes");
         assert!(missing.ends_with("no node declares process."), "{missing}");
 
         // Not RoundTrip: the roster is nobody's business.
         assert_eq!(
-            Orders::of(Stress::Calm, roster("R1=receive,S1=send"), 0)
+            Orders::of(Stress::Calm, roster("alpha=receive,gamma=send"), 0)
                 .driving(&names(&["filing"]))
                 .refusal(),
             None
@@ -231,7 +239,7 @@ mod tests {
     /// carries a node marker (the owner, 2026-09-20).
     #[test]
     fn a_node_whose_name_cannot_be_an_image_is_refused_before_anything_spawns() {
-        let wrong = Orders::of(Stress::Calm, roster("R1=receive,9lives=process"), 0)
+        let wrong = Orders::of(Stress::Calm, roster("alpha=receive,9lives=process"), 0)
             .refusal()
             .expect("no file is called 9lives here");
         assert!(
@@ -242,7 +250,7 @@ mod tests {
         assert_eq!(
             Orders::of(
                 Stress::Calm,
-                roster("roll=receive,cluster=process,S1=send"),
+                roster("roll=receive,cluster=process,gamma=send"),
                 0
             )
             .refusal(),
