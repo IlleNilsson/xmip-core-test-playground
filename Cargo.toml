@@ -45,7 +45,10 @@ path = "src/bin/node.rs"
 # send/receive is the round trip.
 # The declaration every System Process Xmip owns makes of itself (ADR-0053).
 node = { package = "xmip-core-node", git = "https://github.com/IlleNilsson/xmip-core-node", branch = "main" }
-observe = { package = "xmip-core-observe", git = "https://github.com/IlleNilsson/xmip-core-observe", branch = "main" }
+# What the roll, the cluster and every node started, stopped and failed at,
+# recorded through the one audit capability (ADR-0062).
+xaudit = { package = "xmip-core-audit", git = "https://github.com/IlleNilsson/xmip-core-audit", branch = "main" }
+observe ={ package = "xmip-core-observe", git = "https://github.com/IlleNilsson/xmip-core-observe", branch = "main" }
 transport = { package = "xmip-core-transport", git = "https://github.com/IlleNilsson/xmip-core-transport", branch = "main" }
 
 # One technology repository per protocol (ADR-0010), each mounted under the

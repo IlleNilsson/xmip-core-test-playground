@@ -38,18 +38,26 @@
 //! It rolls until `--rounds` are done — `0` means until stopped — or as soon
 //! as `<shared>/stop` appears, checked between rounds. However it ends, it
 //! stops its own nodes before it goes: nothing is orphaned.
+//!
+//! **It audits** (ADR-0062): `start` with its name, nodes, stress and
+//! snapshot once its orders are checked, `stop` when it has stopped its
+//! nodes, every refusal as the failure to `start`, a failed spawn or publish
+//! as a failure, and every panic as `unhandled` — into
+//! `XMIP_AUDIT_DIRECTORY`, else the operating system's log
+//! (`process_audit.rs`).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use xaudit::program_audit::ProgramAudit;
 use xmip_core_test_playground::cluster::{Cluster, Orders, node_binary};
-use xmip_core_test_playground::image;
 use xmip_core_test_playground::roster::Roster;
 use xmip_core_test_playground::scenario;
 use xmip_core_test_playground::stress::Stress;
 use xmip_core_test_playground::switch::names;
 use xmip_core_test_playground::{cluster_name, cluster_root, node_toml, write_atomic};
+use xmip_core_test_playground::{image, process_audit};
 
 /// What the command line said.
 struct Arguments {
@@ -79,47 +87,69 @@ const USAGE: &str = "usage: cluster --name <cluster> --shared <dir> \
      --snapshot <path> [--online <a,b>] [--scenarios <a,b>] [--interval-ms <ms>]";
 
 fn main() -> ExitCode {
+    // The name is the image's own, so the declaration and the audit say what
+    // Get-Process says (ADR-0053, amendment 2026-09-20).
+    let called = image::this_process("xmip-playground-cluster");
+    let audit = ProgramAudit::new(&called, None);
+    audit.watch_panics();
+
     let arguments = match parse(std::env::args().skip(1)) {
         Ok(arguments) => arguments,
-        Err(problem) => return refuse(&problem),
+        Err(problem) => return refuse(&audit, &problem),
     };
     let root = cluster_root();
     if cluster_name().as_deref() != Some(arguments.name.as_str()) {
-        return refuse(&format!(
-            "REFUSED: the scope root is XMIP_PLAYGROUND_CLUSTER and it says {}, not {}; \
-             a cluster is started by a roll, which sets it.",
-            cluster_name().unwrap_or_else(|| "nothing".to_string()),
-            arguments.name
-        ));
+        return refuse(
+            &audit,
+            &format!(
+                "REFUSED: the scope root is XMIP_PLAYGROUND_CLUSTER and it says {}, not {}; \
+                 a cluster is started by a roll, which sets it.",
+                cluster_name().unwrap_or_else(|| "nothing".to_string()),
+                arguments.name
+            ),
+        );
     }
 
     // What this process says of itself while it runs (ADR-0053): the cluster
-    // is the scope it is, and everything the Playground runs is test. The name
-    // is the image's own, so the declaration says what Get-Process says
-    // (amendment 2026-09-20).
-    let called = image::this_process("xmip-playground-cluster");
+    // is the scope it is, and everything the Playground runs is test.
     let _declared = ::node::Declaration::new(called, &root, ::node::Purpose::Test)
         .declare()
-        .map_err(|error| eprintln!("cluster {root}: could not declare itself: {error}"));
+        .map_err(|error| {
+            let problem = format!("cluster {root}: could not declare itself: {error}");
+            process_audit::fail(&audit, "declare", &problem);
+        });
 
     let orders = Orders::of(arguments.stress, arguments.nodes.clone(), 0)
         .driving(&arguments.scenarios)
         .with_online(arguments.online.clone())
         .in_cluster(&arguments.name);
     if let Some(refusal) = orders.refusal() {
-        return refuse(&refusal);
+        return refuse(&audit, &refusal);
     }
 
     let binary = match node_binary() {
         Ok(binary) => binary,
-        Err(error) => return refuse(&format!("REFUSED: {error}")),
+        Err(error) => return refuse(&audit, &format!("REFUSED: {error}")),
     };
+    process_audit::start(
+        &audit,
+        &[
+            ("cluster", &root),
+            ("nodes", &arguments.nodes.text()),
+            ("stress", arguments.stress.name()),
+            ("scenarios", &arguments.scenarios.join(",")),
+            ("rounds", &arguments.rounds.to_string()),
+            ("shared", &arguments.shared.display().to_string()),
+            ("snapshot", &arguments.snapshot.display().to_string()),
+        ],
+    );
     let snapshots = arguments.shared.join("snapshots");
     let spawning = Cluster::spawn(&binary, &orders, &arguments.shared, &snapshots);
     let mut cluster = match spawning {
         Ok(cluster) => cluster,
         Err(error) => {
-            eprintln!("cluster {root}: no nodes: {error}");
+            let problem = format!("cluster {root}: no nodes: {error}");
+            process_audit::fail(&audit, "spawn-nodes", &problem);
             return ExitCode::FAILURE;
         }
     };
@@ -135,10 +165,11 @@ fn main() -> ExitCode {
         let snapshot = cluster.tick();
         let text = node_toml(&root, &snapshot, cluster.hops());
         if let Err(error) = write_atomic(&arguments.snapshot, &text) {
-            eprintln!(
+            let problem = format!(
                 "cluster {root}: could not publish to {}: {error}",
                 arguments.snapshot.display()
             );
+            process_audit::fail(&audit, "publish", &problem);
         }
 
         if !arguments.interval.is_zero() && (arguments.rounds == 0 || round < arguments.rounds) {
@@ -148,12 +179,17 @@ fn main() -> ExitCode {
 
     // However this ends, its nodes end with it: no orphans.
     cluster.stop();
+    process_audit::stop(
+        &audit,
+        &[("cluster", &root), ("rounds", &round.to_string())],
+    );
     ExitCode::SUCCESS
 }
 
-/// Say what was wrong and what would be right, and start nothing (ADR-0055).
-fn refuse(problem: &str) -> ExitCode {
-    eprintln!("cluster: {problem}");
+/// Say what was wrong and what would be right, audit it as the failure to
+/// `start`, and start nothing (ADR-0055).
+fn refuse(audit: &ProgramAudit, problem: &str) -> ExitCode {
+    process_audit::fail(audit, "start", &format!("cluster: {problem}"));
     eprintln!("{USAGE}");
     ExitCode::from(2)
 }

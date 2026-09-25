@@ -268,6 +268,21 @@ reads as `xmip-playground-C1-node-roll`, which is no roll of anything. The
 marker is what keeps the kinds apart, so no name is refused to make the shape
 convenient; only a name no file can carry is REFUSED before anything spawns.
 
+### Every process audits, 2026-09-25
+
+The roll, the cluster and every node record through `xmip-core-audit`
+(ADR-0062), each under its own process name: `start` with what it was
+started as (cluster, stress, tests, nodes and their capabilities, rounds,
+the paths it publishes to), `stop` when it ends as it meant to, a refusal
+at the door as the failure to `start`, a failed `declare`, `publish`,
+`spawn-cluster` or `spawn-nodes` as a failure, and every panic as
+`unhandled`. The records go to `audit.toml` in `XMIP_AUDIT_DIRECTORY`, or
+to the operating system's log where none is set; `src/process_audit.rs` is
+the one place the three say it, and the audit capability writes every
+record. Under `cargo test` the variable is `target/audit`
+(`.cargo/config.toml`), so no test writes to `.local-work/audit` or the
+operating system's log.
+
 ### A cluster and its nodes: a node declares what it can do, 2026-09-19
 
 The owner: *Fleet is what I see in topology when running test, I would like to

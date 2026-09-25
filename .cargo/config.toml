@@ -5,3 +5,10 @@
 # broken one (2026-09-10).
 [env]
 RUST_TEST_THREADS = "4"
+
+# What a test's roll, cluster and node processes audit (ADR-0062) goes to
+# target/audit, never to .local-work/audit or the operating system's log;
+# forced, because a session the estate's tooling opened already names
+# .local-work/audit. The images Start-XmipTest runs are started by it, not
+# by cargo, and audit where the tooling says.
+XMIP_AUDIT_DIRECTORY = { value = "target/audit", relative = true, force = true }

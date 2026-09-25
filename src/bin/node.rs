@@ -48,6 +48,12 @@
 //! Each round it publishes what it declared at `<node>/capability`, beside the
 //! `switch` record, so a surface reads a node's capabilities from the snapshot
 //! rather than from its name.
+//!
+//! **It audits** (ADR-0062): `start` with its scope, capability, stress and
+//! scenarios, `stop` when its rounds are done or it was told to stop, a
+//! refused argument as the failure to `start`, a failed publish as a
+//! failure, and every panic as `unhandled` — into `XMIP_AUDIT_DIRECTORY`,
+//! else the operating system's log (`process_audit.rs`).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -55,14 +61,15 @@ use std::time::Duration;
 
 use node::Capability;
 use observe::Snapshot;
+use xaudit::program_audit::ProgramAudit;
 use xmip_core_test_playground::cluster::merge;
-use xmip_core_test_playground::image;
 use xmip_core_test_playground::scenario::{
     self, DAILY_BACKLOG, EXCLUSIVE_CLAIM, ROUND_TRIP, drives,
 };
 use xmip_core_test_playground::{
     DailyBacklog, ExclusiveClaim, Relay, Roster, Stress, cluster_root, node_toml, write_atomic,
 };
+use xmip_core_test_playground::{image, process_audit};
 
 /// What the command line said.
 struct Arguments {
@@ -90,10 +97,17 @@ const USAGE: &str = "usage: node --name <name> --shared <dir> --stress <level> -
      [--scenarios <scenarios>]";
 
 fn main() -> ExitCode {
+    // The name is the image's own — xmip-playground-<cluster>-node-<node>
+    // where a cluster named it — so the declaration, the audit and the
+    // process list agree (ADR-0053, amendment 2026-09-20).
+    let called = image::this_process("xmip-playground-node");
+    let audit = ProgramAudit::new(&called, None);
+    audit.watch_panics();
+
     let arguments = match parse(std::env::args().skip(1)) {
         Ok(arguments) => arguments,
         Err(problem) => {
-            eprintln!("node: {problem}");
+            process_audit::fail(&audit, "start", &format!("node: {problem}"));
             eprintln!("{USAGE}");
             return ExitCode::from(2);
         }
@@ -101,44 +115,18 @@ fn main() -> ExitCode {
 
     let node = format!("{}/node/{}", cluster_root(), arguments.name);
 
-    // What this process says of itself while it runs (ADR-0053). The name is
-    // the image's own — xmip-playground-<cluster>-node-<node> where a cluster
-    // named it — so the declaration and the process list agree (amendment
-    // 2026-09-20).
-    let called = image::this_process("xmip-playground-node");
+    // What this process says of itself while it runs (ADR-0053).
     let _declared = ::node::Declaration::new(called, &node, ::node::Purpose::Test)
         .declare()
-        .map_err(|error| eprintln!("node {}: could not declare itself: {error}", arguments.name));
+        .map_err(|error| {
+            let problem = format!("node {}: could not declare itself: {error}", arguments.name);
+            process_audit::fail(&audit, "declare", &problem);
+        });
+    say_started(&audit, &node, &arguments);
 
     let shared = &arguments.shared;
     let chosen = &arguments.scenarios;
-    // This node's own `--can` is the last word on itself; the roster says what
-    // the others declared, so it knows who can take the next stage.
-    let roster = arguments
-        .roster
-        .clone()
-        .declared(&arguments.name, arguments.capability.clone());
-    let mut relays: Vec<Relay> = if drives(chosen, ROUND_TRIP) {
-        let work = shared.join("work").join(&arguments.name);
-        arguments
-            .capability
-            .features()
-            .iter()
-            .filter_map(|stage| {
-                Relay::new(
-                    &arguments.name,
-                    node.clone(),
-                    *stage,
-                    &roster,
-                    shared,
-                    &work,
-                )
-                .map(|relay| relay.at(arguments.stress))
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let mut relays = relays(&arguments, &node);
     let mut exclusive_claim = drives(chosen, EXCLUSIVE_CLAIM).then(|| {
         let scope = format!("{node}/{EXCLUSIVE_CLAIM}");
         ExclusiveClaim::shared(scope, shared.join(EXCLUSIVE_CLAIM)).at(arguments.stress)
@@ -187,11 +175,12 @@ fn main() -> ExitCode {
             .collect();
         let text = node_toml(&node, &snapshot, hops);
         if let Err(error) = write_atomic(&arguments.snapshot, &text) {
-            eprintln!(
+            let problem = format!(
                 "node {}: could not publish to {}: {error}",
                 arguments.name,
                 arguments.snapshot.display()
             );
+            process_audit::fail(&audit, "publish", &problem);
         }
 
         if !arguments.interval.is_zero() && (arguments.rounds == 0 || round < arguments.rounds) {
@@ -199,7 +188,56 @@ fn main() -> ExitCode {
         }
     }
 
+    process_audit::stop(&audit, &[("node", &node), ("rounds", &round.to_string())]);
     ExitCode::SUCCESS
+}
+
+/// The node's `start` record: its scope and everything it was told.
+fn say_started(audit: &ProgramAudit, node: &str, arguments: &Arguments) {
+    process_audit::start(
+        audit,
+        &[
+            ("node", node),
+            ("capability", &arguments.capability.words()),
+            ("online", arguments.capability.word()),
+            ("stress", arguments.stress.name()),
+            ("scenarios", &arguments.scenarios.join(",")),
+            ("rounds", &arguments.rounds.to_string()),
+            ("shared", &arguments.shared.display().to_string()),
+            ("snapshot", &arguments.snapshot.display().to_string()),
+        ],
+    );
+}
+
+/// One relay per stage this node declared, when `RoundTrip` was chosen. This
+/// node's own `--can` is the last word on itself; the roster says what the
+/// others declared, so it knows who can take the next stage.
+fn relays(arguments: &Arguments, node: &str) -> Vec<Relay> {
+    if !drives(&arguments.scenarios, ROUND_TRIP) {
+        return Vec::new();
+    }
+    let roster = arguments
+        .roster
+        .clone()
+        .declared(&arguments.name, arguments.capability.clone());
+    let shared = &arguments.shared;
+    let work = shared.join("work").join(&arguments.name);
+    arguments
+        .capability
+        .features()
+        .iter()
+        .filter_map(|stage| {
+            Relay::new(
+                &arguments.name,
+                node.to_string(),
+                *stage,
+                &roster,
+                shared,
+                &work,
+            )
+            .map(|relay| relay.at(arguments.stress))
+        })
+        .collect()
 }
 
 /// `--flag value` pairs, every required one present and well-formed.

@@ -63,94 +63,86 @@
 //! declares is REFUSED at the start, naming the capability. A node that
 //! declares nothing runs the shared-directory tests whole, as before. A
 //! node's name decides none of this.
+//!
+//! **It audits** (ADR-0062): `start` once the roll knows what it is, `stop`
+//! when its rounds are done, every refusal and failed write as a failure, and
+//! every panic as `unhandled` — into `XMIP_AUDIT_DIRECTORY`, else the
+//! operating system's log (`process_audit.rs`).
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use observe::{Activity, History, Run, Snapshot, Topology};
+use observe::{History, Run};
+use xaudit::program_audit::ProgramAudit;
 use xmip_core_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
-use xmip_core_test_playground::environment::{
-    self, load_bytes, max_seconds, publish_paths, time_factor,
-};
-use xmip_core_test_playground::image;
+use xmip_core_test_playground::environment::{self, max_seconds, time_factor};
+use xmip_core_test_playground::in_process::InProcess;
+use xmip_core_test_playground::publication::Publication;
 use xmip_core_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_core_test_playground::{
-    Budget, DailyBacklog, ExclusiveClaim, FaultPlan, Filing, Headroom, HeavyLoad, LowLatency,
-    Retention, Roster, Schedule, Stress, activity_toml, cluster_name, cluster_root,
-    cluster_topology, complement, history_toml, now_unix_nanos, record_round, redraw, roll_toml,
-    started, summarise, write_atomic,
+    Budget, Headroom, Roster, Stress, cluster_name, cluster_root, cluster_topology, complement,
+    now_unix_nanos, record_round, redraw, started, summarise,
 };
+use xmip_core_test_playground::{image, process_audit};
 
 fn main() {
+    // The name is the image's own — xmip-playground-<cluster>-roll where
+    // Start-XmipTest linked one — so the declaration and the audit say what
+    // Get-Process says (ADR-0053, amendment 2026-09-20).
+    let called = image::this_process("xmip-playground-roll");
+    let audit = ProgramAudit::new(&called, None);
+    audit.watch_panics();
+
     // Asked what a level brings, this process answers and starts nothing:
     // `Start-XmipTest` asks before it spawns, so an omitted `-Nodes` is
     // resolved once, at the operator's door, by the rig that owns the numbers.
     if std::env::args().nth(1).as_deref() == Some("--roster") {
-        say_the_complement(std::env::args().nth(2).as_deref());
+        println!(
+            "{}",
+            or_refuse(&audit, the_complement(std::env::args().nth(2).as_deref()))
+        );
         return;
     }
 
-    let (cluster, root, base) = this_cluster();
+    let (cluster, root, base) = or_refuse(&audit, this_cluster());
     let root = root.as_str();
 
     // What this process says of itself while it runs (ADR-0053): the roll is
     // the test over the cluster it starts, and everything the Playground runs
     // is test.
-    // The name is the image's own — xmip-playground-<cluster>-roll where
-    // Start-XmipTest linked one — so the declaration says what Get-Process
-    // says (amendment 2026-09-20).
-    let called = image::this_process("xmip-playground-roll");
     let _declared = ::node::Declaration::new(called, root, ::node::Purpose::Test)
         .declare()
-        .map_err(|error| eprintln!("roll: could not declare itself: {error}"));
+        .map_err(|error| {
+            let problem = format!("roll: could not declare itself: {error}");
+            process_audit::fail(&audit, "declare", &problem);
+        });
     let stress = Stress::from_env();
-    let chosen = or_refuse(environment::scenarios());
-    let roster = or_refuse(environment::roster(stress));
-    let relayed = relayed_or_refuse(&chosen, &roster);
+    let chosen = or_refuse(&audit, environment::scenarios());
+    let roster = or_refuse(&audit, environment::roster(stress));
+    let relayed = or_refuse(&audit, relayed(&chosen, &roster));
     let run = started(&cluster, &chosen, &roster, stress);
 
     announce(&cluster, stress, &roster);
 
-    // Each scenario under its own subtree, each with faults or pressure on, so
-    // the board is realistic rather than uniformly green. `file` stays clean in
-    // every one.
-    // Bounded rounds: a slice of the matrix per round, rotating, so a round
-    // lands in seconds and the counters an operator watches keep moving.
-    let slice = stress.workers() * 16;
-    let mut round_trip = Schedule::new(format!("{root}/round-trip"), base.join("round-trip"))
-        .with_faults(FaultPlan::realistic())
-        .pairs_per_round(slice);
-    let mut low_latency = LowLatency::new(format!("{root}/low-latency"), base.join("low-latency"))
-        .under_pressure()
-        .pairs_per_round(slice);
-    let mut heavy_load = HeavyLoad::new(format!("{root}/heavy-load"), base.join("heavy-load"))
-        .under_pressure()
-        .with_bytes(load_bytes())
-        .pairs_per_round(stress.workers() * 8);
-    let mut retention = Retention::new(format!("{root}/retention")).under_pressure();
-    let mut filing = Filing::new(format!("{root}/filing"), base.join("filing")).under_pressure();
-    let mut exclusive_claim = ExclusiveClaim::new(
-        format!("{root}/exclusive-claim"),
-        base.join("exclusive-claim"),
-    )
-    .under_pressure();
-    let mut daily_backlog =
-        DailyBacklog::new(format!("{root}/daily-backlog"), base.join("daily-backlog"));
+    // Every scenario this process runs itself (`in_process.rs`).
+    let mut in_process = InProcess::new(root, &base, stress, chosen.clone(), relayed);
 
     // An hour of history at one point a second: enough to watch a shift, bounded
     // so a week-long run does not grow. ADR-0029.
     let mut history = History::with_capacity(3600);
 
-    let publication = Publication::of(&cluster, run);
+    let limit: Option<u64> = std::env::args().nth(1).and_then(|arg| arg.parse().ok());
+    let publication = Publication::of(&cluster, run.clone(), audit.clone());
+    say_started(&audit, &run, limit, &publication.snapshot);
 
     // One cluster per roll (ADR-0028), and since 2026-09-19 a process of its
     // own: it spawns and supervises the nodes and publishes beside this
     // roll's snapshot, which merges that one file each round.
     let cluster_path = publication.beside(&format!("{cluster}-cluster.toml"));
-    let mut spawned = spawn_cluster(&cluster, stress, &roster, &chosen, &base, &cluster_path);
+    let orders = Orders::of(stress, roster.clone(), 0).driving(&chosen);
+    let mut spawned = spawn_cluster(&audit, &cluster, &orders, &base, &cluster_path);
 
-    let limit: Option<u64> = std::env::args().nth(1).and_then(|arg| arg.parse().ok());
     let live = std::io::stdout().is_terminal();
     let real = Duration::from_millis(1000);
     let budget = Budget::new(max_seconds(), time_factor());
@@ -168,30 +160,7 @@ fn main() {
         // level's own count of nodes was sized the same way.
         let headroom = Headroom::refresh();
 
-        let mut snapshot = Snapshot::new();
-        // Where nodes declare stages the message path is theirs, between
-        // processes.
-        if drives(&chosen, ROUND_TRIP) && !relayed {
-            merge(&mut snapshot, &round_trip.tick());
-        }
-        if drives(&chosen, "low-latency") {
-            merge(&mut snapshot, &low_latency.tick());
-        }
-        if drives(&chosen, "heavy-load") {
-            merge(&mut snapshot, &heavy_load.tick());
-        }
-        if drives(&chosen, "retention") {
-            merge(&mut snapshot, &retention.tick(budget.simulated_elapsed()));
-        }
-        if drives(&chosen, "filing") {
-            merge(&mut snapshot, &filing.tick());
-        }
-        if drives(&chosen, "exclusive-claim") {
-            merge(&mut snapshot, &exclusive_claim.tick());
-        }
-        if drives(&chosen, "daily-backlog") {
-            merge(&mut snapshot, &daily_backlog.tick());
-        }
+        let mut snapshot = in_process.tick(budget.simulated_elapsed());
         // The cluster's own file, and from it what the topology draws.
         let topology = spawned.as_mut().map(|spawned| {
             merge(&mut snapshot, spawned.tick());
@@ -204,7 +173,7 @@ fn main() {
         // that recorded only the snapshot published `points = []` for as long
         // as the Playground has had a history (curve.rs, 2026-09-19).
         record_round(&mut history, root, &snapshot);
-        publication.round(root, &snapshot, topology, &history, round_trip.activity());
+        publication.round(root, &snapshot, topology, &history, in_process.activity());
 
         if live {
             redraw(root, round, &snapshot);
@@ -231,59 +200,36 @@ fn main() {
     // process still holds its own, so Stop-XmipTest takes the rest, and the
     // next roll on this cluster clears the directory before it starts.
     image::clear();
+    let rounds = round.to_string();
+    process_audit::stop(&audit, &[("cluster", &cluster), ("rounds", &rounds)]);
 }
 
-/// The three files a round publishes, and the run header every snapshot
-/// carries. The paths are the cmdlet's or the roll's own defaults, decided
-/// once (`environment.rs`); the header says what the run was started with.
-struct Publication {
-    snapshot: PathBuf,
-    history: PathBuf,
-    activity: PathBuf,
-    run: Run,
-}
-
-impl Publication {
-    /// Where this cluster publishes, with the run it publishes under.
-    fn of(cluster: &str, run: Run) -> Self {
-        let (snapshot, history, activity) = publish_paths(cluster);
-        Self {
-            snapshot,
-            history,
-            activity,
-            run,
-        }
-    }
-
-    /// A file called `name` beside the snapshot — where the cluster process
-    /// publishes its own.
-    fn beside(&self, name: &str) -> PathBuf {
-        self.snapshot.with_file_name(name)
-    }
-
-    /// One round's snapshot, history and activity, each written atomically.
-    fn round(
-        &self,
-        root: &str,
-        snapshot: &Snapshot,
-        topology: Option<Topology>,
-        history: &History,
-        activity: &Activity,
-    ) {
-        let text = roll_toml(root, snapshot, topology, Some(self.run.clone()));
-        write(&self.snapshot, &text, "snapshot");
-        write(&self.history, &history_toml(root, history), "history");
-        write(&self.activity, &activity_toml(root, activity), "activity");
-    }
+/// The roll's `start` record: what the run was started with, as its `[run]`
+/// header says it, how many rounds, and where it publishes.
+fn say_started(audit: &ProgramAudit, run: &Run, limit: Option<u64>, snapshot: &Path) {
+    let rounds = limit.map_or_else(|| "until stopped".to_string(), |limit| limit.to_string());
+    process_audit::start(
+        audit,
+        &[
+            ("cluster", &run.cluster),
+            ("stress", &run.stress),
+            ("tests", &run.tests.join(",")),
+            ("nodes", &run.capabilities.join(",")),
+            ("online", &run.online.join(",")),
+            ("rounds", &rounds),
+            ("snapshot", &snapshot.display().to_string()),
+        ],
+    );
 }
 
 /// What the environment told this roll, or REFUSED: a value it cannot read is
-/// said and the roll does not start — until 2026-09-19 an unknown scenario was
-/// said on stderr and dropped, and the roll carried on as something nobody
-/// asked for. A capability that is no capability is refused the same way.
-fn or_refuse<T>(told: Result<T, String>) -> T {
+/// said, audited as the failure to `start`, and the roll does not start —
+/// until 2026-09-19 an unknown scenario was said on stderr and dropped, and
+/// the roll carried on as something nobody asked for. A capability that is
+/// no capability is refused the same way.
+fn or_refuse<T>(audit: &ProgramAudit, told: Result<T, String>) -> T {
     told.unwrap_or_else(|refusal| {
-        eprintln!("{refusal}");
+        process_audit::fail(audit, "start", &refusal);
         std::process::exit(2);
     })
 }
@@ -312,83 +258,69 @@ fn announce(cluster: &str, stress: Stress, roster: &Roster) {
 /// one is REFUSED naming the four (ADR-0055). `Start-XmipTest` asks this, sets
 /// the names it gets, and records them, so the operator's door and the roll
 /// agree on one roster and the numbers stay in `stress.rs` alone.
-fn say_the_complement(level: Option<&str>) {
+fn the_complement(level: Option<&str>) -> Result<String, String> {
     let Some(stress) = level.and_then(Stress::parse) else {
-        eprintln!(
+        return Err(format!(
             "REFUSED: --roster takes a stress level; '{}' is none. The levels are {}.",
             level.unwrap_or_default(),
             Stress::NAMES.join(", ")
-        );
-        std::process::exit(2);
+        ));
     };
-    println!("{}", complement::full(stress).text());
+    Ok(complement::full(stress).text())
 }
 
 /// Whether `RoundTrip` runs across the cluster's nodes rather than in this
 /// process: it was chosen, and some node declared a stage of the path. A stage
 /// no node declares is REFUSED before anything is spawned, naming the
 /// capability that went undeclared (ADR-0056).
-fn relayed_or_refuse(chosen: &[String], roster: &Roster) -> bool {
+fn relayed(chosen: &[String], roster: &Roster) -> Result<bool, String> {
     if !drives(chosen, ROUND_TRIP) || !roster.serves_any_stage() {
-        return false;
+        return Ok(false);
     }
-    if let Some(refusal) = roster.refusal() {
-        eprintln!("{refusal}");
-        std::process::exit(2);
-    }
-    true
+    roster.refusal().map_or(Ok(true), Err)
 }
 
 /// One cluster process, told the nodes to spawn and the scenarios chosen,
 /// over the shared directory it will own. Nothing is spawned when no node was
-/// named; a cluster that cannot start is said so and the roll goes on without
-/// one, as it did when the nodes were its own.
+/// named; a cluster that cannot start is said so, audited as the failure to
+/// `spawn-cluster`, and the roll goes on without one, as it did when the
+/// nodes were its own.
 fn spawn_cluster(
+    audit: &ProgramAudit,
     cluster: &str,
-    stress: Stress,
-    roster: &Roster,
-    chosen: &[String],
+    orders: &Orders,
     base: &Path,
     path: &Path,
 ) -> Option<Spawned> {
-    if roster.is_empty() {
+    if orders.roster.is_empty() {
         return None;
     }
     let shared = base.join("shared");
-    let orders = Orders::of(stress, roster.clone(), 0).driving(chosen);
-    let started = cluster_binary()
-        .and_then(|binary| Spawned::start(&binary, cluster, &orders, &shared, path));
+    let started =
+        cluster_binary().and_then(|binary| Spawned::start(&binary, cluster, orders, &shared, path));
     match started {
         Ok(spawned) => Some(spawned),
         Err(error) => {
-            eprintln!("no cluster: {error}");
+            process_audit::fail(audit, "spawn-cluster", &format!("no cluster: {error}"));
             None
         }
     }
 }
 
-/// A publish path: the environment override, or the well-known temp file the GUI
-/// defaults to as well. The variable is external, so it keeps the prefix.
 /// One cluster per roll (ADR-0028): its name, its scope root, and its own
 /// scratch directory, emptied now, so a second cluster beside it neither wipes
-/// nor shares this one's directories.
-fn this_cluster() -> (String, String, PathBuf) {
+/// nor shares this one's directories. REFUSED when the owner named none.
+fn this_cluster() -> Result<(String, String, PathBuf), String> {
     let Some(cluster) = cluster_name() else {
-        eprintln!(
+        return Err(
             "REFUSED: a roll is a cluster and the owner names it; set XMIP_PLAYGROUND_CLUSTER \
              (Start-XmipTest -Cluster <name>). A test spawns nodes, never a cluster."
+                .to_string(),
         );
-        std::process::exit(2);
     };
     let base = std::env::temp_dir().join("playground").join(&cluster);
     std::fs::remove_dir_all(&base).ok();
-    (cluster, cluster_root(), base)
-}
-
-fn write(path: &Path, contents: &str, what: &str) {
-    if let Err(error) = write_atomic(path, contents) {
-        eprintln!("could not write the {what} to {}: {error}", path.display());
-    }
+    Ok((cluster, cluster_root(), base))
 }
 
 #[cfg(test)]
@@ -406,15 +338,27 @@ mod tests {
     #[test]
     fn round_trip_is_the_nodes_when_any_declares_a_stage_and_it_was_chosen() {
         let path = roster("R1=receive,P1=process,S1=send");
-        assert!(relayed_or_refuse(&[], &path));
-        assert!(relayed_or_refuse(&names(&["round-trip"]), &path));
-        assert!(!relayed_or_refuse(&names(&["heavy-load"]), &path));
-        assert!(!relayed_or_refuse(&[], &roster("node-01,node-02")));
-        assert!(!relayed_or_refuse(&[], &Roster::default()));
+        assert_eq!(relayed(&[], &path), Ok(true));
+        assert_eq!(relayed(&names(&["round-trip"]), &path), Ok(true));
+        assert_eq!(relayed(&names(&["heavy-load"]), &path), Ok(false));
+        assert_eq!(relayed(&[], &roster("node-01,node-02")), Ok(false));
+        assert_eq!(relayed(&[], &Roster::default()), Ok(false));
         // A capability missing is no refusal when RoundTrip was not chosen.
-        assert!(!relayed_or_refuse(
-            &names(&["filing"]),
-            &roster("R1=receive")
-        ));
+        assert_eq!(
+            relayed(&names(&["filing"]), &roster("R1=receive")),
+            Ok(false)
+        );
+        let refused = relayed(&[], &roster("R1=receive")).expect_err("no node processes");
+        assert!(refused.starts_with("REFUSED"), "{refused}");
+    }
+
+    #[test]
+    fn an_unknown_level_is_refused_naming_the_levels() {
+        let refused = the_complement(Some("gentle")).expect_err("gentle is no level");
+        assert!(
+            refused.contains("gentle") && refused.contains("brutal"),
+            "{refused}"
+        );
+        assert!(the_complement(Some("calm")).is_ok());
     }
 }
