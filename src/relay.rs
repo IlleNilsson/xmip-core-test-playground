@@ -31,13 +31,13 @@ use std::path::Path;
 use node::Stage;
 use observe::{Health, HealthRecord, Snapshot};
 
+use crate::exchange::{RoundTrip, all_transports};
 use crate::fault::FaultPlan;
 use crate::handoff::{Handoff, Hops, Inbox};
 use crate::identity::IdentityFaults;
 use crate::identity::verdicts::{receive_verdicts, send_verdict};
 use crate::roster::Roster;
 use crate::round_trip::{carried, held};
-use crate::roundtrip::{RoundTrip, all_transports};
 use crate::schedule::{Ledger, all_pairs, drive_each, slice};
 use crate::stress::Stress;
 use crate::support::now_unix_nanos;
@@ -390,7 +390,7 @@ impl Relay {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::roundtrip::{FileRoundTrip, TcpRoundTrip, UdpRoundTrip};
+    use crate::exchange::{FileRoundTrip, TcpRoundTrip, UdpRoundTrip};
     use crate::schedule::CONTRACTS;
     use crate::support::scratch;
 

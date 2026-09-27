@@ -18,8 +18,8 @@ use std::time::Instant;
 
 use observe::{Health, HealthRecord, Snapshot};
 
+use crate::exchange::{Exchange, RoundTrip, all_transports};
 use crate::fault::fires_keyed;
-use crate::roundtrip::{Exchange, RoundTrip, all_transports};
 use crate::schedule::CONTRACTS;
 use crate::stress::{Stress, scaled_rate};
 use crate::support::now_unix_nanos;
@@ -294,7 +294,7 @@ fn red(scope: &str, why: String, now: i64) -> HealthRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::roundtrip::{FileRoundTrip, TcpRoundTrip, UdpRoundTrip};
+    use crate::exchange::{FileRoundTrip, TcpRoundTrip, UdpRoundTrip};
 
     /// The three transports the tests judge: file never spikes, and one of
     /// the others must. The runner drives every one.

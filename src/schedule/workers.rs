@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::roundtrip::RoundTrip;
+use crate::exchange::RoundTrip;
 use crate::schedule::CONTRACTS;
 use crate::verdict::Contract;
 

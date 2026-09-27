@@ -13,7 +13,7 @@
 use stream::Stream;
 use xcore::StreamId;
 
-use crate::roundtrip::{Exchange, RoundTrip};
+use crate::exchange::{Exchange, RoundTrip};
 use crate::verdict::{Contract, Outcome};
 
 /// Run one `RoundTrip` round for one transport and one contract, and judge it.
@@ -94,7 +94,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::roundtrip::{FileRoundTrip, TIMEOUT, TcpRoundTrip, UdpRoundTrip, all_transports};
+    use crate::exchange::{FileRoundTrip, TIMEOUT, TcpRoundTrip, UdpRoundTrip, all_transports};
     use crate::schedule::drive_pairs;
     use crate::stress::Stress;
     use crate::support::scratch;

@@ -26,7 +26,7 @@ use transport::socket;
 use transport_postgresql::{Answer, Session};
 
 use crate::cabinet::{Cabinet, Filed, file_through};
-use crate::roundtrip::TIMEOUT;
+use crate::exchange::TIMEOUT;
 
 /// The bucket or container every object cabinet files into, and the prefix
 /// its items are laid out under.

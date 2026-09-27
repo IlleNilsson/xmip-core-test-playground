@@ -243,7 +243,11 @@ rounds, and so does its cluster, which stops its own nodes before it goes.
 the roll — so `Get-Process xmip-*` is empty afterwards and nothing is
 orphaned. `Get-XmipProcess` shows all three kinds with the location and
 purpose each declared, and `Get-XmipTestNode` reports a node's roll, which is
-now its grandparent.
+now its grandparent. A node also declares the flags it was started with —
+`node`, `shared`, `stress`, `rounds`, `snapshot`, `interval_ms`, `capability`,
+`online` — and `Get-XmipTestNode` reads those from its declaration through the
+node's own reader, never from its command line (ADR-0053, amendment
+2026-09-27).
 
 **Each of the three says which cluster and which node it is** (ADR-0053,
 amendment 2026-09-20). The owner, reading eleven identical rows: *these

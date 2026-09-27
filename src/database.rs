@@ -22,8 +22,8 @@ use transport::error::protocol_error;
 use transport::socket;
 
 use crate::cabinet::{Cabinet, Filed, file_through};
+use crate::exchange::TIMEOUT;
 use crate::remote::{literals, serve_filing};
-use crate::roundtrip::TIMEOUT;
 
 /// The row id both far ends answer an `INSERT` with.
 const ROW_ID: &str = "1";

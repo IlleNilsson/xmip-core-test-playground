@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use observe::{Activity, History, Run, Snapshot, Topology};
 use xaudit::program_audit::ProgramAudit;
 
-use crate::environment::publish_paths;
+use crate::environment::{publish_area, publish_paths};
 use crate::process_audit;
 use crate::report::{activity_toml, history_toml, roll_toml, write_atomic};
 
@@ -33,7 +33,7 @@ impl Publication {
     /// under, auditing a failed write into `audit`.
     #[must_use]
     pub fn of(cluster: &str, run: Run, audit: ProgramAudit) -> Self {
-        let (snapshot, history, activity) = publish_paths(cluster);
+        let (snapshot, history, activity) = publish_paths(cluster, &publish_area());
         Self {
             snapshot,
             history,

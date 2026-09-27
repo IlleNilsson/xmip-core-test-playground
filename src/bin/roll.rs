@@ -34,8 +34,9 @@
 //! When stdout is a terminal the board is redrawn in place; when it is piped,
 //! one summary line per round is appended. After every tick the snapshot,
 //! history and activity are written to the TOML files the monitoring GUI reads,
-//! overridable with `XMIP_PLAYGROUND_SNAPSHOT`, `_HISTORY`, `_ACTIVITY`. Every
-//! variable is read in one place, `environment.rs`.
+//! named for the cluster in `XMIP_PLAYGROUND_AREA` (the temp directory unset);
+//! `roll --publication <cluster> <area>` prints where they are and starts
+//! nothing. Every variable is read in one place, `environment.rs`.
 //!
 //! **The cluster is a process too** (the owner, 2026-09-19). The roll spawns
 //! exactly one `xmip-playground-cluster` process, and that process spawns and
@@ -101,6 +102,20 @@ fn main() {
         println!(
             "{}",
             or_refuse(&audit, the_complement(std::env::args().nth(2).as_deref()))
+        );
+        return;
+    }
+
+    // Asked where a cluster publishes, it answers the same way: the names
+    // are decided here (`environment::publish_paths`), and `Start-XmipTest`
+    // records what it is told rather than naming the files again.
+    if std::env::args().nth(1).as_deref() == Some("--publication") {
+        println!(
+            "{}",
+            or_refuse(
+                &audit,
+                the_publication(&std::env::args().skip(2).collect::<Vec<_>>())
+            )
         );
         return;
     }
@@ -277,6 +292,22 @@ fn the_complement(level: Option<&str>) -> Result<String, String> {
     Ok(complement::full(stress).text())
 }
 
+/// Where the roll of a cluster publishes in an area, one `name=path` line
+/// each for the snapshot, the history and the activity. The cluster and the
+/// area are the arguments and the environment is not read.
+fn the_publication(told: &[String]) -> Result<String, String> {
+    let [cluster, area] = told else {
+        return Err("REFUSED: --publication takes a cluster and an area.".to_string());
+    };
+    let (snapshot, history, activity) = environment::publish_paths(cluster, Path::new(area));
+    Ok(format!(
+        "snapshot={}\nhistory={}\nactivity={}",
+        snapshot.display(),
+        history.display(),
+        activity.display()
+    ))
+}
+
 /// Whether `RoundTrip` runs across the cluster's nodes rather than in this
 /// process: it was chosen, and some node declared a stage of the path. A stage
 /// no node declares is REFUSED before anything is spawned, naming the
@@ -368,5 +399,22 @@ mod tests {
             "{refused}"
         );
         assert!(the_complement(Some("calm")).is_ok());
+    }
+
+    #[test]
+    fn the_publication_names_the_cluster_s_files_in_the_area() {
+        let said = the_publication(&names(&["C1", "area"])).expect("a cluster and an area");
+        let area = Path::new("area");
+        assert_eq!(
+            said,
+            format!(
+                "snapshot={}\nhistory={}\nactivity={}",
+                area.join("C1-snapshot.toml").display(),
+                area.join("C1-history.toml").display(),
+                area.join("C1-activity.toml").display()
+            )
+        );
+        let refused = the_publication(&names(&["C1"])).expect_err("no area");
+        assert!(refused.starts_with("REFUSED"), "{refused}");
     }
 }

@@ -28,8 +28,8 @@ use std::time::Instant;
 
 use observe::{Count, Counted, Snapshot};
 
+use crate::exchange::{Exchange, RoundTrip, all_transports};
 use crate::fault::fires_keyed;
-use crate::roundtrip::{Exchange, RoundTrip, all_transports};
 use crate::schedule::CONTRACTS;
 use crate::standing::{Mark, Standing};
 use crate::stress::{self, Stress, scaled_rate};
@@ -343,7 +343,7 @@ fn human(bytes: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::roundtrip::{FileRoundTrip, TcpRoundTrip, UdpRoundTrip};
+    use crate::exchange::{FileRoundTrip, TcpRoundTrip, UdpRoundTrip};
 
     /// The three transports the tests judge: enough to prove a megabyte
     /// carries and that a datagram cannot. The runner drives every one.
@@ -487,7 +487,7 @@ mod tests {
             let started = Instant::now();
             snapshot = hl.tick();
             let took = started.elapsed();
-            let budget = crate::roundtrip::TIMEOUT * 3 * 20 * 3;
+            let budget = crate::exchange::TIMEOUT * 3 * 20 * 3;
             assert!(took <= budget, "round {round} took {took:?}");
             let lying = violations(&snapshot, "xmip:///playground/heavy-load");
             assert!(lying.is_empty(), "round {round}: {}", lying.join("; "));

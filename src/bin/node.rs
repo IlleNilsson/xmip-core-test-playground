@@ -139,9 +139,11 @@ fn main() -> ExitCode {
 
     let node = format!("{}/node/{}", cluster_root(), arguments.name);
 
-    // What this process says of itself while it runs (ADR-0053).
-    let _declared = ::node::Declaration::new(called, &node, ::node::Purpose::Test)
-        .declare()
+    // What this process says of itself while it runs (ADR-0053), and what it
+    // was started with, so Get-XmipTestNode reads the declaration and never
+    // parses this command line again.
+    let _declared = declaration(called, &node, &arguments)
+        .and_then(|declaration| declaration.declare().map_err(|error| error.to_string()))
         .map_err(|error| {
             let problem = format!("node {}: could not declare itself: {error}", arguments.name);
             process_audit::fail(&audit, "declare", &problem);
@@ -221,6 +223,32 @@ fn main() -> ExitCode {
 }
 
 /// The node's `start` record: its scope and everything it was told.
+/// The node's declaration: its name, its scope and its purpose, and the
+/// flags it runs by, each under the key a reader of the declaration takes it
+/// by (ADR-0053).
+fn declaration(
+    called: String,
+    node: &str,
+    arguments: &Arguments,
+) -> Result<::node::Declaration, String> {
+    let interval = arguments.interval.as_millis().to_string();
+    let said = [
+        ("node", arguments.name.clone()),
+        ("shared", arguments.shared.display().to_string()),
+        ("stress", arguments.stress.name().to_string()),
+        ("rounds", arguments.rounds.to_string()),
+        ("snapshot", arguments.snapshot.display().to_string()),
+        ("interval_ms", interval),
+        ("capability", arguments.capability.words()),
+        ("online", arguments.capability.is_online().to_string()),
+    ];
+
+    said.into_iter().try_fold(
+        ::node::Declaration::new(called, node, ::node::Purpose::Test),
+        |declaration, (key, value)| declaration.with(key, value),
+    )
+}
+
 fn say_started(audit: &ProgramAudit, node: &str, arguments: &Arguments) {
     process_audit::start(
         audit,

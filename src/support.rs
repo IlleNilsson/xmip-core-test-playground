@@ -56,11 +56,11 @@ pub fn now_unix_nanos() -> i64 {
 /// `a_tick_reports_every_pair_across_the_three_stages` and of the fault-free
 /// schedule's test, and it is exercised there.
 #[cfg(test)]
-pub(crate) fn three(dir: &std::path::Path) -> Vec<Box<dyn crate::roundtrip::RoundTrip>> {
+pub(crate) fn three(dir: &std::path::Path) -> Vec<Box<dyn crate::exchange::RoundTrip>> {
     vec![
-        Box::new(crate::roundtrip::FileRoundTrip::new(dir)),
-        Box::new(crate::roundtrip::TcpRoundTrip),
-        Box::new(crate::roundtrip::UdpRoundTrip),
+        Box::new(crate::exchange::FileRoundTrip::new(dir)),
+        Box::new(crate::exchange::TcpRoundTrip),
+        Box::new(crate::exchange::UdpRoundTrip),
     ]
 }
 
@@ -101,15 +101,15 @@ pub(crate) fn files_whole(cabinet: &dyn crate::cabinet::Cabinet) {
 /// Shared by every adapter file, so every transport is judged the same way at
 /// the sizes protocols break on.
 #[cfg(test)]
-pub(crate) fn carries_the_edges(rt: &dyn crate::roundtrip::RoundTrip) {
-    use crate::roundtrip::Exchange;
+pub(crate) fn carries_the_edges(rt: &dyn crate::exchange::RoundTrip) {
+    use crate::exchange::Exchange;
     for (name, bytes) in crate::stress::edge_payloads(None) {
         let refused = rt.refuses(&bytes);
         let started = std::time::Instant::now();
         let exchange = rt.exchange(&bytes);
         let took = started.elapsed();
         assert!(
-            took < crate::roundtrip::TIMEOUT * 3,
+            took < crate::exchange::TIMEOUT * 3,
             "{} took {took:?} on {name}: a round is judged, never waited on",
             rt.transport()
         );

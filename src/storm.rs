@@ -26,9 +26,9 @@ use std::time::{Duration, Instant};
 use node::Stage;
 use observe::{Count, Counted, Health, HealthRecord, Snapshot};
 
+use crate::exchange::{RoundTrip, TIMEOUT, all_transports};
 use crate::fault::FaultPlan;
 use crate::round_trip::round_trip_with;
-use crate::roundtrip::{RoundTrip, TIMEOUT, all_transports};
 use crate::schedule::{CONTRACTS, drive_pairs};
 use crate::standing::{Mark, Standing};
 use crate::stress::{self, Stress};
@@ -317,7 +317,7 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::roundtrip::{Exchange, FileRoundTrip, TcpRoundTrip, UdpRoundTrip};
+    use crate::exchange::{Exchange, FileRoundTrip, TcpRoundTrip, UdpRoundTrip};
     use crate::support::scratch;
 
     const NODE: &str = "xmip:///playground/storm";

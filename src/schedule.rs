@@ -23,11 +23,11 @@ pub(crate) mod workers;
 use node::Stage;
 use observe::{Activity, Snapshot};
 
+use crate::exchange::{RoundTrip, all_transports};
 use crate::fault::FaultPlan;
 use crate::identity::IdentityFaults;
 use crate::identity::verdicts::{receive_verdicts, send_verdict};
 use crate::round_trip::{round_trip, round_trip_with};
-use crate::roundtrip::{RoundTrip, all_transports};
 use crate::stress::{self, Stress};
 use crate::support::now_unix_nanos;
 use crate::verdict::{Contract, Outcome, Verdict};
@@ -289,7 +289,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::roundtrip::{FileRoundTrip, TIMEOUT, TcpRoundTrip, UdpRoundTrip};
+    use crate::exchange::{FileRoundTrip, TIMEOUT, TcpRoundTrip, UdpRoundTrip};
     use crate::storm::violations;
     use crate::support::scratch;
     use observe::{Counted, Health};
@@ -453,9 +453,9 @@ mod tests {
         let mut schedule = Schedule::new("xmip:///playground", &dir)
             .with_faults(FaultPlan::realistic())
             .over(vec![
-                Box::new(crate::roundtrip::FileRoundTrip::new(&dir)),
-                Box::new(crate::roundtrip::TcpRoundTrip),
-                Box::new(crate::roundtrip::UdpRoundTrip),
+                Box::new(crate::exchange::FileRoundTrip::new(&dir)),
+                Box::new(crate::exchange::TcpRoundTrip),
+                Box::new(crate::exchange::UdpRoundTrip),
             ]);
 
         let mut snapshot = schedule.tick();

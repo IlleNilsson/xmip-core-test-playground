@@ -4,7 +4,7 @@
 //! `test/XmipTest.Test.ps1` holds that file against this one, so a switch the
 //! roll reads is a switch an operator can reach.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::complement;
@@ -85,25 +85,26 @@ pub fn roster(stress: Stress) -> Result<Roster, String> {
     Ok(roster)
 }
 
-/// Where the roll publishes its snapshot, history and activity: the three
-/// variables the cmdlet sets — `XMIP_PLAYGROUND_SNAPSHOT`, `_HISTORY`,
-/// `_ACTIVITY` — else `<cluster>-snapshot.toml` and kin in the temp
-/// directory, which the GUI defaults to as well.
+/// The directory a roll publishes in: `XMIP_PLAYGROUND_AREA`, where
+/// `Start-XmipTest` keeps the run, else the temp directory.
 #[must_use]
-pub fn publish_paths(cluster: &str) -> (PathBuf, PathBuf, PathBuf) {
+pub fn publish_area() -> PathBuf {
+    std::env::var_os("XMIP_PLAYGROUND_AREA")
+        .filter(|named| !named.is_empty())
+        .map_or_else(std::env::temp_dir, PathBuf::from)
+}
+
+/// Where the roll of `cluster` publishes its snapshot, history and activity
+/// in `area`: `<cluster>-snapshot.toml`, `-history.toml` and
+/// `-activity.toml`. The one place the names are decided; `Start-XmipTest`
+/// asks `xmip-playground-roll --publication <cluster> <area>` rather than
+/// naming them again.
+#[must_use]
+pub fn publish_paths(cluster: &str, area: &Path) -> (PathBuf, PathBuf, PathBuf) {
     (
-        env_path(
-            "XMIP_PLAYGROUND_SNAPSHOT",
-            &format!("{cluster}-snapshot.toml"),
-        ),
-        env_path(
-            "XMIP_PLAYGROUND_HISTORY",
-            &format!("{cluster}-history.toml"),
-        ),
-        env_path(
-            "XMIP_PLAYGROUND_ACTIVITY",
-            &format!("{cluster}-activity.toml"),
-        ),
+        area.join(format!("{cluster}-snapshot.toml")),
+        area.join(format!("{cluster}-history.toml")),
+        area.join(format!("{cluster}-activity.toml")),
     )
 }
 
@@ -118,10 +119,6 @@ pub fn image_directory() -> Option<PathBuf> {
     std::env::var_os("XMIP_PLAYGROUND_IMAGES")
         .filter(|named| !named.is_empty())
         .map(PathBuf::from)
-}
-
-fn env_path(variable: &str, default: &str) -> PathBuf {
-    std::env::var_os(variable).map_or_else(|| std::env::temp_dir().join(default), PathBuf::from)
 }
 
 /// The `HeavyLoad` payload size: `XMIP_PLAYGROUND_LOAD_BYTES` if set — a
