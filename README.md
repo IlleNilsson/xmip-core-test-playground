@@ -187,10 +187,17 @@ cluster shares and publishes its own snapshot under
 `xmip:///<cluster>/node/<name>`; the cluster spawns one per name, or the level's
 count of them, merges their snapshots each round, adds the rollup the surface
 owes at `xmip:///<cluster>/node` (ADR-0027 decision 8), and kills and restarts a
-node whose snapshot stops moving — a recorded yellow, never silent. A node that
-has not published once is starting, not hung, for its first two minutes: a
-brutal roll's first round outlasts three, and killing a node for that once
-restarted every node into the same wait (2026-09-25). Exclusive
+node that stops beating — a recorded yellow, never silent. Liveness is beats,
+not rounds (the owner, 2026-09-26: *if something takes more than a
+millisecond, apart from load, something is wrong*; ADR-0052's amendment of
+that day). A node's first beat is the first thing it does, within
+milliseconds of its start, and then it beats every tenth of a second from a
+thread of its own into `<name>.beat` beside its `<name>.toml` — when, and how
+many rounds it has finished (`heartbeat.rs`). A node that has not beaten is
+starting for ten seconds and hung after, and one that has is hung after ten
+seconds without a beat (`cluster/liveness.rs`). A brutal first round that
+runs for minutes is a node at work: judging by rounds once restarted every
+node into the same wait (2026-09-25). Exclusive
 pickup and backlog draining are thereby contended by real processes, which is
 the property ADR-0024's claim exists to prove and a thread could only imitate.
 `XMIP_PLAYGROUND_NODES` or a harsh or brutal level puts the nodes on the board
@@ -361,7 +368,12 @@ declared two stages runs one relay per stage, each with its own inbox. Each
 stage takes the same injected faults the schedule does, scaled to the level,
 decided by the round the receiving node took the pair in; a stage that fails
 hands nothing on. The tally, the standing between a pair's turns and the counts
-are the schedule's own (`schedule/ledger.rs`), not a copy. When any node
+are the schedule's own (`schedule/ledger.rs`), not a copy; each count sits at
+the stage that took it, `<node>/<stage>` — Streams at receive, Journeys at
+process, Messages and Bytes at send, Failed at each — and the roll publishes
+every count where it was recorded, so a surface sums a node, a stage or the
+cluster from one file (until 2026-09-26 the roll wrote only its sums and
+every node and stage read a dash). When any node
 declares a stage and RoundTrip was chosen the roll does not also run it
 in-process; when a stage of the path is declared by nobody the roll is REFUSED
 at the start, naming the **capability** that went undeclared, and

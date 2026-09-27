@@ -2,8 +2,9 @@
 //!
 //! ```text
 //! node --name <name> --shared <dir> --stress <level> --rounds <n> --snapshot <path>
-//!      [--interval-ms <ms>] [--online true|false] [--can receive,process]
-//!      [--nodes <name[=capability],...>] [--scenarios <scenario,...>]
+//!      [--interval-ms <ms>] [--beat-ms <ms>] [--online true|false]
+//!      [--can receive,process] [--nodes <name[=capability],...>]
+//!      [--scenarios <scenario,...>]
 //! ```
 //!
 //! **A node declares what it can do** (ADR-0056). `--can` says which stages of
@@ -36,6 +37,13 @@
 //! merges every node's file and adds the rollup the surface owes (ADR-0027
 //! decision 8).
 //!
+//! **It beats** (the owner, 2026-09-26; `heartbeat.rs`). First, within
+//! milliseconds of its start — before it audits, declares or loads a test —
+//! and then every `--beat-ms` while it works, a tenth of a second unless
+//! given, it writes a beat to `<path>` with the extension `beat`: when, and
+//! how many rounds it has finished. The cluster tells a node that is alive
+//! and busy with a long round from one that hangs by those beats alone.
+//!
 //! It exits after `<n>` rounds — `0` means until stopped — or as soon as
 //! `<shared>/stop` appears, checked between rounds. Another node deleting or
 //! claiming what this one was about to take is a lost race and a normal
@@ -67,7 +75,8 @@ use xmip_core_test_playground::scenario::{
     self, DAILY_BACKLOG, EXCLUSIVE_CLAIM, ROUND_TRIP, drives,
 };
 use xmip_core_test_playground::{
-    DailyBacklog, ExclusiveClaim, Relay, Roster, Stress, cluster_root, node_toml, write_atomic,
+    DailyBacklog, ExclusiveClaim, Heartbeat, Relay, Roster, Stress, cluster_root, node_toml,
+    write_atomic,
 };
 use xmip_core_test_playground::{image, process_audit};
 
@@ -79,6 +88,8 @@ struct Arguments {
     rounds: u64,
     snapshot: PathBuf,
     interval: Duration,
+    /// How often it beats, round or no round.
+    beat: Duration,
     /// What this node declared it can do (ADR-0056): the stages of the
     /// message path from `--can`, and from `--online` whether it may assume
     /// the internet (ADR-0045). Published in its own health records, so the
@@ -92,7 +103,7 @@ struct Arguments {
 }
 
 const USAGE: &str = "usage: node --name <name> --shared <dir> --stress <level> --rounds <n> \
-     --snapshot <path> [--interval-ms <ms>] [--online true|false] \
+     --snapshot <path> [--interval-ms <ms>] [--beat-ms <ms>] [--online true|false] \
      [--can receive,process] [--nodes <name[=capability],...>] \
      [--scenarios <scenarios>]\n\
      example: node --name R1 --shared shared --stress calm --rounds 0 \
@@ -100,6 +111,16 @@ const USAGE: &str = "usage: node --name <name> --shared <dir> --stress <level> -
      The name is the tester's and means nothing to Xmip; --can says what the node does.";
 
 fn main() -> ExitCode {
+    // The command line is read before anything else, so the first beat is
+    // the first thing a node does: alive within milliseconds of its start,
+    // and alive while a round runs. The cluster judges a hang by missed
+    // beats, never by a slow round (the owner, 2026-09-26).
+    let parsed = parse(std::env::args().skip(1));
+    let heart = parsed
+        .as_ref()
+        .ok()
+        .map(|arguments| Heartbeat::start(&arguments.snapshot, arguments.beat));
+
     // The name is the image's own — xmip-playground-<cluster>-node-<node>
     // where a cluster named it — so the declaration, the audit and the
     // process list agree (ADR-0053, amendment 2026-09-20).
@@ -107,7 +128,7 @@ fn main() -> ExitCode {
     let audit = ProgramAudit::new(&called, None);
     audit.watch_panics();
 
-    let arguments = match parse(std::env::args().skip(1)) {
+    let arguments = match parsed {
         Ok(arguments) => arguments,
         Err(problem) => {
             process_audit::fail(&audit, "start", &format!("node: {problem}"));
@@ -185,12 +206,16 @@ fn main() -> ExitCode {
             );
             process_audit::fail(&audit, "publish", &problem);
         }
+        if let Some(heart) = heart.as_ref() {
+            heart.round();
+        }
 
         if !arguments.interval.is_zero() && (arguments.rounds == 0 || round < arguments.rounds) {
             std::thread::sleep(arguments.interval);
         }
     }
 
+    drop(heart);
     process_audit::stop(&audit, &[("node", &node), ("rounds", &round.to_string())]);
     ExitCode::SUCCESS
 }
@@ -251,6 +276,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
     let mut rounds = None;
     let mut snapshot = None;
     let mut interval = Duration::from_millis(250);
+    let mut beat = Duration::from_millis(100);
     let mut online = false;
     let mut can = Capability::none();
     let mut roster = Roster::default();
@@ -268,6 +294,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
             "--rounds" => rounds = Some(number(&flag, &value)?),
             "--snapshot" => snapshot = Some(PathBuf::from(value)),
             "--interval-ms" => interval = Duration::from_millis(number(&flag, &value)?),
+            "--beat-ms" => beat = Duration::from_millis(number(&flag, &value)?.max(1)),
             "--online" => {
                 online = xmip_core_test_playground::switch::parse(&value)
                     .ok_or(format!("--online wants true or false, not {value}"))?;
@@ -286,6 +313,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
         rounds: rounds.ok_or("--rounds is required")?,
         snapshot: snapshot.ok_or("--snapshot is required")?,
         interval,
+        beat,
         capability: can.with_online(online),
         roster,
         scenarios,
@@ -336,6 +364,11 @@ mod tests {
     fn the_scenarios_and_the_roster_are_read_and_absent_means_every_one() {
         let bare = arguments(&[]).expect("the required flags suffice");
         assert!(bare.scenarios.is_empty() && bare.roster.is_empty());
+        assert_eq!(
+            bare.beat,
+            Duration::from_millis(100),
+            "a beat a tenth of a second"
+        );
         assert!(
             bare.capability.declares_no_stage(),
             "a node told nothing declares nothing and runs whole tests"

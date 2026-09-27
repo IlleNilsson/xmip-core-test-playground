@@ -525,6 +525,26 @@ mod tests {
             Some(delivered("process")),
             "one Journey per pair delivered at Process"
         );
+
+        // Each figure sits at the stage that counts it, so a stage card reads
+        // its own stage and not the cluster's sum (2026-09-26: the Receive
+        // card counted the daily backlog's drained Streams as received).
+        let at = |stage: &str, counted| {
+            snapshot
+                .measure(&format!("xmip:///playground/{stage}"), counted)
+                .map(|c| c.value)
+        };
+        assert_eq!(at("receive", Counted::Streams), Some(delivered("receive")));
+        assert_eq!(at("process", Counted::Journeys), Some(delivered("process")));
+        assert_eq!(
+            at("process", Counted::Streams),
+            None,
+            "Process counts no Streams"
+        );
+        assert!(
+            at("send", Counted::Bytes).is_some(),
+            "the bytes that moved, at Send"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

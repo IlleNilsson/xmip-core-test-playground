@@ -21,15 +21,19 @@
 //! node. Every node's latest file is read and merged — scopes are disjoint per
 //! node — and the cluster adds what no node can say about itself: a health
 //! record per node (alive, exited with its code, or hung) and the rollup at
-//! `xmip:///<cluster>/node`, worst of all. A node whose snapshot has not
-//! changed for longer than three rounds is hung: it is killed and restarted,
-//! and the restart is recorded as a fault — a yellow that stays for the
-//! cluster's life — never silently. A node that has not published once is
-//! starting, not hung, until it has had two minutes for its first round
-//! (2026-09-25: a brutal roll's first round outlasted three, and killing it
-//! for that restarted every node into the same wait, over and over).
+//! `xmip:///<cluster>/node`, worst of all. A node that stops beating is hung:
+//! it is killed and restarted, and the restart is recorded as a fault — a
+//! yellow that stays for the cluster's life — never silently. Liveness is
+//! beats, never rounds (`liveness.rs`, the owner 2026-09-26): a node beats
+//! within milliseconds of its start and every tenth of a second while it
+//! works, a node that has not beaten is starting for ten seconds and hung
+//! after, and one that has is hung after ten seconds without a beat. A
+//! brutal first round that runs for minutes is a node at work, not a hang
+//! (2026-09-25: judging by rounds restarted every node into the same wait,
+//! over and over).
 
 mod binary;
+mod liveness;
 mod member;
 mod orders;
 mod rollup;
@@ -47,6 +51,7 @@ pub(crate) use binary::built_cluster_binary;
 #[cfg(test)]
 pub(crate) use binary::built_node_binary;
 pub use binary::{cluster_binary, node_binary};
+pub(crate) use liveness::Liveness;
 use member::Member;
 pub use orders::Orders;
 pub use rollup::merge;
@@ -60,8 +65,6 @@ use crate::support::now_unix_nanos;
 /// The fixture root this crate's tests publish under. A roll is a cluster the
 /// owner named; a test spawns nodes, never a cluster (ADR-0052, 2026-09-14).
 pub const ROOT: &str = "xmip:///playground";
-/// Rounds a node may stay silent before it is hung.
-const SILENT_ROUNDS: u32 = 3;
 /// How long a tick waits for every live node to publish something new before
 /// it judges with what it has.
 const GRACE: Duration = Duration::from_secs(2);
@@ -75,7 +78,17 @@ pub struct Cluster {
     /// Who the nodes are and what they were told — the one value the cluster
     /// hands on to every node it starts.
     orders: Orders,
+    /// How a node shows it is alive, and when its silence is a hang.
+    liveness: Liveness,
     nodes: Vec<Member>,
+    /// The cluster's view as last assembled, rebuilt only when something in
+    /// it changed: a node's round read, or what the cluster says of a
+    /// node's process.
+    view: Snapshot,
+    /// What the cluster last said of each node's process.
+    said: Vec<(observe::Health, String)>,
+    /// Whether the last tick changed the view.
+    changed: bool,
 }
 
 impl Cluster {
@@ -92,6 +105,17 @@ impl Cluster {
         shared: &Path,
         snapshots: &Path,
     ) -> io::Result<Self> {
+        Self::judged(binary, orders, shared, snapshots, Liveness::OWNERS)
+    }
+
+    /// [`Cluster::spawn`], judging liveness by `liveness`.
+    fn judged(
+        binary: &Path,
+        orders: &Orders,
+        shared: &Path,
+        snapshots: &Path,
+        liveness: Liveness,
+    ) -> io::Result<Self> {
         std::fs::create_dir_all(shared)?;
         std::fs::create_dir_all(snapshots)?;
         std::fs::remove_file(shared.join("stop")).ok();
@@ -100,7 +124,11 @@ impl Cluster {
             binary: binary.to_path_buf(),
             shared: shared.to_path_buf(),
             orders: orders.clone(),
+            liveness,
             nodes: Vec::new(),
+            view: Snapshot::new(),
+            said: Vec::new(),
+            changed: false,
         };
         for name in orders.names().iter().map(ToString::to_string) {
             let path = snapshots.join(format!("{name}.toml"));
@@ -137,6 +165,8 @@ impl Cluster {
                 "--interval-ms",
                 &node_interval_ms(orders.stress).to_string(),
             ])
+            // The node beats as often as this cluster judges it by.
+            .args(["--beat-ms", &self.liveness.beat.as_millis().to_string()])
             .args(["--nodes", &orders.roster.text()])
             // None named is every scenario, which is what no flag means.
             .args(
@@ -156,9 +186,11 @@ impl Cluster {
     }
 
     /// One round of the surface: wait, within a grace period, for every live
-    /// node to publish anew; merge what each published; restart the hung; and
-    /// add the per-node health and the rollup.
-    pub fn tick(&mut self) -> Snapshot {
+    /// node to publish anew; restart the hung; and, where anything changed,
+    /// merge what each published and add the per-node health and the rollup.
+    /// [`Cluster::changed`] says whether it did; an unchanged view is not
+    /// assembled, or published, again.
+    pub fn tick(&mut self) -> &Snapshot {
         let started = Instant::now();
         for node in &mut self.nodes {
             node.fresh = false;
@@ -177,13 +209,40 @@ impl Cluster {
         }
 
         let now = now_unix_nanos();
-        let mut snapshot = Snapshot::new();
-        for node in &self.nodes {
-            merge(&mut snapshot, &node.published);
-            snapshot.record_health(node.process_record(now));
+        let records: Vec<_> = self
+            .nodes
+            .iter()
+            .map(|node| node.process_record(now))
+            .collect();
+        let said: Vec<_> = records
+            .iter()
+            .map(|record| (record.health, record.evidence.clone()))
+            .collect();
+        self.changed = said != self.said || self.nodes.iter().any(|node| node.fresh);
+        if self.changed {
+            let mut view = Snapshot::new();
+            for (node, record) in self.nodes.iter().zip(records) {
+                merge(&mut view, &node.published);
+                view.record_health(record);
+            }
+            view.record_health(rollup(&view, self.nodes.len(), now));
+            self.view = view;
+            self.said = said;
         }
-        snapshot.record_health(rollup(&snapshot, self.nodes.len(), now));
-        snapshot
+        &self.view
+    }
+
+    /// The view as the last [`Cluster::tick`] left it.
+    #[must_use]
+    pub const fn view(&self) -> &Snapshot {
+        &self.view
+    }
+
+    /// Whether the last [`Cluster::tick`] changed the view — what the
+    /// cluster process publishes on, and only on.
+    #[must_use]
+    pub const fn changed(&self) -> bool {
+        self.changed
     }
 
     /// Read every node's file.
@@ -193,19 +252,17 @@ impl Cluster {
         }
     }
 
-    /// Reap an exit, count silence, and restart a node silent too long.
+    /// Reap an exit, and restart a node that stopped beating.
     fn judge_process(&mut self, index: usize) {
         let node = &mut self.nodes[index];
         node.reap();
-        if node.fresh {
-            node.silent = 0;
-        } else {
-            node.silent += 1;
-        }
-        if node.hung() {
+        // The beat as it is now: reading every publication can take the
+        // cluster longer than a node may stay silent, and that is not the
+        // node's silence.
+        node.listen();
+        if node.hung(&self.liveness) {
             node.kill();
             node.restarts += 1;
-            node.silent = 0;
             let (name, path) = (node.name.clone(), node.path.clone());
             match self.start(&name, &path) {
                 Ok(child) => self.nodes[index].restarted(child),
@@ -270,16 +327,22 @@ impl Drop for Cluster {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::heartbeat::{self, Beat};
     use crate::support::scratch;
     use observe::{Health, HealthRecord};
 
     fn spawn(stress: Stress, count: usize, rounds: u64) -> (PathBuf, Cluster) {
+        judged(stress, count, rounds, Liveness::OWNERS)
+    }
+
+    fn judged(stress: Stress, count: usize, rounds: u64, liveness: Liveness) -> (PathBuf, Cluster) {
         let dir = scratch("cluster");
-        let cluster = Cluster::spawn(
+        let cluster = Cluster::judged(
             &built_node_binary(),
             &Orders::numbered(stress, count, rounds),
             &dir.join("shared"),
             &dir.join("snapshots"),
+            liveness,
         )
         .expect("the cluster spawns");
         (dir, cluster)
@@ -292,8 +355,8 @@ mod tests {
         let (dir, mut cluster) = spawn(Stress::Calm, Stress::Realistic.nodes(), 0);
         assert_eq!(cluster.alive(), 3);
 
-        let mut snapshot = cluster.tick();
-        snapshot = merge_into(snapshot, &cluster.tick());
+        let mut snapshot = cluster.tick().clone();
+        snapshot = merge_into(snapshot, cluster.tick());
 
         for name in ["node-01", "node-02", "node-03"] {
             let claim = format!("{ROOT}/node/{name}/exclusive-claim/file");
@@ -335,9 +398,9 @@ mod tests {
     #[test]
     fn a_node_that_exits_is_reported_with_its_code_and_the_cluster_stays_up() {
         let (dir, mut cluster) = spawn(Stress::Calm, 1, 1);
-        let mut last = cluster.tick();
+        let mut last = cluster.tick().clone();
         for _ in 0..8 {
-            last = cluster.tick();
+            last = cluster.tick().clone();
             if cluster.alive() == 0 {
                 break;
             }
@@ -353,20 +416,38 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// Liveness quick enough for a test: a beat every tenth of a second,
+    /// three missed, and `starting` to show it is alive.
+    fn quick(starting: Duration) -> Liveness {
+        Liveness {
+            beat: Duration::from_millis(100),
+            missed: 3,
+            starting,
+        }
+    }
+
+    /// The owner, 2026-09-26: a node that stops beating is hung, and the
+    /// restart is a yellow.
     #[test]
-    fn a_silent_node_is_restarted_and_the_restart_is_a_yellow() {
-        let (dir, mut cluster) = spawn(Stress::Calm, 1, 0);
-        // Freeze the node's file at what it first published by pointing the
-        // cluster at a copy it will never update; the real node is then "hung".
+    fn a_node_that_stops_beating_is_restarted_and_the_restart_is_a_yellow() {
+        let (dir, mut cluster) = judged(Stress::Calm, 1, 0, quick(Duration::from_secs(5)));
+        // Once it has beaten, point the cluster at a copy of the node's file
+        // with a beat beside it that is never written again; the real node is
+        // then "hung".
         cluster.tick();
         let frozen = dir.join("frozen.toml");
         std::fs::copy(&cluster.nodes[0].path, &frozen).expect("a frozen copy");
         cluster.nodes[0].path = frozen;
-        let mut last = cluster.tick();
-        for _ in 0..=SILENT_ROUNDS {
-            last = cluster.tick();
+        let started = Instant::now();
+        let mut last = cluster.tick().clone();
+        while cluster.restarts() == 0 && started.elapsed() < Duration::from_secs(10) {
+            last = cluster.tick().clone();
         }
-        assert_eq!(cluster.restarts(), 1, "silent past three rounds is hung");
+        assert_eq!(
+            cluster.restarts(),
+            1,
+            "silent past its missed beats is hung"
+        );
         let process = snapshot_record(&last, &format!("{ROOT}/node/node-01/system-process"));
         assert_eq!(process.health, Health::Stressed, "{}", process.evidence);
         assert!(process.evidence.contains("hung"), "{}", process.evidence);
@@ -377,26 +458,123 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// 2026-09-25: a node slow over its first round is starting, not hung.
-    /// One that has published nothing is left to finish that round however
-    /// many rounds it takes, and said to be starting.
+    /// The owner, 2026-09-26: a node that beats is alive while its first
+    /// round runs, however long past `starting` and past the missed beats
+    /// that round takes, and it is said to be starting.
     #[test]
-    fn a_node_that_has_not_published_yet_is_starting_and_not_restarted() {
-        let (dir, mut cluster) = spawn(Stress::Calm, 1, 0);
-        // A file the node never writes: it has, as far as the cluster can
-        // tell, not published once.
-        cluster.nodes[0].path = dir.join("never-written.toml");
-        let mut last = cluster.tick();
-        for _ in 0..=SILENT_ROUNDS + 1 {
-            last = cluster.tick();
+    fn a_node_that_beats_but_has_not_finished_a_round_is_never_restarted() {
+        let (dir, mut cluster) = judged(Stress::Calm, 1, 0, quick(Duration::from_secs(1)));
+        // A publication nobody writes and a beat only this test writes:
+        // beats, and never a finished round.
+        let beating = dir.join("beating.toml");
+        cluster.nodes[0].path.clone_from(&beating);
+        std::fs::create_dir_all(&dir).expect("the scratch directory");
+        let scope = format!("{ROOT}/node/node-01");
+        let beater = std::thread::spawn(move || {
+            let started = Instant::now();
+            while started.elapsed() < Duration::from_secs(4) {
+                let beat = Beat {
+                    unix_nanos: now_unix_nanos(),
+                    rounds: 0,
+                };
+                let text = toml::to_string(&beat).expect("a beat serialises");
+                std::fs::write(heartbeat::beside(&beating), text).ok();
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let started = Instant::now();
+        let mut last = Snapshot::new();
+        while started.elapsed() < Duration::from_secs(3) {
+            last = cluster.tick().clone();
         }
-        assert_eq!(cluster.restarts(), 0, "a starting node is not hung");
+        beater.join().expect("the beats were written");
+        assert_eq!(cluster.restarts(), 0, "a beating node is not hung");
         assert_eq!(cluster.alive(), 1);
-        let process = snapshot_record(&last, &format!("{ROOT}/node/node-01/system-process"));
+        let process = snapshot_record(&last, &format!("{scope}/system-process"));
         assert!(
-            process.evidence.starts_with("starting"),
+            process.evidence.starts_with("starting: beating"),
             "{}",
             process.evidence
+        );
+        cluster.stop();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The owner, 2026-09-26: a node that never beats is starting until its
+    /// allowance is over — the owner's ten seconds, here five — and then it
+    /// is restarted.
+    #[test]
+    fn a_node_that_never_beats_is_restarted_once_starting_is_over() {
+        let (dir, mut cluster) = judged(Stress::Calm, 1, 0, quick(Duration::from_secs(5)));
+        // A file the node never writes: as far as the cluster can tell, it
+        // has not beaten once.
+        cluster.nodes[0].path = dir.join("never-written.toml");
+        let process = format!("{ROOT}/node/node-01/system-process");
+        cluster.tick();
+        let last = cluster.tick().clone();
+        assert_eq!(cluster.restarts(), 0, "starting, within its allowance");
+        let record = snapshot_record(&last, &process);
+        assert!(
+            record.evidence.starts_with("starting, no beat"),
+            "{}",
+            record.evidence
+        );
+        cluster.tick();
+        cluster.tick();
+        assert_eq!(cluster.restarts(), 1, "silent past starting is hung");
+        cluster.stop();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The owner, 2026-09-26: more than a millisecond, apart from load, is
+    /// wrong. A pass over idle nodes reads each one's beat — a few bytes —
+    /// and neither reads nor parses a publication whose round has not moved;
+    /// on 2026-09-26 the pass re-read every node's whole file and one pass
+    /// over nineteen brutal nodes took longer than ten seconds.
+    #[test]
+    fn a_pass_over_idle_nodes_reads_their_beats_and_parses_nothing() {
+        const NODES: usize = 4;
+        const PASSES: u32 = 100;
+        let (dir, mut cluster) = spawn(Stress::Calm, NODES, 0);
+        std::fs::create_dir_all(&dir).expect("the scratch directory");
+        // A publication the size a brutal node writes, and a beat saying its
+        // first round is done, each only this test writes.
+        let mut published = Snapshot::new();
+        for leaf in 0..2_000 {
+            published.record_health(HealthRecord {
+                scope: format!("{ROOT}/node/idle/exclusive-claim/file/{leaf}"),
+                health: Health::Fine,
+                severity: 0,
+                evidence: "one holder at a time".to_string(),
+                observed_unix_nanos: 7,
+            });
+        }
+        let text = crate::report::node_toml(&format!("{ROOT}/node/idle"), &published, Vec::new());
+        let beat = toml::to_string(&Beat {
+            unix_nanos: 7,
+            rounds: 1,
+        })
+        .expect("a beat serialises");
+        for (index, node) in cluster.nodes.iter_mut().enumerate() {
+            node.path = dir.join(format!("idle-{index}.toml"));
+            std::fs::write(&node.path, &text).expect("a publication");
+            std::fs::write(heartbeat::beside(&node.path), &beat).expect("a beat");
+        }
+        cluster.read_all();
+        assert!(cluster.nodes.iter().all(|node| node.parses == 1));
+
+        let started = Instant::now();
+        for _ in 0..PASSES {
+            cluster.read_all();
+        }
+        let per_node = started.elapsed() / (PASSES * u32::try_from(NODES).expect("few"));
+        assert!(
+            cluster.nodes.iter().all(|node| node.parses == 1),
+            "an idle node's publication is not parsed again"
+        );
+        assert!(
+            per_node < Duration::from_millis(1),
+            "a pass cost {per_node:?} per idle node"
         );
         cluster.stop();
         std::fs::remove_dir_all(&dir).ok();
@@ -421,9 +599,9 @@ mod tests {
         )
         .expect("the cluster spawns");
 
-        let mut snapshot = cluster.tick();
+        let mut snapshot = cluster.tick().clone();
         for _ in 0..40 {
-            snapshot = merge_into(snapshot, &cluster.tick());
+            snapshot = merge_into(snapshot, cluster.tick());
             if !snapshot
                 .health(&format!("{ROOT}/node/gamma/send"))
                 .is_empty()
@@ -465,6 +643,52 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// The owner, 2026-09-26: *if something takes more than a millisecond,
+    /// apart from load, something is wrong.* A node's first beat is the first
+    /// thing it does, so it lands within milliseconds of the process being
+    /// asked to start — measured from the spawn, which counts the operating
+    /// system's own start-up, so the bound is generous; it is not seconds.
+    #[test]
+    fn a_node_beats_within_milliseconds_of_its_start() {
+        let dir = scratch("cluster-first-beat");
+        let snapshot = dir.join("alpha.toml");
+        let binary = built_node_binary();
+        // Once refused first: the operating system's scan of an image it has
+        // not run before is the machine's load, not the node's start.
+        Command::new(&binary).args(["--refused", "x"]).output().ok();
+        let asked = now_unix_nanos();
+        let mut child = Command::new(binary)
+            .args(["--name", "alpha", "--stress", "calm", "--rounds", "0"])
+            .args(["--beat-ms", "60000"])
+            .arg("--shared")
+            .arg(dir.join("shared"))
+            .arg("--snapshot")
+            .arg(&snapshot)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("the node binary runs");
+        let waiting = Instant::now();
+        let beat = loop {
+            let text = std::fs::read_to_string(heartbeat::beside(&snapshot)).ok();
+            if let Some(beat) = text.as_deref().and_then(Beat::read) {
+                break beat;
+            }
+            assert!(waiting.elapsed() < Duration::from_secs(10), "no beat");
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        std::fs::write(dir.join("shared").join("stop"), b"stop").ok();
+        child.kill().ok();
+        child.wait().ok();
+        let took = Duration::from_nanos((beat.unix_nanos - asked).unsigned_abs());
+        assert_eq!(beat.rounds, 0, "before its first round");
+        assert!(
+            took < Duration::from_secs(1),
+            "the first beat took {took:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn a_node_told_an_unknown_scenario_is_refused_with_exit_code_two() {
         let dir = scratch("cluster-refused");
@@ -494,9 +718,9 @@ mod tests {
     #[ignore = "forty processes; run on purpose"]
     fn brutal_cluster_of_forty() {
         let (dir, mut cluster) = spawn(Stress::Brutal, Stress::Brutal.nodes(), 0);
-        let mut snapshot = cluster.tick();
+        let mut snapshot = cluster.tick().clone();
         for _ in 0..4 {
-            snapshot = merge_into(snapshot, &cluster.tick());
+            snapshot = merge_into(snapshot, cluster.tick());
         }
         let published = cluster
             .names()

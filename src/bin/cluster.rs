@@ -166,8 +166,16 @@ fn main() -> ExitCode {
         }
         round += 1;
 
-        let snapshot = cluster.tick();
-        let text = node_toml(&root, &snapshot, cluster.hops());
+        // Published only when the view changed: an unchanged one is neither
+        // written here nor read again by the roll (the owner, 2026-09-26).
+        cluster.tick();
+        if !cluster.changed() {
+            if !arguments.interval.is_zero() {
+                std::thread::sleep(arguments.interval);
+            }
+            continue;
+        }
+        let text = node_toml(&root, cluster.view(), cluster.hops());
         if let Err(error) = write_atomic(&arguments.snapshot, &text) {
             let problem = format!(
                 "cluster {root}: could not publish to {}: {error}",

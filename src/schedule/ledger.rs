@@ -24,10 +24,16 @@ pub struct Ledger {
     tallies: BTreeMap<String, Tally>,
     activity: Activity,
     item_seq: u64,
-    streams: u64,
-    messages: u64,
-    journeys: u64,
-    moved_bytes: u64,
+    stages: BTreeMap<Stage, Throughput>,
+}
+
+/// What one stage of the message path has moved: the items it delivered —
+/// what [`Counted::at`] says the stage counts — the bytes it sent out, and
+/// the rounds that failed there.
+#[derive(Clone, Copy, Debug, Default)]
+struct Throughput {
+    delivered: u64,
+    bytes: u64,
     failed: u64,
 }
 
@@ -40,11 +46,7 @@ impl Ledger {
             tallies: BTreeMap::new(),
             activity: Activity::with_capacity(2048),
             item_seq: 0,
-            streams: 0,
-            messages: 0,
-            journeys: 0,
-            moved_bytes: 0,
-            failed: 0,
+            stages: BTreeMap::new(),
         }
     }
 
@@ -63,23 +65,24 @@ impl Ledger {
         // operator drills to the step that failed.
         let is_transport = verdict.point.is_none();
 
-        if is_transport && matches!(verdict.outcome, Outcome::Delivered) {
-            match verdict.stage {
-                Stage::Receive => self.streams += 1,
-                Stage::Process => self.journeys += 1,
-                Stage::Send => {
-                    self.messages += 1;
-                    self.moved_bytes += verdict.bytes;
+        if is_transport {
+            let moved = self.stages.entry(verdict.stage).or_default();
+            match verdict.outcome {
+                Outcome::Delivered => {
+                    moved.delivered += 1;
+                    // The bytes that moved are the ones sent out.
+                    if verdict.stage == Stage::Send {
+                        moved.bytes += verdict.bytes;
+                    }
                 }
+                // What the operator's F says. Counted at the transport verdict
+                // for the reason the throughput is: one round that failed is
+                // one failure, not one per identity step beneath it. A
+                // one-sided transport is not one — nothing is broken there,
+                // and the verdict already says so in yellow.
+                Outcome::Failed(_) => moved.failed += 1,
+                Outcome::OneSided(_) => {}
             }
-        }
-
-        // What the operator's F says. Counted at the transport verdict for the
-        // reason the throughput is: one round that failed is one failure, not
-        // one per identity step beneath it. A one-sided transport is not one —
-        // nothing is broken there, and the verdict already says so in yellow.
-        if is_transport && matches!(verdict.outcome, Outcome::Failed(_)) {
-            self.failed += 1;
         }
 
         let scope = verdict.scope(&self.node);
@@ -101,10 +104,16 @@ impl Ledger {
     }
 
     /// Close a round: the pairs that waited keep their standing on the board,
-    /// and the cumulative throughput is published at the node scope — Streams
-    /// in at Receive, Journeys through Process, Messages out at Send, the
-    /// Bytes that moved, and the rounds that Failed. These are what the
-    /// operator's stage cards count and what the prompt's letters read.
+    /// and the cumulative throughput is published at each stage's own scope,
+    /// `<node>/<stage>` — Streams in at Receive, Journeys through Process,
+    /// Messages out at Send with the Bytes that moved, and the rounds that
+    /// Failed at each. These are what the operator's stage cards count and
+    /// what the prompt's letters read. Until 2026-09-26 all five were counted
+    /// at the node scope, so a stage card could only sum the whole cluster,
+    /// and the Receive card counted the daily backlog's drained Streams as
+    /// received. Only a stage this ledger judged is published: a receiving
+    /// node publishes no Messages, rather than a zero that says none were
+    /// sent where the truth is that it sends nothing.
     pub fn close(&self, snapshot: &mut Snapshot, now: i64) {
         let published: BTreeSet<String> = snapshot
             .health_records()
@@ -122,21 +131,25 @@ impl Ledger {
         // publisher does not carry is a dash on every surface, which is what
         // this is. The owner, 2026-09-20, looked for T and F in a run that had
         // faults; F was never published and T has nothing behind it yet.
-        for (counted, value) in [
-            (Counted::Streams, self.streams),
-            (Counted::Journeys, self.journeys),
-            (Counted::Messages, self.messages),
-            (Counted::Bytes, self.moved_bytes),
-            (Counted::Failed, self.failed),
-        ] {
-            snapshot.record_count(Count {
-                scope: self.node.clone(),
-                counted,
-                value,
-                window_start_unix_nanos: now,
-                window_end_unix_nanos: now,
-                observed_unix_nanos: now,
-            });
+        for (&stage, moved) in &self.stages {
+            let scope = format!("{}/{}", self.node, stage.name());
+            let mut counts = vec![
+                (Counted::at(stage), moved.delivered),
+                (Counted::Failed, moved.failed),
+            ];
+            if stage == Stage::Send {
+                counts.push((Counted::Bytes, moved.bytes));
+            }
+            for (counted, value) in counts {
+                snapshot.record_count(Count {
+                    scope: scope.clone(),
+                    counted,
+                    value,
+                    window_start_unix_nanos: now,
+                    window_end_unix_nanos: now,
+                    observed_unix_nanos: now,
+                });
+            }
         }
     }
 

@@ -231,3 +231,11 @@ missing_errors_doc = "warn"
 missing_panics_doc = "warn"
 unwrap_used = "warn"
 expect_used = "allow"
+
+# The Playground's binaries run as cargo's debug build (Start-XmipTest), and
+# there a node's publication took 355 ms to parse and the cluster's 5.4 s:
+# toml and serde unoptimized are twenty times slower. The owner, 2026-09-26:
+# *if something takes more than a millisecond, apart from load, something is
+# wrong.* Every dependency is built optimized; this crate stays debuggable.
+[profile.dev.package."*"]
+opt-level = 3

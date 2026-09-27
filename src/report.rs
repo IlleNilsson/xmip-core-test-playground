@@ -36,9 +36,13 @@ fn source(node: &str) -> String {
     format!("playground — {node}")
 }
 
-/// A roll's snapshot: the records beneath `node`, every kind summed at
-/// `node`, and — when the roll has them — the communication topology under
-/// `[topology]` and what the run was started with under `[run]`.
+/// A roll's snapshot: the records beneath `node`, every count at the scope
+/// it was recorded at — a stage of a node, a scenario — and, when the roll
+/// has them, the communication topology under `[topology]` and what the run
+/// was started with under `[run]`. A reader sums what is beneath any scope
+/// it is asked about. Until 2026-09-26 a roll summed every kind at `node` and
+/// wrote only the sums, so every surface showed a dash for every figure of
+/// every node and stage while the cluster's own file held them.
 #[must_use]
 pub fn roll_toml(
     node: &str,
@@ -46,7 +50,7 @@ pub fn roll_toml(
     topology: Option<Topology>,
     run: Option<Run>,
 ) -> String {
-    Publication::of(&source(node), node, snapshot)
+    Publication::whole(&source(node), node, snapshot)
         .with_topology(topology)
         .with_run(run)
         .to_toml()
@@ -168,6 +172,18 @@ mod tests {
                 .map(|count| count.value),
             "the node's counts survive at the node's scope"
         );
+        assert_eq!(
+            read.measure("xmip:///playground/receive", Counted::Streams)
+                .map(|count| count.value),
+            written
+                .measure("xmip:///playground/receive", Counted::Streams)
+                .map(|count| count.value),
+            "a count stays at the stage it was taken at, so a stage has figures"
+        );
+        assert!(
+            read.measure("xmip:///playground/receive", Counted::Streams)
+                .is_some()
+        );
         assert!(node_from_toml("not = [toml").is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -208,8 +224,10 @@ mod tests {
         let mut schedule =
             Schedule::new("xmip:///playground", &dir).over(crate::support::three(&dir));
         let mut history = History::default();
-        history.record(&schedule.tick());
-        history.record(&schedule.tick());
+        // As a roll records a round: the node's rollup beside every scope's own
+        // series, since a count sits at the stage that took it (curve.rs).
+        crate::record_round(&mut history, "xmip:///playground", &schedule.tick());
+        crate::record_round(&mut history, "xmip:///playground", &schedule.tick());
 
         let text = history_toml("xmip:///playground", &history);
         let parsed: toml::Value = text.parse().expect("valid TOML");
