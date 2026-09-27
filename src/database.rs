@@ -115,7 +115,8 @@ pub struct MysqlCabinet;
 
 impl MysqlCabinet {
     fn serve(listener: &TcpListener) -> transport::Result<()> {
-        use transport_mysql::{Answer, Login, Session};
+        use transport::Login;
+        use transport_mysql::{Answer, Session};
         let login = Login::new("xmip", "");
         let held: Held = Arc::default();
         let keep = Arc::clone(&held);

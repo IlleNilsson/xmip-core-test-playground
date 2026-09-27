@@ -60,7 +60,7 @@ pub use spawned::Spawned;
 
 use crate::handoff::Hop;
 use crate::stress::Stress;
-use crate::support::now_unix_nanos;
+use observe::now_unix_nanos;
 
 /// The fixture root this crate's tests publish under. A roll is a cluster the
 /// owner named; a test spawns nodes, never a cluster (ADR-0052, 2026-09-14).

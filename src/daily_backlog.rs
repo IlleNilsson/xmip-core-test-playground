@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use observe::{Count, Counted, Snapshot};
 
 use crate::standing::{Mark, Standing};
-use crate::support::now_unix_nanos;
+use observe::now_unix_nanos;
 
 /// Files that arrive each round — the day's steady inflow.
 const ARRIVAL: usize = 30;

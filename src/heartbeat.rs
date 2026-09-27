@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::support::now_unix_nanos;
+use observe::now_unix_nanos;
 
 /// One beat: when the node said it is alive, and how many rounds it had
 /// finished by then — `0` while its first is under way.

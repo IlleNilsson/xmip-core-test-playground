@@ -44,7 +44,7 @@ use observe::{HealthRecord, Snapshot};
 use crate::fault::fires_keyed;
 use crate::standing::{Mark, Standing};
 use crate::stress::{Stress, scaled_rate};
-use crate::support::now_unix_nanos;
+use observe::now_unix_nanos;
 use pickup::{Processed, Reader, ledger, list, remove_lane, stage_lane};
 
 /// Competing reader threads per round.

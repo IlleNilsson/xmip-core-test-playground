@@ -32,8 +32,8 @@ use crate::fault::fires_keyed;
 use crate::schedule::CONTRACTS;
 use crate::standing::{Mark, Standing};
 use crate::stress::{Stress, scaled_rate};
-use crate::support::now_unix_nanos;
 use crate::verdict::Contract;
+use observe::now_unix_nanos;
 
 /// Seconds in a day — the unit the simulated clock is quantised to for creation.
 const SECONDS_PER_DAY: u64 = 86_400;

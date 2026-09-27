@@ -1,11 +1,7 @@
-//! Small helpers shared across the scenarios: the wall clock every scenario
-//! stamps its records with, and — for tests — a scratch directory and the
-//! one judgement every cabinet is held to.
-//!
-//! `now_unix_nanos` lived in `schedule.rs` and five other scenarios reached into
-//! it; it belongs in a neutral place, not in one scenario's module.
-
-use std::time::{SystemTime, UNIX_EPOCH};
+//! Small helpers shared across the scenarios: the cluster a roll is, and —
+//! for tests — a scratch directory and the one judgement every cabinet is
+//! held to. The wall clock every scenario stamps its records with is
+//! observe's, `observe::now_unix_nanos`.
 
 /// The cluster a roll is (ADR-0028), by the name the owner gave it in
 /// `XMIP_PLAYGROUND_CLUSTER`; `None` when nobody named one. A test may spawn
@@ -30,17 +26,6 @@ pub fn cluster_root() -> String {
         || crate::cluster::ROOT.to_string(),
         |name| format!("xmip:///{name}"),
     )
-}
-
-/// Now, in unix nanoseconds, saturating rather than failing before the epoch or
-/// past `i64`.
-#[must_use]
-pub fn now_unix_nanos() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            i64::try_from(since.as_nanos()).unwrap_or(i64::MAX)
-        })
 }
 
 /// Three transports, one of each kind a schedule meets — a directory, a
@@ -68,7 +53,7 @@ pub(crate) fn three(dir: &std::path::Path) -> Vec<Box<dyn crate::exchange::Round
 /// parallel tests never collide. The test removes it when done.
 #[cfg(test)]
 pub(crate) fn scratch(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("xmip-play-{name}-{}", now_unix_nanos()));
+    let dir = std::env::temp_dir().join(format!("xmip-play-{name}-{}", observe::now_unix_nanos()));
     std::fs::remove_dir_all(&dir).ok();
     dir
 }

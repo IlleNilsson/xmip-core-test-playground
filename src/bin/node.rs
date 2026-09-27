@@ -358,7 +358,7 @@ fn record(scope: String, evidence: String) -> observe::HealthRecord {
         health: observe::Health::Fine,
         severity: 0,
         evidence,
-        observed_unix_nanos: xmip_core_test_playground::now_unix_nanos(),
+        observed_unix_nanos: observe::now_unix_nanos(),
     }
 }
 

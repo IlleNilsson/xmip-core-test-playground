@@ -33,8 +33,8 @@ use crate::fault::fires_keyed;
 use crate::schedule::CONTRACTS;
 use crate::standing::{Mark, Standing};
 use crate::stress::{self, Stress, scaled_rate};
-use crate::support::now_unix_nanos;
 use crate::verdict::Contract;
+use observe::now_unix_nanos;
 
 pub use payload::as_stream;
 pub(crate) use payload::{filler, large_payload};

@@ -22,8 +22,8 @@ use crate::exchange::{Exchange, RoundTrip, all_transports};
 use crate::fault::fires_keyed;
 use crate::schedule::CONTRACTS;
 use crate::stress::{Stress, scaled_rate};
-use crate::support::now_unix_nanos;
 use crate::verdict::Contract;
+use observe::now_unix_nanos;
 
 /// How many recent latencies each pair keeps for its percentiles.
 const RING: usize = 256;

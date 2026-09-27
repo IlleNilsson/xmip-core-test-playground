@@ -29,8 +29,8 @@ use crate::identity::IdentityFaults;
 use crate::identity::verdicts::{receive_verdicts, send_verdict};
 use crate::round_trip::{round_trip, round_trip_with};
 use crate::stress::{self, Stress};
-use crate::support::now_unix_nanos;
 use crate::verdict::{Contract, Outcome, Verdict};
+use observe::now_unix_nanos;
 
 pub use ledger::Ledger;
 pub use tally::Tally;

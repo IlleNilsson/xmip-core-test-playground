@@ -40,8 +40,8 @@ use crate::roster::Roster;
 use crate::round_trip::{carried, held};
 use crate::schedule::{Ledger, all_pairs, drive_each, slice};
 use crate::stress::Stress;
-use crate::support::now_unix_nanos;
 use crate::verdict::{Contract, Outcome, Verdict};
+use observe::now_unix_nanos;
 
 /// What one pair came to at this node's stage: the stage's verdict first,
 /// then any identity steps, and what to hand on when the stage delivered.

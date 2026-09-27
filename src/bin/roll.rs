@@ -74,6 +74,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use observe::now_unix_nanos;
 use observe::{History, Run};
 use xaudit::program_audit::ProgramAudit;
 use xmip_core_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
@@ -83,7 +84,7 @@ use xmip_core_test_playground::publication::Publication;
 use xmip_core_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_core_test_playground::{
     Budget, Headroom, Roster, Stress, cluster_name, cluster_root, cluster_topology, complement,
-    now_unix_nanos, record_round, redraw, started, summarise,
+    record_round, redraw, started, summarise,
 };
 use xmip_core_test_playground::{image, process_audit};
 

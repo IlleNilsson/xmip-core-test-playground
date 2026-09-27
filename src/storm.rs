@@ -32,8 +32,8 @@ use crate::round_trip::round_trip_with;
 use crate::schedule::{CONTRACTS, drive_pairs};
 use crate::standing::{Mark, Standing};
 use crate::stress::{self, Stress};
-use crate::support::now_unix_nanos;
 use crate::verdict::{Contract, Outcome};
+use observe::now_unix_nanos;
 
 /// One pair judged this round.
 struct Line {
