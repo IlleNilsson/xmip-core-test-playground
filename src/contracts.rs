@@ -127,14 +127,6 @@ impl ContractTrait for ContentContract {
     }
 }
 
-fn issue(message: impl Into<String>) -> ValidationIssue {
-    ValidationIssue {
-        code: "malformed".to_string(),
-        message: message.into(),
-        path: None,
-    }
-}
-
 /// The one structural check per local contract. Empty means it held. Every contract
 /// with a contract technology never reaches here: `validate` hands it over.
 fn check(contract: Contract, bytes: &[u8]) -> Vec<ValidationIssue> {
@@ -159,7 +151,9 @@ fn check(contract: Contract, bytes: &[u8]) -> Vec<ValidationIssue> {
         | Contract::Sql => Vec::new(),
         Contract::Text => match std::str::from_utf8(bytes) {
             Ok(_) => Vec::new(),
-            Err(error) => vec![issue(format!("not valid UTF-8: {error}"))],
+            Err(error) => vec![ValidationIssue::malformed(format!(
+                "not valid UTF-8: {error}"
+            ))],
         },
         Contract::Html => has_markup(bytes),
     }
@@ -169,8 +163,10 @@ fn check(contract: Contract, bytes: &[u8]) -> Vec<ValidationIssue> {
 fn has_markup(bytes: &[u8]) -> Vec<ValidationIssue> {
     match std::str::from_utf8(bytes) {
         Ok(text) if text.contains('<') && text.contains('>') => Vec::new(),
-        Ok(_) => vec![issue("no HTML markup found")],
-        Err(error) => vec![issue(format!("not valid UTF-8: {error}"))],
+        Ok(_) => vec![ValidationIssue::malformed("no HTML markup found")],
+        Err(error) => vec![ValidationIssue::malformed(format!(
+            "not valid UTF-8: {error}"
+        ))],
     }
 }
 
