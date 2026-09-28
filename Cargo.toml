@@ -50,6 +50,8 @@ node = { package = "xmip-core-node", git = "https://github.com/IlleNilsson/xmip-
 xaudit = { package = "xmip-core-audit", git = "https://github.com/IlleNilsson/xmip-core-audit", branch = "main" }
 observe ={ package = "xmip-core-observe", git = "https://github.com/IlleNilsson/xmip-core-observe", branch = "main" }
 transport = { package = "xmip-core-transport", git = "https://github.com/IlleNilsson/xmip-core-transport", branch = "main" }
+# The one refusal of a size over a ceiling (`net::ceiling`).
+net = { package = "xmip-core-library-net", git = "https://github.com/IlleNilsson/xmip-core-library-net", branch = "main" }
 
 # One technology repository per protocol (ADR-0010), each mounted under the
 # transport capability. The RoundTrip adapters drive these.

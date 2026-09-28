@@ -17,7 +17,7 @@
 
 use std::time::Duration;
 
-use transport::ceiling;
+use net::ceiling;
 use transport::{LOOPBACK_TIMEOUT, Loopback};
 use transport_file::FileTransport;
 use transport_tcp::TcpTransport;
