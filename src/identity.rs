@@ -30,11 +30,11 @@ use crate::verdict::{Contract, Outcome};
 /// The one Party the Playground stands up (ADR-0019): its test peers send
 /// as it into every Receive Location, and every Send Location delivers to
 /// it. What the topology calls the far end on either side.
-pub const PARTY: &str = "partner-x";
+pub const PARTY: &str = "party-x";
 
 /// The subject a well-formed arrival claims, and the Party it resolves to.
-const SUBJECT: &str = "CN=partner-x.example";
-fn partner() -> PartyId {
+const SUBJECT: &str = "CN=party-x.example";
+fn party_x() -> PartyId {
     PartyId::new(1)
 }
 
@@ -103,13 +103,13 @@ impl Authenticator for TlsAuthenticator {
     }
 }
 
-/// Resolves the subject to the partner Party. The Receive Location knows this
-/// partner.
-struct KnownPartner;
+/// Resolves the subject to the Playground's Party. The Receive Location knows
+/// this Party.
+struct KnownParty;
 
-impl PartyRegistry for KnownPartner {
+impl PartyRegistry for KnownParty {
     fn resolve(&self, _mechanism: &str, _purpose: Purpose, _value: &str) -> Option<PartyId> {
-        Some(partner())
+        Some(party_x())
     }
 }
 
@@ -366,10 +366,10 @@ fn run_authentication(
 ) -> Result<AuthenticatedIdentity, Refusal> {
     let acceptance = Acceptance::closed()
         .accepting(&mechanism::mutual_tls())
-        .from_party(partner());
+        .from_party(party_x());
     let authenticator = TlsAuthenticator { honest };
     let authenticators: [&dyn Authenticator; 1] = [&authenticator];
-    let registry = KnownPartner;
+    let registry = KnownParty;
     authenticate(&acceptance, &authenticators, &registry, presented)
 }
 

@@ -409,7 +409,7 @@ rise per second since the roll's last publication (`Topology::rate_since`),
 mood the worst leaf at either end — and the shared store with its
 ExclusiveClaim and DailyBacklog links only when those tests ran on a node.
 Outside the nodes are the Parties (`party`; ADR-0052, amendment 2026-09-29):
-the Playground's one Party, `partner-x` (`identity::PARTY`), drawn once as the
+the Playground's one Party, `party-x` (`identity::PARTY`), drawn once as the
 sender linked to every receive stage and once as the receiver linked from
 every send stage — never a box per transport far end. Each link's volume is
 what its stage counted (Streams at receive, Messages at send), its mood the

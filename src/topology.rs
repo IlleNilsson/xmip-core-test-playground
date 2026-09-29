@@ -304,8 +304,8 @@ mod tests {
                 ("node/gamma/send/tcp", "endpoint", "node/gamma/send"),
                 ("node/zeta", "node", "cluster"),
                 ("node/zeta/send", "stage", "node/zeta"),
-                ("party/sending/partner-x", "party", "cluster"),
-                ("party/receiving/partner-x", "party", "cluster"),
+                ("party/sending/party-x", "party", "cluster"),
+                ("party/receiving/party-x", "party", "cluster"),
                 ("shared", "location", "cluster"),
             ]
         );
@@ -380,7 +380,7 @@ mod tests {
                     0
                 ),
                 (
-                    "party/sending/partner-x",
+                    "party/sending/party-x",
                     "node/alpha/receive",
                     "send-receive",
                     "2 transports",
@@ -388,14 +388,14 @@ mod tests {
                 ),
                 (
                     "node/gamma/send",
-                    "party/receiving/partner-x",
+                    "party/receiving/party-x",
                     "send-receive",
                     "tcp",
                     0
                 ),
                 (
                     "node/zeta/send",
-                    "party/receiving/partner-x",
+                    "party/receiving/party-x",
                     "send-receive",
                     "no transport reported",
                     0
@@ -521,43 +521,43 @@ mod tests {
                 .unwrap_or_else(|| panic!("{id} is drawn"))
         };
 
-        let sends = link("party/sending/partner-x/alpha");
+        let sends = link("party/sending/party-x/alpha");
         assert_eq!(
             (sends.from.as_str(), sends.to.as_str()),
-            ("party/sending/partner-x", "node/alpha/receive")
+            ("party/sending/party-x", "node/alpha/receive")
         );
         assert_eq!((sends.volume, sends.state), (40, Health::Stressed));
         assert_eq!(sends.origin, Origin::Both);
         assert_eq!(
             sends.evidence,
-            "partner-x sends into alpha over 2 transports; worst over file: \
+            "party-x sends into alpha over 2 transports; worst over file: \
              the party is not permitted on this Receive Location"
         );
 
-        let delivers = link("party/receiving/partner-x/gamma");
+        let delivers = link("party/receiving/party-x/gamma");
         assert_eq!(
             (delivers.from.as_str(), delivers.to.as_str()),
-            ("node/gamma/send", "party/receiving/partner-x")
+            ("node/gamma/send", "party/receiving/party-x")
         );
         assert_eq!(
             (delivers.volume, delivers.state, delivers.protocol.as_str()),
             (31, Health::Stressed, "tcp"),
             "Messages at Send, not its bytes"
         );
-        let idle = link("party/receiving/partner-x/zeta");
+        let idle = link("party/receiving/party-x/zeta");
         assert_eq!((idle.origin, idle.volume), (Origin::Configured, 0));
         assert_eq!(
             idle.evidence,
-            "zeta delivers to partner-x; no transport reported yet"
+            "zeta delivers to party-x; no transport reported yet"
         );
 
         // A Party is Fine or Holding over the worst it faces (ADR-0041).
-        let sender = find(&topology, "party/sending/partner-x");
+        let sender = find(&topology, "party/sending/party-x");
         assert_eq!(
             (sender.label.as_str(), sender.scope.as_str(), sender.state),
             (
-                "partner-x",
-                "xmip:///playground/party/partner-x",
+                "party-x",
+                "xmip:///playground/party/party-x",
                 Health::Holding
             )
         );
@@ -568,7 +568,7 @@ mod tests {
             "{}",
             sender.evidence
         );
-        let receiver = find(&topology, "party/receiving/partner-x");
+        let receiver = find(&topology, "party/receiving/party-x");
         assert_eq!(receiver.state, Health::Holding);
         assert!(
             receiver
