@@ -27,6 +27,11 @@ use xcore::{Arriving, Layer, Mechanism, PartyId, Purpose, mechanism};
 use crate::fault::fires_keyed;
 use crate::verdict::{Contract, Outcome};
 
+/// The one Party the Playground stands up (ADR-0019): its test peers send
+/// as it into every Receive Location, and every Send Location delivers to
+/// it. What the topology calls the far end on either side.
+pub const PARTY: &str = "partner-x";
+
 /// The subject a well-formed arrival claims, and the Party it resolves to.
 const SUBJECT: &str = "CN=partner-x.example";
 fn partner() -> PartyId {
@@ -372,7 +377,7 @@ fn run_authorization(identity: AuthenticatedIdentity, action: Action, permits: b
     let facts = IdentityFacts::evaluate(Alignment::None, identity, None);
     let policy = LocationPolicy { permits };
     let policies: [&dyn Authorizer; 1] = [&policy];
-    let attempt = Attempt::new(action, "partner-x");
+    let attempt = Attempt::new(action, PARTY);
     authorize(&policies, &facts, &attempt, OnMisalignment::Accept)
 }
 

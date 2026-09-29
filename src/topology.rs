@@ -12,13 +12,18 @@
 //! it reported on. Between them run the handoffs, receive to process to send,
 //! one link per pair of stages configured to exchange them or that exchanged
 //! any, its volume the hops and its rate their rise per second since the
-//! roll's last publication (`Topology::rate_since`). A
+//! roll's last publication (`Topology::rate_since`). Outside them the
+//! Parties (the owner, 2026-09-29: *something is sending streams to a Xmip
+//! Node; a Xmip Node sends streams to somethings*): the one that sends into
+//! the receive stages and the one the send stages deliver to, each linked to
+//! the stages facing it (`party`). A
 //! drawn thing above its leaves is Fine or Holding (`Health::rolled`,
 //! ADR-0041); a link shows the worst leaf at either end. The
 //! shared directory is drawn only when a node ran a test over it. The model
 //! and its words are `observe::topology`'s, which writes and reads them; this
 //! file only draws (open problem 25).
 
+mod party;
 mod shared;
 mod stage;
 
@@ -63,6 +68,7 @@ pub fn cluster_topology(
     topology
         .links
         .extend(stage::handoff_links(snapshot, configured, hops));
+    party::draw(snapshot, &names, &mut topology);
     shared::draw(snapshot, &names, &mut topology);
     topology
 }
@@ -298,6 +304,8 @@ mod tests {
                 ("node/gamma/send/tcp", "endpoint", "node/gamma/send"),
                 ("node/zeta", "node", "cluster"),
                 ("node/zeta/send", "stage", "node/zeta"),
+                ("party/sending/partner-x", "party", "cluster"),
+                ("party/receiving/partner-x", "party", "cluster"),
                 ("shared", "location", "cluster"),
             ]
         );
@@ -371,6 +379,27 @@ mod tests {
                     "handoff",
                     0
                 ),
+                (
+                    "party/sending/partner-x",
+                    "node/alpha/receive",
+                    "send-receive",
+                    "2 transports",
+                    0
+                ),
+                (
+                    "node/gamma/send",
+                    "party/receiving/partner-x",
+                    "send-receive",
+                    "tcp",
+                    0
+                ),
+                (
+                    "node/zeta/send",
+                    "party/receiving/partner-x",
+                    "send-receive",
+                    "no transport reported",
+                    0
+                ),
                 ("node/gamma", "shared", "publish-consume", "file", 0),
                 ("node/gamma", "shared", "publish-consume", "file", 6),
             ]
@@ -382,7 +411,7 @@ mod tests {
             "the worst leaf involved"
         );
         assert_eq!(topology.links[1].origin, Origin::Both);
-        assert!((topology.links[4].progress - 0.75).abs() < f64::EPSILON);
+        assert!((topology.links[7].progress - 0.75).abs() < f64::EPSILON);
 
         let bare = cluster_topology(
             &Snapshot::new(),
@@ -455,6 +484,101 @@ mod tests {
         );
         later.rate_since(&earlier);
         assert!((later.links[0].rate - 2.0).abs() < f64::EPSILON);
+    }
+
+    /// The owner, 2026-09-29: *Something is sending streams to a Xmip Node.
+    /// A Xmip Node sends streams to somethings.* One box per Party and side,
+    /// a link per stage facing it, carrying what the stage counted and the
+    /// worst leaf beneath its endpoints, named by transport.
+    #[test]
+    fn a_party_sends_into_the_receive_stages_and_the_send_stages_deliver_to_one() {
+        let mut snapshot = published();
+        snapshot.record_health(record(
+            &format!("{ROOT}/node/alpha/receive/file/text/authorization"),
+            Health::Stressed,
+            "the party is not permitted on this Receive Location",
+        ));
+        for (stage, counted, value) in [
+            ("alpha/receive", Counted::Streams, 40),
+            ("gamma/send", Counted::Messages, 31),
+            ("gamma/send", Counted::Bytes, 9000),
+        ] {
+            snapshot.record_count(Count {
+                scope: format!("{ROOT}/node/{stage}"),
+                counted,
+                value,
+                window_start_unix_nanos: 7,
+                window_end_unix_nanos: 7,
+                observed_unix_nanos: 7,
+            });
+        }
+        let topology = cluster_topology(&snapshot, &roster(), true, &[], 9);
+        let link = |id: &str| {
+            topology
+                .links
+                .iter()
+                .find(|link| link.id == id)
+                .unwrap_or_else(|| panic!("{id} is drawn"))
+        };
+
+        let sends = link("party/sending/partner-x/alpha");
+        assert_eq!(
+            (sends.from.as_str(), sends.to.as_str()),
+            ("party/sending/partner-x", "node/alpha/receive")
+        );
+        assert_eq!((sends.volume, sends.state), (40, Health::Stressed));
+        assert_eq!(sends.origin, Origin::Both);
+        assert_eq!(
+            sends.evidence,
+            "partner-x sends into alpha over 2 transports; worst over file: \
+             the party is not permitted on this Receive Location"
+        );
+
+        let delivers = link("party/receiving/partner-x/gamma");
+        assert_eq!(
+            (delivers.from.as_str(), delivers.to.as_str()),
+            ("node/gamma/send", "party/receiving/partner-x")
+        );
+        assert_eq!(
+            (delivers.volume, delivers.state, delivers.protocol.as_str()),
+            (31, Health::Stressed, "tcp"),
+            "Messages at Send, not its bytes"
+        );
+        let idle = link("party/receiving/partner-x/zeta");
+        assert_eq!((idle.origin, idle.volume), (Origin::Configured, 0));
+        assert_eq!(
+            idle.evidence,
+            "zeta delivers to partner-x; no transport reported yet"
+        );
+
+        // A Party is Fine or Holding over the worst it faces (ADR-0041).
+        let sender = find(&topology, "party/sending/partner-x");
+        assert_eq!(
+            (sender.label.as_str(), sender.scope.as_str(), sender.state),
+            (
+                "partner-x",
+                "xmip:///playground/party/partner-x",
+                Health::Holding
+            )
+        );
+        assert!(
+            sender
+                .evidence
+                .starts_with("sends into alpha; worst at alpha over file: "),
+            "{}",
+            sender.evidence
+        );
+        let receiver = find(&topology, "party/receiving/partner-x");
+        assert_eq!(receiver.state, Health::Holding);
+        assert!(
+            receiver
+                .evidence
+                .starts_with("is delivered to by gamma, zeta; worst at gamma over tcp")
+        );
+
+        // No stage, no Party.
+        let bare = cluster_topology(&Snapshot::new(), &Roster::of(&["n".into()]), false, &[], 9);
+        assert!(bare.nodes.iter().all(|node| node.kind != NodeKind::Party));
     }
 
     #[test]
