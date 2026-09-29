@@ -115,7 +115,9 @@ fn main() -> ExitCode {
     }
 
     // What this process says of itself while it runs (ADR-0053): the cluster
-    // is the scope it is, and everything the Playground runs is test.
+    // is the scope it is, and everything the Playground runs is test. Every
+    // record from here carries it (ADR-0062, amendment 2026-09-29).
+    audit.locate(&root);
     let _declared = ::node::Declaration::new(called, &root, ::node::Purpose::Test)
         .declare()
         .map_err(|error| {

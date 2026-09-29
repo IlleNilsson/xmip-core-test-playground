@@ -298,6 +298,13 @@ record. Under `cargo test` the variable is `target/audit`
 (`.cargo/config.toml`), so no test writes to `.local-work/audit` or the
 operating system's log.
 
+Since 2026-09-29 each says whose it is on every record: the location it
+declares — `xmip:///C1` for the roll and its cluster, `xmip:///C1/node/R1`
+for a node — through `ProgramAudit::locate` where it declares itself, so the
+Audit view, `xmip-cli audit` and `Get-XmipAudit` group a run's records by
+cluster and node and never read a process name (ADR-0062, amendment
+2026-09-29).
+
 ### A cluster and its nodes: a node declares what it can do, 2026-09-19
 
 The owner: *Fleet is what I see in topology when running test, I would like to

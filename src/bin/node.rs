@@ -138,6 +138,10 @@ fn main() -> ExitCode {
     };
 
     let node = format!("{}/node/{}", cluster_root(), arguments.name);
+    // Every record from here, the panic hook's too, carries the location this
+    // node declares, so a reader knows whose it is (ADR-0062, amendment
+    // 2026-09-29).
+    audit.locate(&node);
 
     // What this process says of itself while it runs (ADR-0053), and what it
     // was started with, so Get-XmipTestNode reads the declaration and never

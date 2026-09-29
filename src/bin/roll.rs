@@ -126,7 +126,9 @@ fn main() {
 
     // What this process says of itself while it runs (ADR-0053): the roll is
     // the test over the cluster it starts, and everything the Playground runs
-    // is test.
+    // is test. Every record from here carries the same location, so a reader
+    // knows whose it is (ADR-0062, amendment 2026-09-29).
+    audit.locate(root);
     let _declared = ::node::Declaration::new(called, root, ::node::Purpose::Test)
         .declare()
         .map_err(|error| {
