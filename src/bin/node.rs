@@ -53,6 +53,12 @@
 //! what is outside the cluster only: an offline node takes handoffs like any
 //! other.
 //!
+//! **It hears itself** (ADR-0065, amendment 2026-09-29; `eventing.rs`): two
+//! Parties subscribe in its own hub, it raises an Event for each stage whose
+//! standing changed, takes the orders an operator left for it under
+//! `<shared>/orders` — pause, resume, remove a subscription — and publishes
+//! what its hub holds with its snapshot.
+//!
 //! Each round it publishes what it declared at `<node>/capability`, beside the
 //! `switch` record, so a surface reads a node's capabilities from the snapshot
 //! rather than from its name.
@@ -71,6 +77,7 @@ use node::Capability;
 use observe::Snapshot;
 use xaudit::program_audit::ProgramAudit;
 use xmip_core_test_playground::cluster::merge;
+use xmip_core_test_playground::eventing::Eventing;
 use xmip_core_test_playground::scenario::{
     self, DAILY_BACKLOG, EXCLUSIVE_CLAIM, ROUND_TRIP, drives,
 };
@@ -168,6 +175,7 @@ fn main() -> ExitCode {
         )
     });
     let stop = shared.join("stop");
+    let mut eventing = Eventing::start(&node, shared, &arguments.capability, &audit);
 
     let mut round = 0;
     while arguments.rounds == 0 || round < arguments.rounds {
@@ -198,6 +206,7 @@ fn main() -> ExitCode {
             observe::capability::scope(&node),
             arguments.capability.evidence(),
         ));
+        eventing.round(&mut snapshot);
 
         let hops = relays
             .iter()

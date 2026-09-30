@@ -26,6 +26,10 @@ pub struct Publication {
     pub activity: PathBuf,
     run: Run,
     audit: ProgramAudit,
+    /// Where the cluster's nodes take an operator's orders, said in every
+    /// snapshot so a surface knows where to leave one (ADR-0065, amendment
+    /// 2026-09-29); empty where there is no cluster.
+    orders: String,
 }
 
 impl Publication {
@@ -40,7 +44,15 @@ impl Publication {
             activity,
             run,
             audit,
+            orders: String::new(),
         }
+    }
+
+    /// The same, saying that the nodes take their orders in `orders`.
+    #[must_use]
+    pub fn taking_orders(mut self, orders: &Path) -> Self {
+        self.orders = orders.display().to_string();
+        self
     }
 
     /// A file called `name` beside the snapshot — where the cluster process
@@ -59,7 +71,13 @@ impl Publication {
         history: &History,
         activity: &Activity,
     ) {
-        let text = roll_toml(root, snapshot, topology, Some(self.run.clone()));
+        let text = roll_toml(
+            root,
+            snapshot,
+            topology,
+            Some(self.run.clone()),
+            &self.orders,
+        );
         self.write(&self.snapshot, &text, "snapshot");
         self.write(&self.history, &history_toml(root, history), "history");
         self.write(&self.activity, &activity_toml(root, activity), "activity");

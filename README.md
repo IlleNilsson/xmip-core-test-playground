@@ -283,6 +283,21 @@ reads as `xmip-playground-C1-node-roll`, which is no roll of anything. The
 marker is what keeps the kinds apart, so no name is refused to make the shape
 convenient; only a name no file can carry is REFUSED before anything spawns.
 
+### Every node hears itself, 2026-09-29
+
+Every node subscribes two Parties in its own process, through
+`xmip-core-event`'s hub and nothing of its own (`src/eventing.rs`; ADR-0065,
+amendment 2026-09-29): *operations* hears every Event on the node and is
+called back, *on-call* hears the failures and is drained each round. A node
+raises an Event for each stage it serves whose failing pairs changed since
+the round before, so a steady node is quiet. It records what its hub holds in
+its snapshot, the cluster and the roll merge the subscriptions as they merge
+health, and the roll's snapshot says where the nodes take orders —
+`<shared>/orders`, beneath the directory the cluster shares. A surface over
+that snapshot leaves a pause, resume or remove there; the node that holds the
+subscription takes it at the start of its next round, applies it to its hub
+and publishes what came of it.
+
 ### Every process audits, 2026-09-25
 
 The roll, the cluster and every node record through `xmip-core-audit`

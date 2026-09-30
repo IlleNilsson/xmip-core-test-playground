@@ -586,7 +586,7 @@ mod tests {
         let snapshot = published();
         let topology = drawn();
 
-        let text = roll_toml(ROOT, &snapshot, Some(topology.clone()), None);
+        let text = roll_toml(ROOT, &snapshot, Some(topology.clone()), None, "");
         assert!(text.contains("[[topology.nodes]]"));
         assert!(text.contains("[[topology.links]]"));
         let parsed: toml::Value = text.parse().expect("valid TOML");

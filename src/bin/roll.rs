@@ -79,6 +79,7 @@ use observe::{History, Run};
 use xaudit::program_audit::ProgramAudit;
 use xmip_core_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
 use xmip_core_test_playground::environment::{self, max_seconds, time_factor};
+use xmip_core_test_playground::eventing;
 use xmip_core_test_playground::in_process::InProcess;
 use xmip_core_test_playground::publication::Publication;
 use xmip_core_test_playground::scenario::{ROUND_TRIP, drives};
@@ -151,7 +152,10 @@ fn main() {
     let mut history = History::with_capacity(3600);
 
     let limit: Option<u64> = std::env::args().nth(1).and_then(|arg| arg.parse().ok());
-    let publication = Publication::of(&cluster, run.clone(), audit.clone());
+    // The nodes take an operator's orders under the directory they share,
+    // and every snapshot says where (ADR-0065, amendment 2026-09-29).
+    let publication = Publication::of(&cluster, run.clone(), audit.clone())
+        .taking_orders(&eventing::orders(&shared(&base)));
     say_started(&audit, &run, limit, &publication.snapshot);
 
     // One cluster per roll (ADR-0028), and since 2026-09-19 a process of its
@@ -337,7 +341,7 @@ fn spawn_cluster(
     if orders.roster.is_empty() {
         return None;
     }
-    let shared = base.join("shared");
+    let shared = shared(base);
     let started =
         cluster_binary().and_then(|binary| Spawned::start(&binary, cluster, orders, &shared, path));
     match started {
@@ -347,6 +351,11 @@ fn spawn_cluster(
             None
         }
     }
+}
+
+/// The directory the cluster owns and its nodes share, beneath the roll's.
+fn shared(base: &Path) -> PathBuf {
+    base.join("shared")
 }
 
 /// One cluster per roll (ADR-0028): its name, its scope root, and its own

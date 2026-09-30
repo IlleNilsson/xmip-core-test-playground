@@ -58,6 +58,7 @@ pub mod curve;
 pub mod daily_backlog;
 pub mod database;
 pub mod environment;
+pub mod eventing;
 pub mod exchange;
 pub mod exclusive_claim;
 pub mod fault;
