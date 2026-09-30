@@ -12,8 +12,37 @@
 
 use std::collections::BTreeMap;
 
+use node::Declaration;
 use xaudit::program_audit::ProgramAudit;
 use xcore::{ExecutionPhase, Severity};
+
+use crate::environment;
+
+/// What the process declares of itself (ADR-0053 clause 3): `declaration`,
+/// saying `hidden = "true"` beside it where the run declared itself hidden
+/// ([`environment::hidden`]) — and then every record `audit` makes from
+/// here says so too (ADR-0028, amendment 2026-09-30). The roll, the cluster
+/// and every node declare through this, so the three say it the same way.
+///
+/// # Errors
+///
+/// When the declaration cannot say it, as [`Declaration::with`] refuses.
+pub fn declared(audit: &ProgramAudit, declaration: Declaration) -> Result<Declaration, String> {
+    declared_as(audit, declaration, environment::hidden())
+}
+
+/// [`declared`], told whether the run is hidden rather than reading it.
+fn declared_as(
+    audit: &ProgramAudit,
+    declaration: Declaration,
+    hidden: bool,
+) -> Result<Declaration, String> {
+    if !hidden {
+        return Ok(declaration);
+    }
+    audit.hide();
+    declaration.with("hidden", "true")
+}
 
 /// Record that the process started, with what it was started as.
 pub fn start(audit: &ProgramAudit, properties: &[(&str, &str)]) {
@@ -64,6 +93,7 @@ fn owned(properties: &[(&str, &str)]) -> BTreeMap<String, String> {
 mod tests {
     use super::*;
     use crate::support::scratch;
+    use node::Purpose;
 
     #[test]
     fn a_process_records_its_start_failure_and_stop_where_it_was_told() {
@@ -86,6 +116,24 @@ mod tests {
         ] {
             assert!(text.contains(said), "{said} in {text}");
         }
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn a_hidden_run_says_so_in_the_declaration_and_on_every_record() {
+        let directory = scratch("process-audit-hidden");
+        let audit = ProgramAudit::new("xmip-playground-Zt-roll", Some(&directory));
+        let bare = || Declaration::new("xmip-playground-Zt-roll", "xmip:///Zt", Purpose::Test);
+
+        let shown = declared_as(&audit, bare(), false).expect("declared");
+        assert!(!format!("{shown:?}").contains("hidden"), "{shown:?}");
+        assert!(!audit.hidden(), "a run that declared nothing is not hidden");
+
+        let hidden = declared_as(&audit, bare(), true).expect("declared");
+        assert!(format!("{hidden:?}").contains("hidden"), "{hidden:?}");
+        start(&audit, &[("cluster", "Zt")]);
+        let text = std::fs::read_to_string(audit.file().expect("a file sink")).expect("read");
+        assert!(text.contains("hidden = \"true\""), "{text}");
         std::fs::remove_dir_all(&directory).ok();
     }
 }

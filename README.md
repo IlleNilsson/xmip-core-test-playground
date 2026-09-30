@@ -507,7 +507,11 @@ and nothing here is worked out from a name), `-OnlineNodes` is
 (which of them may assume the internet, by name, ADR-0045; unset, every node
 reads `XMIP_ONLINE`), `-Duration` is
 `XMIP_PLAYGROUND_MAX_SECONDS`, `-TimeFactor` is `XMIP_PLAYGROUND_TIME_FACTOR`
-and `-LoadBytes` is `XMIP_PLAYGROUND_LOAD_BYTES`. A roll started by hand —
+and `-LoadBytes` is `XMIP_PLAYGROUND_LOAD_BYTES`. `-Hidden` is
+`XMIP_PLAYGROUND_HIDDEN=true`: the run declared itself hidden, and the roll
+says so in its `[run]` table, the roll, the cluster and every node in their
+process declarations and on every audit record, so a surface leaves it out
+until asked (ADR-0028, amendment 2026-09-30). A roll started by hand —
 `cargo run --bin xmip-playground-roll [rounds]` with those variables set — is the same roll,
 and `Get-XmipTestStatus` lists it too.
 

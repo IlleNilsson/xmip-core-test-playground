@@ -157,6 +157,17 @@ pub fn max_seconds() -> Option<Duration> {
         .map(Duration::from_secs_f64)
 }
 
+/// Whether the run declared itself hidden: `XMIP_PLAYGROUND_HIDDEN` is
+/// `true`, which `Start-XmipTest -Hidden` sets for an assistant's test run
+/// (the owner, 2026-09-29; ADR-0028, amendment 2026-09-30). The roll, its
+/// cluster and every node read it — a child inherits it — and say it in the
+/// `[run]` table, in each process declaration and on every audit record, so
+/// a surface leaves the run out by what it declared, never by its name.
+#[must_use]
+pub fn hidden() -> bool {
+    std::env::var("XMIP_PLAYGROUND_HIDDEN").is_ok_and(|said| said.trim() == "true")
+}
+
 /// The factor on time: `XMIP_PLAYGROUND_TIME_FACTOR` if set, else `1.0` (real
 /// time). Below one runs faster than real time, above one slower.
 #[must_use]

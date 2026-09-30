@@ -163,6 +163,7 @@ fn main() -> ExitCode {
     // was started with, so Get-XmipTestNode reads the declaration and never
     // parses this command line again.
     let _declared = declaration(called, &node, &arguments)
+        .and_then(|declaration| process_audit::declared(&audit, declaration))
         .and_then(|declaration| declaration.declare().map_err(|error| error.to_string()))
         .map_err(|error| {
             let problem = format!("node {}: could not declare itself: {error}", arguments.name);

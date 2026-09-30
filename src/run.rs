@@ -34,6 +34,7 @@ pub fn started(cluster: &str, chosen: &[String], roster: &Roster, stress: Stress
             .map(|name| (*name).to_string())
             .collect(),
         stress: stress.name().to_string(),
+        hidden: crate::environment::hidden(),
     }
 }
 
