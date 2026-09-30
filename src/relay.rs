@@ -27,9 +27,10 @@
 //! only what is outside the cluster (ADR-0045).
 
 use std::path::Path;
+use std::sync::Arc;
 
 use node::Stage;
-use observe::{Health, HealthRecord, Snapshot};
+use observe::Snapshot;
 
 use crate::exchange::{RoundTrip, all_transports};
 use crate::fault::FaultPlan;
@@ -40,6 +41,7 @@ use crate::roster::Roster;
 use crate::round_trip::{carried, held};
 use crate::schedule::{Ledger, all_pairs, drive_each, slice};
 use crate::stress::Stress;
+use crate::subscribing::Subscribing;
 use crate::verdict::{Contract, Outcome, Verdict};
 use observe::now_unix_nanos;
 
@@ -68,6 +70,9 @@ pub struct Relay {
     workers: usize,
     sequence: u64,
     unreadable: u64,
+    /// The node's Subscriptions, which route what its process stage hands
+    /// on (ADR-0013, amendment 2026-09-30).
+    subscribing: Option<Arc<Subscribing>>,
 }
 
 impl Relay {
@@ -111,6 +116,7 @@ impl Relay {
             workers: 1,
             sequence: 0,
             unreadable: 0,
+            subscribing: None,
         })
     }
 
@@ -160,6 +166,17 @@ impl Relay {
         self
     }
 
+    /// The same relay routing what its process stage hands on through the
+    /// node's Subscriptions: a pair one picks up goes on to the send stage,
+    /// a pair a paused one holds waits until it is resumed.
+    #[must_use]
+    pub fn subscribing(mut self, subscribing: Option<Arc<Subscribing>>) -> Self {
+        if self.stage == Stage::Process {
+            self.subscribing = subscribing;
+        }
+        self
+    }
+
     /// Drive these transports rather than every one, as a test wants.
     #[must_use]
     pub fn over(mut self, transports: Vec<Box<dyn RoundTrip>>) -> Self {
@@ -193,7 +210,13 @@ impl Relay {
 
         let mut snapshot = Snapshot::new();
         for mut one in judged {
+            let picked = |handoff: &Handoff| {
+                self.subscribing
+                    .as_ref()
+                    .is_none_or(|subscribing| subscribing.route(handoff))
+            };
             if let (Some(handoff), Some(verdict)) = (one.forward.take(), one.verdicts.first_mut())
+                && picked(&handoff)
                 && let Err(why) = self.hand_on(&handoff, now)
             {
                 verdict.outcome = Outcome::Failed(why);
@@ -203,8 +226,10 @@ impl Relay {
                 self.ledger.fold(verdict, &mut snapshot, now);
             }
         }
+        self.hand_on_released(now);
         self.ledger.close(&mut snapshot, now);
-        for record in self.handoff_records(now) {
+        let inbox = (self.stage != Stage::Receive).then(|| (self.inbox.waiting(), self.unreadable));
+        for record in self.hops.records(self.ledger.node(), inbox, now) {
             snapshot.record_health(record);
         }
         snapshot
@@ -329,6 +354,19 @@ impl Relay {
         }
     }
 
+    /// Hand on what a resume let go of, oldest first; what could not be
+    /// handed on stays held until the node starts again.
+    fn hand_on_released(&mut self, now: i64) {
+        let Some(subscribing) = self.subscribing.clone() else {
+            return;
+        };
+        for (handoff, released) in subscribing.released() {
+            if self.hand_on(&handoff, now).is_ok() {
+                subscribing.picked_up(&released);
+            }
+        }
+    }
+
     /// Deliver `handoff` to a node that declared the next stage — the one the
     /// pair hashes to — and record the hop.
     fn hand_on(&mut self, handoff: &Handoff, now: i64) -> Result<(), String> {
@@ -345,46 +383,6 @@ impl Relay {
         self.hops.record((&self.name, self.stage), (&to, next), now);
         Ok(())
     }
-
-    /// One record per link handed over, and one for the inbox: how many
-    /// handoffs wait, and whether any arrived unreadable.
-    fn handoff_records(&self, now: i64) -> Vec<HealthRecord> {
-        let node = self.ledger.node();
-        let record = |scope: String, health, severity, evidence| HealthRecord {
-            scope,
-            health,
-            severity,
-            evidence,
-            observed_unix_nanos: now,
-        };
-        let mut records: Vec<HealthRecord> = self
-            .hops
-            .links()
-            .map(|hop| {
-                record(
-                    format!("{node}/handoff/{}", hop.to),
-                    Health::Fine,
-                    0,
-                    format!("{} handoffs to {}", hop.count, hop.to),
-                )
-            })
-            .collect();
-        if self.stage != Stage::Receive {
-            let waiting = self.inbox.waiting();
-            let (health, severity) = if self.unreadable > 0 {
-                (Health::Stressed, 50)
-            } else {
-                (Health::Fine, 0)
-            };
-            records.push(record(
-                format!("{node}/handoff/inbox"),
-                health,
-                severity,
-                format!("{waiting} waiting, {} unreadable", self.unreadable),
-            ));
-        }
-        records
-    }
 }
 
 #[cfg(test)]
@@ -393,6 +391,7 @@ mod tests {
     use crate::exchange::{FileRoundTrip, TcpRoundTrip, UdpRoundTrip};
     use crate::schedule::CONTRACTS;
     use crate::support::scratch;
+    use observe::Health;
 
     const ROOT: &str = "xmip:///playground";
 

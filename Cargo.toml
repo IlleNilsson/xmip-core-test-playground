@@ -50,11 +50,26 @@ node = { package = "xmip-core-node", git = "https://github.com/IlleNilsson/xmip-
 xaudit = { package = "xmip-core-audit", git = "https://github.com/IlleNilsson/xmip-core-audit", branch = "main" }
 observe ={ package = "xmip-core-observe", git = "https://github.com/IlleNilsson/xmip-core-observe", branch = "main" }
 transport = { package = "xmip-core-transport", git = "https://github.com/IlleNilsson/xmip-core-transport", branch = "main" }
-# The Events a node raises, the subscriptions its hub holds, and the orders
-# an operator leaves for them (ADR-0065, amendment 2026-09-29).
+# The Events a node raises and the Event subscriptions its hub holds
+# (ADR-0065, amendment 2026-09-29).
 xevent = { package = "xmip-core-event", git = "https://github.com/IlleNilsson/xmip-core-event", branch = "main" }
 # The Parties a node's subscriptions are declared as, by name.
 party = { package = "xmip-core-party", git = "https://github.com/IlleNilsson/xmip-core-party", branch = "main" }
+# A node's Subscriptions, taken up from the TOML configuration it binds as a
+# real node takes them — read, bound and validated by the runtime, routed by
+# route's one publish, paused and resumed through the runtime's pickup
+# (ADR-0013, amendment 2026-09-30).
+runtime = { package = "xmip-core-runtime", git = "https://github.com/IlleNilsson/xmip-core-runtime", branch = "main" }
+configure = { package = "xmip-core-configure", git = "https://github.com/IlleNilsson/xmip-core-configure", branch = "main" }
+route = { package = "xmip-core-route", git = "https://github.com/IlleNilsson/xmip-core-route", branch = "main" }
+# Where a paused Subscription keeps what it holds, so a pause survives the
+# node: persist's runtime store over RocksDB, sealed under a key-encryption
+# key of the machine's key store — DPAPI on Windows, a private file on Unix.
+persist = { package = "xmip-core-persist", git = "https://github.com/IlleNilsson/xmip-core-persist", branch = "main" }
+rocksdb = { package = "xmip-core-persist-rocksdb", git = "https://github.com/IlleNilsson/xmip-core-persist-rocksdb", branch = "main" }
+secret = { package = "xmip-core-secret", git = "https://github.com/IlleNilsson/xmip-core-secret", branch = "main" }
+secret_dpapi = { package = "xmip-core-secret-dpapi", git = "https://github.com/IlleNilsson/xmip-core-secret-dpapi", branch = "main" }
+secret_file = { package = "xmip-core-secret-file", git = "https://github.com/IlleNilsson/xmip-core-secret-file", branch = "main" }
 # The one refusal of a size over a ceiling (`net::ceiling`).
 net = { package = "xmip-core-library-net", git = "https://github.com/IlleNilsson/xmip-core-library-net", branch = "main" }
 

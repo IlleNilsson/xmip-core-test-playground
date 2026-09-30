@@ -79,8 +79,8 @@ use observe::{History, Run};
 use xaudit::program_audit::ProgramAudit;
 use xmip_core_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
 use xmip_core_test_playground::environment::{self, max_seconds, time_factor};
-use xmip_core_test_playground::eventing;
 use xmip_core_test_playground::in_process::InProcess;
+use xmip_core_test_playground::operator_orders;
 use xmip_core_test_playground::publication::Publication;
 use xmip_core_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_core_test_playground::{
@@ -153,9 +153,10 @@ fn main() {
 
     let limit: Option<u64> = std::env::args().nth(1).and_then(|arg| arg.parse().ok());
     // The nodes take an operator's orders under the directory they share,
-    // and every snapshot says where (ADR-0065, amendment 2026-09-29).
+    // and every snapshot says where (ADR-0065, amendment 2026-09-29; ADR-0013,
+    // amendment 2026-09-30).
     let publication = Publication::of(&cluster, run.clone(), audit.clone())
-        .taking_orders(&eventing::orders(&shared(&base)));
+        .taking_orders(&operator_orders::orders(&shared(&base)));
     say_started(&audit, &run, limit, &publication.snapshot);
 
     // One cluster per roll (ADR-0028), and since 2026-09-19 a process of its

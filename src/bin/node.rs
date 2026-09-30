@@ -55,9 +55,15 @@
 //!
 //! **It hears itself** (ADR-0065, amendment 2026-09-29; `eventing.rs`): two
 //! Parties subscribe in its own hub, it raises an Event for each stage whose
-//! standing changed, takes the orders an operator left for it under
-//! `<shared>/orders` — pause, resume, remove a subscription — and publishes
-//! what its hub holds with its snapshot.
+//! standing changed, and publishes what its hub holds with its snapshot.
+//!
+//! **It routes by its Subscriptions** (ADR-0013, amendment 2026-09-30;
+//! `subscribing.rs`): a node that declared process binds the Playground's
+//! `RoundTrip` Application as a real node binds one, routes what its process
+//! stage hands on through its Subscriptions, and publishes them with its
+//! snapshot. It takes the orders an operator left for it under
+//! `<shared>/orders` (`operator_orders.rs`): pause, resume or remove an Event
+//! subscription; pause or resume a Subscription.
 //!
 //! Each round it publishes what it declared at `<node>/capability`, beside the
 //! `switch` record, so a surface reads a node's capabilities from the snapshot
@@ -71,6 +77,7 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
 use node::Capability;
@@ -78,9 +85,11 @@ use observe::Snapshot;
 use xaudit::program_audit::ProgramAudit;
 use xmip_core_test_playground::cluster::merge;
 use xmip_core_test_playground::eventing::Eventing;
+use xmip_core_test_playground::operator_orders;
 use xmip_core_test_playground::scenario::{
     self, DAILY_BACKLOG, EXCLUSIVE_CLAIM, ROUND_TRIP, drives,
 };
+use xmip_core_test_playground::subscribing::Subscribing;
 use xmip_core_test_playground::{
     DailyBacklog, ExclusiveClaim, Heartbeat, Relay, Roster, Stress, cluster_root, node_toml,
     write_atomic,
@@ -163,7 +172,8 @@ fn main() -> ExitCode {
 
     let shared = &arguments.shared;
     let chosen = &arguments.scenarios;
-    let mut relays = relays(&arguments, &node);
+    let subscribing = subscribing(&arguments, &node, &audit);
+    let mut relays = relays(&arguments, &node, subscribing.as_ref());
     let mut exclusive_claim = drives(chosen, EXCLUSIVE_CLAIM).then(|| {
         let scope = format!("{node}/{EXCLUSIVE_CLAIM}");
         ExclusiveClaim::shared(scope, shared.join(EXCLUSIVE_CLAIM)).at(arguments.stress)
@@ -175,7 +185,7 @@ fn main() -> ExitCode {
         )
     });
     let stop = shared.join("stop");
-    let mut eventing = Eventing::start(&node, shared, &arguments.capability, &audit);
+    let mut eventing = Eventing::start(&node, &arguments.capability, &audit);
 
     let mut round = 0;
     while arguments.rounds == 0 || round < arguments.rounds {
@@ -206,7 +216,11 @@ fn main() -> ExitCode {
             observe::capability::scope(&node),
             arguments.capability.evidence(),
         ));
+        operator_orders::take(shared, &node, &eventing, subscribing.as_deref(), &audit);
         eventing.round(&mut snapshot);
+        if let Some(subscribing) = &subscribing {
+            subscribing.round(&mut snapshot);
+        }
 
         let hops = relays
             .iter()
@@ -278,10 +292,36 @@ fn say_started(audit: &ProgramAudit, node: &str, arguments: &Arguments) {
     );
 }
 
+/// The node's Subscriptions, when it declared process and `RoundTrip` was
+/// chosen: its `RoundTrip` Application bound and read as a real node reads its
+/// configuration. One that will not start is audited, and the node runs on
+/// without it.
+fn subscribing(
+    arguments: &Arguments,
+    node: &str,
+    audit: &ProgramAudit,
+) -> Option<Arc<Subscribing>> {
+    let roster = arguments
+        .roster
+        .clone()
+        .declared(&arguments.name, arguments.capability.clone());
+    let processes = arguments
+        .capability
+        .features()
+        .contains(&::node::Stage::Process);
+    if !drives(&arguments.scenarios, ROUND_TRIP) || !processes || roster.refusal().is_some() {
+        return None;
+    }
+    Subscribing::start(node, &arguments.name, &roster, &arguments.shared, audit)
+        .map(Arc::new)
+        .map_err(|problem| process_audit::fail(audit, "subscribe", &problem))
+        .ok()
+}
+
 /// One relay per stage this node declared, when `RoundTrip` was chosen. This
 /// node's own `--can` is the last word on itself; the roster says what the
 /// others declared, so it knows who can take the next stage.
-fn relays(arguments: &Arguments, node: &str) -> Vec<Relay> {
+fn relays(arguments: &Arguments, node: &str, subscribing: Option<&Arc<Subscribing>>) -> Vec<Relay> {
     if !drives(&arguments.scenarios, ROUND_TRIP) {
         return Vec::new();
     }
@@ -304,7 +344,7 @@ fn relays(arguments: &Arguments, node: &str) -> Vec<Relay> {
                 shared,
                 &work,
             )
-            .map(|relay| relay.at(arguments.stress))
+            .map(|relay| relay.at(arguments.stress).subscribing(subscribing.cloned()))
         })
         .collect()
 }

@@ -1,6 +1,5 @@
-//! What a node raises and who hears it: the Events of its stages, the
-//! subscriptions its hub holds, and the acts an operator leaves for them
-//! (ADR-0065, amendment 2026-09-29).
+//! What a node raises and who hears it: the Events of its stages, and the
+//! Event subscriptions its hub holds (ADR-0065, amendment 2026-09-29).
 //!
 //! Every node subscribes two Parties in its own process — declared here, by
 //! name, as [`operations`] and [`on_call`] — through the event
@@ -9,28 +8,25 @@
 //! **on-call** hears the failures and is drained each round. Each round the
 //! node raises one Event per stage it serves whose standing changed — a
 //! failure when more of its pairs fail than the round before, a success
-//! when fewer — so a steady node is quiet and a stirring one is heard. Each
-//! round it takes the orders an operator left for it under
-//! `<shared>/orders` ([`xevent::order::Order`]) and applies them to its hub,
-//! and records what its hub holds in its snapshot, which the cluster and
-//! the roll publish as the node's subscriptions. The subscriptions are real
-//! ones: an operator who pauses one sees its queue fill, and one who removes
-//! one sees it gone.
+//! when fewer — so a steady node is quiet and a stirring one is heard. An
+//! operator's order on one of them reaches it through [`Eventing::act`]
+//! (`operator_orders.rs` takes the orders), and each round it records what
+//! its hub holds in its snapshot, which the cluster and the roll publish as
+//! the node's Event subscriptions. They are real ones: an operator who
+//! pauses one sees its queue fill, and one who removes one sees it gone.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use node::{Capability, Stage};
-use observe::{Health, Scope, Snapshot};
+use observe::{Act, Health, Scope, Snapshot};
 use party::{Party, PartyKind};
 use xaudit::program_audit::ProgramAudit;
 use xcore::PartyId;
 use xevent::Event;
 use xevent::filter::Filter;
-use xevent::hub::{Hub, Subscription};
+use xevent::hub::{EventSubscription, Hub};
 use xevent::listener::Listener;
-use xevent::order::Order;
 use xevent::outcome::Outcome;
 use xevent::subscriber::Subscriber;
 
@@ -58,33 +54,24 @@ pub fn on_call() -> Party {
     )
 }
 
-/// Where a cluster's nodes take an operator's orders, beneath the directory
-/// they share: the roll says so in its snapshot and every node looks there.
-#[must_use]
-pub fn orders(shared: &Path) -> PathBuf {
-    shared.join("orders")
-}
-
 /// How many Events each queue holds: small, so a paused one is seen to fill.
 const CAPACITY: usize = 64;
 
 /// A node's eventing.
 pub struct Eventing {
     node: String,
-    orders: PathBuf,
     stages: Vec<Stage>,
-    audit: ProgramAudit,
     _listening: Option<Listener>,
-    drained: Option<Subscription>,
+    drained: Option<EventSubscription>,
     failing: BTreeMap<Stage, usize>,
 }
 
 impl Eventing {
-    /// The node at `node` subscribes its two Parties and takes its orders
-    /// from `<shared>/orders`. A subscription the hub refused is audited as
-    /// the failure to `subscribe`, and the node runs on without it.
+    /// The node at `node` subscribes its two Parties. A subscription the
+    /// hub refused is audited as the failure to `subscribe`, and the node
+    /// runs on without it.
     #[must_use]
-    pub fn start(node: &str, shared: &Path, capability: &Capability, audit: &ProgramAudit) -> Self {
+    pub fn start(node: &str, capability: &Capability, audit: &ProgramAudit) -> Self {
         let hub = Hub::process();
         let everything = Filter::everything().beneath(node);
         let failures = Filter::everything().ending(Outcome::Failure).beneath(node);
@@ -114,31 +101,31 @@ impl Eventing {
 
         Self {
             node: node.to_string(),
-            orders: orders(shared),
             stages: capability.features().to_vec(),
-            audit: audit.clone(),
             _listening: listening,
             drained,
             failing: BTreeMap::new(),
         }
     }
 
-    /// One round: take the orders left, raise what changed, drain on-call,
-    /// and record what the hub holds in `snapshot`.
+    /// Apply `act` to the Event subscription numbered `target` in this
+    /// node's hub, by `who`.
+    ///
+    /// # Errors
+    /// The hub's refusal, or a target that is no number, in words.
+    pub fn act(&self, target: &str, act: Act, who: &str) -> Result<String, String> {
+        let id = target
+            .parse()
+            .map_err(|_| format!("REFUSED: '{target}' numbers no Event subscription"))?;
+        Hub::process()
+            .act(id, act, who)
+            .map_err(|refused| refused.to_string())
+    }
+
+    /// One round: raise what changed, drain on-call, and record what the hub
+    /// holds in `snapshot`.
     pub fn round(&mut self, snapshot: &mut Snapshot) {
         let hub = Hub::process();
-        for taken in Order::take(&self.orders, &self.node) {
-            let applied = taken
-                .map_err(|problem| format!("an order no node can take: {problem}"))
-                .and_then(|order| {
-                    hub.act(order.id, order.act, &order.who)
-                        .map_err(|refused| refused.to_string())
-                });
-            if let Err(problem) = applied {
-                process_audit::fail(&self.audit, "order", &problem);
-            }
-        }
-
         for stage in self.stages.clone() {
             self.raise(hub, snapshot, stage);
         }
@@ -146,12 +133,16 @@ impl Eventing {
         if let Some(drained) = &self.drained {
             let _ = drained.next(Duration::ZERO, CAPACITY);
         }
-        if self.drained.as_ref().is_some_and(Subscription::is_closed) {
+        if self
+            .drained
+            .as_ref()
+            .is_some_and(EventSubscription::is_closed)
+        {
             self.drained = None;
         }
 
         for subscription in hub.standing(&self.node) {
-            snapshot.record_subscription(subscription);
+            snapshot.record_event_subscription(subscription);
         }
     }
 
@@ -186,8 +177,7 @@ impl Eventing {
 mod tests {
     use super::*;
     use crate::support::scratch;
-    use observe::{HealthRecord, SubscriptionState};
-    use xevent::act::Act;
+    use observe::{HealthRecord, PauseState};
 
     fn record(scope: &str, health: Health) -> HealthRecord {
         HealthRecord {
@@ -200,17 +190,16 @@ mod tests {
     }
 
     #[test]
-    fn a_node_publishes_its_subscriptions_and_applies_the_orders_left_for_it() {
+    fn a_node_publishes_its_event_subscriptions_and_applies_an_act_on_one() {
         let shared = scratch("eventing");
         let node = "xmip:///CT/node/eventing-test";
         let audit = ProgramAudit::new("xmip-playground-eventing-test", Some(&shared));
-        let mut eventing =
-            Eventing::start(node, &shared, &Capability::of(&[Stage::Receive]), &audit);
+        let mut eventing = Eventing::start(node, &Capability::of(&[Stage::Receive]), &audit);
 
         let mut first = Snapshot::new();
         first.record_health(record(&format!("{node}/receive/tcp/json"), Health::Done));
         eventing.round(&mut first);
-        let mine: Vec<_> = first.subscriptions().cloned().collect();
+        let mine: Vec<_> = first.event_subscriptions().cloned().collect();
         assert_eq!(mine.len(), 2, "operations and on-call");
         assert!(mine.iter().all(|held| held.node == node));
         let on_call = mine
@@ -222,40 +211,35 @@ mod tests {
         assert_eq!(on_call.action, "every Event ending failure");
         assert_eq!(on_call.delivered, 1, "the failure was raised and drained");
 
-        Order {
-            node: node.to_string(),
-            id: on_call.id,
-            act: Act::Pause,
-            who: "ilian".to_string(),
-        }
-        .leave(&orders(&shared))
-        .expect("left");
+        eventing
+            .act(&on_call.id.to_string(), Act::Pause, "ilian")
+            .expect("paused");
         let mut second = Snapshot::new();
         second.record_health(record(&format!("{node}/receive/tcp/json"), Health::Done));
         second.record_health(record(&format!("{node}/receive/tcp/xml"), Health::Done));
         eventing.round(&mut second);
         let held = second
-            .subscriptions()
+            .event_subscriptions()
             .find(|held| held.id == on_call.id)
             .expect("still there");
-        assert_eq!(held.state, SubscriptionState::Paused);
+        assert_eq!(held.state, PauseState::Paused);
         assert_eq!(
             (held.queued, held.delivered),
             (1, 1),
             "queued, not handed over"
         );
 
-        Order {
-            node: node.to_string(),
-            id: on_call.id,
-            act: Act::Remove,
-            who: "ilian".to_string(),
-        }
-        .leave(&orders(&shared))
-        .expect("left");
+        eventing
+            .act(&on_call.id.to_string(), Act::Remove, "ilian")
+            .expect("removed");
+        assert!(eventing.act("seven", Act::Pause, "ilian").is_err());
         let mut third = Snapshot::new();
         eventing.round(&mut third);
-        assert!(third.subscriptions().all(|held| held.id != on_call.id));
+        assert!(
+            third
+                .event_subscriptions()
+                .all(|held| held.id != on_call.id)
+        );
         assert!(eventing.drained.is_none(), "the node let go of it");
     }
 }

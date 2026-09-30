@@ -49,9 +49,10 @@ pub(super) fn rollup(snapshot: &Snapshot, count: usize, now: i64) -> HealthRecor
     }
 }
 
-/// Copy every health record, count and Event subscription from one snapshot
-/// into another. Scopes are disjoint per scenario and per node, and a
-/// subscription is its node's, so nothing collides.
+/// Copy every health record, count, Subscription and Event subscription
+/// from one snapshot into another. Scopes are disjoint per scenario and per
+/// node, and a Subscription and an Event subscription are each their node's,
+/// so nothing collides.
 pub fn merge(into: &mut Snapshot, from: &Snapshot) {
     for record in from.health_records() {
         into.record_health(record.clone());
@@ -61,5 +62,8 @@ pub fn merge(into: &mut Snapshot, from: &Snapshot) {
     }
     for subscription in from.subscriptions() {
         into.record_subscription(subscription.clone());
+    }
+    for subscription in from.event_subscriptions() {
+        into.record_event_subscription(subscription.clone());
     }
 }

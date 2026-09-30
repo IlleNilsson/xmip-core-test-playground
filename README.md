@@ -291,12 +291,31 @@ amendment 2026-09-29): *operations* hears every Event on the node and is
 called back, *on-call* hears the failures and is drained each round. A node
 raises an Event for each stage it serves whose failing pairs changed since
 the round before, so a steady node is quiet. It records what its hub holds in
-its snapshot, the cluster and the roll merge the subscriptions as they merge
-health, and the roll's snapshot says where the nodes take orders —
+its snapshot, the cluster and the roll merge the Event subscriptions as they
+merge health, and the roll's snapshot says where the nodes take orders —
 `<shared>/orders`, beneath the directory the cluster shares. A surface over
 that snapshot leaves a pause, resume or remove there; the node that holds the
-subscription takes it at the start of its next round, applies it to its hub
-and publishes what came of it.
+Event subscription takes it at its next round (`src/operator_orders.rs`),
+applies it to its hub and publishes what came of it.
+
+### A node that processes routes by real Subscriptions, 2026-09-30
+
+The RoundTrip test is an Xmip Application,
+[`configuration/round-trip.application.toml`](configuration/round-trip.application.toml):
+four Subscriptions, one per family of content contracts — structured, edi,
+flat and schema — each to the Send Port the send stage serves. A node that
+declared process writes it and a node configuration binding it into
+`<shared>/configuration` and reads both back as a real node reads its
+configuration, through the runtime (`src/subscribing.rs`; ADR-0013,
+amendment 2026-09-30). Every pair its process stage hands on is published
+against them: a Subscription that picks it up hands it to the send stage; a
+paused one holds it in the node's runtime store — persist over RocksDB under
+`<shared>/store/<node>`, sealed under a key-encryption key of the machine's
+key store in `<shared>/keys/<node>` — so it is counted as held, nothing is
+lost, and a restarted node is still paused. A resume hands on what was held,
+oldest first. The node publishes its Subscriptions with its snapshot, and an
+operator pauses and resumes them through an order left under
+`<shared>/orders`; they are added and removed in the Application's TOML.
 
 ### Every process audits, 2026-09-25
 

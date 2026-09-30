@@ -22,6 +22,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use node::Stage;
+use observe::{Health, HealthRecord};
 use serde::{Deserialize, Serialize};
 
 use crate::schedule::CONTRACTS;
@@ -198,6 +199,45 @@ pub struct Hops {
 }
 
 impl Hops {
+    /// One health record per link handed over, beneath `node`, and — for a
+    /// stage that takes handoffs, `inbox` its waiting and unreadable counts —
+    /// one for the inbox: how many wait, and whether any arrived unreadable.
+    #[must_use]
+    pub fn records(&self, node: &str, inbox: Option<(usize, u64)>, now: i64) -> Vec<HealthRecord> {
+        let record = |scope: String, health, severity, evidence| HealthRecord {
+            scope,
+            health,
+            severity,
+            evidence,
+            observed_unix_nanos: now,
+        };
+        let mut records: Vec<HealthRecord> = self
+            .links()
+            .map(|hop| {
+                record(
+                    format!("{node}/handoff/{}", hop.to),
+                    Health::Fine,
+                    0,
+                    format!("{} handoffs to {}", hop.count, hop.to),
+                )
+            })
+            .collect();
+        if let Some((waiting, unreadable)) = inbox {
+            let (health, severity) = if unreadable > 0 {
+                (Health::Stressed, 50)
+            } else {
+                (Health::Fine, 0)
+            };
+            records.push(record(
+                format!("{node}/handoff/inbox"),
+                health,
+                severity,
+                format!("{waiting} waiting, {unreadable} unreadable"),
+            ));
+        }
+        records
+    }
+
     /// Record one delivered handoff from one node's stage to another's.
     pub fn record(&mut self, from: (&str, Stage), to: (&str, Stage), now: i64) {
         let ends = (
