@@ -55,15 +55,16 @@
 //! complement and starts nothing, which is how `Start-XmipTest` resolves an
 //! omitted `-Nodes` at its own door.
 //!
-//! **A node declares what it can do** (ADR-0056).
-//! `XMIP_PLAYGROUND_NODE_CAPABILITIES` says which stages of the message path
-//! each node serves — `alpha=receive,beta=process+send` — and every node runs its
-//! part of the scenarios named. Where a node declares a stage, `RoundTrip` is
-//! the nodes' — each pair handed receive to process to send between the
-//! processes — and the roll does not also run it in-process; a stage no node
-//! declares is REFUSED at the start, naming the capability. A node that
-//! declares nothing runs the shared-directory tests whole, as before. A
-//! node's name decides none of this.
+//! **A node declares its roles** (ADR-0056, amendment 2026-10-01).
+//! `XMIP_PLAYGROUND_NODE_ROLES` says what each node is for —
+//! `alpha=receiving,beta=processing+sending`, or `delta=executing` for all
+//! three in one process — and every node runs its part of the scenarios
+//! named. Where a node's roles serve a stage, `RoundTrip` is the nodes' —
+//! each pair handed receive to process to send between the processes, or
+//! kept in an executing node's one process — and the roll does not also run
+//! it in-process; a stage no node serves is REFUSED at the start, naming the
+//! role. A node serving no stage runs the shared-directory tests whole, as
+//! before. A node's name decides none of this.
 //!
 //! **It audits** (ADR-0062): `start` once the roll knows what it is, `stop`
 //! when its rounds are done, every refusal and failed write as a failure, and
@@ -246,7 +247,7 @@ fn say_started(audit: &ProgramAudit, run: &Run, limit: Option<u64>, snapshot: &P
             ("cluster", &run.cluster),
             ("stress", &run.stress),
             ("tests", &run.tests.join(",")),
-            ("nodes", &run.capabilities.join(",")),
+            ("nodes", &run.roles.join(",")),
             ("online", &run.online.join(",")),
             ("rounds", &rounds),
             ("snapshot", &snapshot.display().to_string()),
@@ -257,8 +258,8 @@ fn say_started(audit: &ProgramAudit, run: &Run, limit: Option<u64>, snapshot: &P
 /// What the environment told this roll, or REFUSED: a value it cannot read is
 /// said, audited as the failure to `start`, and the roll does not start —
 /// until 2026-09-19 an unknown scenario was said on stderr and dropped, and
-/// the roll carried on as something nobody asked for. A capability that is
-/// no capability is refused the same way.
+/// the roll carried on as something nobody asked for. A word that is no
+/// role is refused the same way.
 fn or_refuse<T>(audit: &ProgramAudit, told: Result<T, String>) -> T {
     told.unwrap_or_else(|refusal| {
         process_audit::fail(audit, "start", &refusal);
@@ -285,7 +286,7 @@ fn announce(cluster: &str, stress: Stress, roster: &Roster) {
 }
 
 /// What a level brings when nobody names nodes, printed as `--nodes` takes it
-/// back: `node-01=receive,node-02=process,…`. The level is the argument and
+/// back: `node-01=receiving,node-02=processing,…`. The level is the argument and
 /// the environment is not read, so the answer is the level's alone; an unknown
 /// one is REFUSED naming the four (ADR-0055). `Start-XmipTest` asks this, sets
 /// the names it gets, and records them, so the operator's door and the roll
@@ -318,9 +319,9 @@ fn the_publication(told: &[String]) -> Result<String, String> {
 }
 
 /// Whether `RoundTrip` runs across the cluster's nodes rather than in this
-/// process: it was chosen, and some node declared a stage of the path. A stage
-/// no node declares is REFUSED before anything is spawned, naming the
-/// capability that went undeclared (ADR-0056).
+/// process: it was chosen, and some node's roles serve a stage of the path.
+/// A stage no node serves is REFUSED before anything is spawned, naming the
+/// role that went undeclared (ADR-0056).
 fn relayed(chosen: &[String], roster: &Roster) -> Result<bool, String> {
     if !drives(chosen, ROUND_TRIP) || !roster.serves_any_stage() {
         return Ok(false);
@@ -390,7 +391,7 @@ mod tests {
 
     #[test]
     fn round_trip_is_the_nodes_when_any_declares_a_stage_and_it_was_chosen() {
-        let path = roster("alpha=receive,beta=process,gamma=send");
+        let path = roster("alpha=receiving,beta=processing,gamma=sending");
         assert_eq!(relayed(&[], &path), Ok(true));
         assert_eq!(relayed(&names(&["round-trip"]), &path), Ok(true));
         assert_eq!(relayed(&names(&["heavy-load"]), &path), Ok(false));
@@ -398,10 +399,10 @@ mod tests {
         assert_eq!(relayed(&[], &Roster::default()), Ok(false));
         // A capability missing is no refusal when RoundTrip was not chosen.
         assert_eq!(
-            relayed(&names(&["filing"]), &roster("alpha=receive")),
+            relayed(&names(&["filing"]), &roster("alpha=receiving")),
             Ok(false)
         );
-        let refused = relayed(&[], &roster("alpha=receive")).expect_err("no node processes");
+        let refused = relayed(&[], &roster("alpha=receiving")).expect_err("no node processes");
         assert!(refused.starts_with("REFUSED"), "{refused}");
     }
 

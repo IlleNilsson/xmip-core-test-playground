@@ -14,18 +14,18 @@
 //! stage is covered and no two counts differ by more than one. Twenty nodes
 //! are seven receiving, seven processing and six sending. Nothing is read out
 //! of a name here either (ADR-0056) — the deal is by position in the list, and
-//! the capability each node gets is what it is told.
+//! the role each node gets is what it is told.
 //!
 //! **A level too small for the path.** Below three nodes the deal cannot cover
 //! receive, process and send, and a roster with two of the three declared is
 //! refused by [`Roster::refusal`] — an omitted `-Nodes` would then refuse
 //! itself, which is no answer at all. Below three, every node of the
-//! complement declares no stage instead: each runs whole tests itself, as a
+//! complement declares no role instead: each runs whole tests itself, as a
 //! node that declares nothing always has, and the roll runs `RoundTrip`
 //! whole. [`covers_the_path`] is how a surface knows which of the two it got,
 //! so it can say so rather than leave it to be noticed.
 
-use node::{Capability, Stage};
+use node::{Capability, NodeRole, Stage};
 
 use crate::roster::Roster;
 use crate::stress::Stress;
@@ -48,7 +48,8 @@ pub fn of_count(count: usize) -> Roster {
         return roster;
     }
     names.iter().enumerate().fold(roster, |dealt, (at, name)| {
-        dealt.declared(name, Capability::of(&[Stage::ALL[at % Stage::ALL.len()]]))
+        let stage = Stage::ALL[at % Stage::ALL.len()];
+        dealt.declared(name, Capability::of(&[NodeRole::serving(stage)]))
     })
 }
 
@@ -72,11 +73,14 @@ pub fn describe(roster: &Roster) -> String {
     }
     let many = if count == 1 { "node" } else { "nodes" };
     if !roster.serves_any_stage() {
-        return format!("{count} {many}, none declaring a stage: whole tests in each");
+        return format!("{count} {many}, none serving a stage: whole tests in each");
     }
     let dealt: Vec<String> = Stage::ALL
         .into_iter()
-        .map(|stage| format!("{} {}", roster.with(stage).len(), stage.name()))
+        .map(|stage| {
+            let role = NodeRole::serving(stage);
+            format!("{} {}", roster.with(stage).len(), role.name())
+        })
         .collect();
     format!("{count} {many}, {}", dealt.join(", "))
 }
@@ -88,7 +92,10 @@ mod tests {
     #[test]
     fn the_deal_covers_the_path_and_spreads_evenly() {
         let three = of_count(3);
-        assert_eq!(three.text(), "node-01=receive,node-02=process,node-03=send");
+        assert_eq!(
+            three.text(),
+            "node-01=receiving,node-02=processing,node-03=sending"
+        );
         assert!(covers_the_path(&three));
         assert_eq!(three.refusal(), None);
 
@@ -97,7 +104,10 @@ mod tests {
         assert_eq!(twenty.with(Stage::Receive).len(), 7);
         assert_eq!(twenty.with(Stage::Process).len(), 7);
         assert_eq!(twenty.with(Stage::Send).len(), 6);
-        assert_eq!(describe(&twenty), "20 nodes, 7 receive, 7 process, 6 send");
+        assert_eq!(
+            describe(&twenty),
+            "20 nodes, 7 receiving, 7 processing, 6 sending"
+        );
     }
 
     #[test]
@@ -111,7 +121,7 @@ mod tests {
             assert_eq!(small.refusal(), None);
         }
         let one = describe(&of_count(1));
-        assert_eq!(one, "1 node, none declaring a stage: whole tests in each");
+        assert_eq!(one, "1 node, none serving a stage: whole tests in each");
         assert_eq!(describe(&of_count(0)), "no nodes");
         assert!(of_count(0).is_empty());
     }

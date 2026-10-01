@@ -588,7 +588,7 @@ mod tests {
     #[test]
     fn declared_nodes_run_the_named_test_and_hand_each_pair_along_the_path() {
         let dir = scratch("cluster-declared");
-        let roster = crate::Roster::parse("alpha=receive,beta=process,gamma=send")
+        let roster = crate::Roster::parse("alpha=receiving,beta=processing,gamma=sending")
             .expect("a well-formed roster");
         let orders = Orders::of(Stress::Calm, roster, 0).driving(&["round-trip".to_string()]);
         let mut cluster = Cluster::spawn(
@@ -694,7 +694,7 @@ mod tests {
         let dir = scratch("cluster-refused");
         let output = Command::new(built_node_binary())
             .args(["--name", "alpha", "--stress", "calm", "--rounds", "1"])
-            .args(["--can", "receive"])
+            .args(["--role", "receiving"])
             .args(["--scenarios", "round-trip,pingpong"])
             .arg("--shared")
             .arg(dir.join("shared"))

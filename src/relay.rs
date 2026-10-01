@@ -373,8 +373,8 @@ impl Relay {
         let next = self.stage.next().ok_or("no stage to hand on to")?;
         let to = self
             .roster
-            .target(next, &handoff.transport, handoff.contract)
-            .ok_or("no node declares the next capability")?
+            .target(&self.name, next, &handoff.transport, handoff.contract)
+            .ok_or("no node declares the role the next stage needs")?
             .to_string();
         self.sequence += 1;
         Inbox::of(&self.shared, &to, next)
@@ -399,7 +399,7 @@ mod tests {
     /// it declared there.
     fn relay(name: &str, text: &str, dir: &Path) -> Relay {
         let roster = Roster::parse(text).expect("a well-formed roster");
-        let stage = roster.capability(name).features()[0];
+        let stage = roster.capability(name).stages()[0];
         let work = dir.join(name);
         Relay::new(
             name,
@@ -421,7 +421,7 @@ mod tests {
     fn a_pair_goes_receive_to_process_to_send_and_each_publishes_under_its_node() {
         let dir = scratch("relay");
         // Names that say nothing: the stages come from the declarations.
-        let roster = "alpha=receive,beta=process,gamma=send";
+        let roster = "alpha=receiving,beta=processing,gamma=sending";
         let mut alpha = relay("alpha", roster, &dir);
         let mut beta = relay("beta", roster, &dir);
         let mut gamma = relay("gamma", roster, &dir);
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn two_receivers_share_the_matrix_and_a_bounded_round_rotates_through_it() {
         let dir = scratch("relay-share");
-        let roster = "alpha=receive,delta=receive,beta=process,gamma=send";
+        let roster = "alpha=receiving,delta=receiving,beta=processing,gamma=sending";
         let mut scopes = std::collections::BTreeSet::new();
         for name in ["alpha", "delta"] {
             let mut receive = relay(name, roster, &dir).bounded(7, 1);
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn a_faulted_stage_hands_nothing_on_and_an_uncovered_path_has_no_relay() {
         let dir = scratch("relay-fault");
-        let names = "alpha=receive,beta=process,gamma=send";
+        let names = "alpha=receiving,beta=processing,gamma=sending";
         let mut receive = relay("alpha", names, &dir)
             .over(vec![Box::new(UdpRoundTrip)])
             .with_faults(FaultPlan::realistic());
@@ -536,11 +536,13 @@ mod tests {
             "{handed} of {rounds}: a failed arrival is not handed on"
         );
 
-        let short = Roster::parse("alpha=receive,gamma=send").expect("a roster with no process");
+        let short =
+            Roster::parse("alpha=receiving,gamma=sending").expect("a roster with no process");
         assert!(Relay::new("alpha", ROOT, Stage::Receive, &short, &dir, &dir).is_none());
         let whole = Roster::of(&["node-01".to_string()]);
         assert!(Relay::new("node-01", ROOT, Stage::Receive, &whole, &dir, &dir).is_none());
-        let full = Roster::parse("alpha=receive,beta=process,gamma=send").expect("a whole path");
+        let full =
+            Roster::parse("alpha=receiving,beta=processing,gamma=sending").expect("a whole path");
         assert!(
             Relay::new("alpha", ROOT, Stage::Send, &full, &dir, &dir).is_none(),
             "a node runs only the stages it declared"

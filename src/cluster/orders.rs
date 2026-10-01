@@ -120,7 +120,7 @@ impl Orders {
         if self.roster.is_empty() {
             return Some(
                 "REFUSED: a cluster supervises nodes and none was named; \
-                 --nodes alpha=receive,beta=process,gamma=send names them."
+                 --nodes alpha=receiving,beta=processing,gamma=sending names them."
                     .to_string(),
             );
         }
@@ -170,7 +170,7 @@ mod tests {
     fn the_online_nodes_are_the_ones_named_and_nobody_else() {
         let orders = Orders::of(
             Stress::Calm,
-            roster("alpha=receive,beta=process,gamma=send"),
+            roster("alpha=receiving,beta=processing,gamma=sending"),
             0,
         )
         .with_online(Some(names(&["ALPHA"])));
@@ -208,7 +208,7 @@ mod tests {
 
         let stranger = Orders::of(
             Stress::Calm,
-            roster("alpha=receive,beta=process,gamma=send"),
+            roster("alpha=receiving,beta=processing,gamma=sending"),
             0,
         )
         .with_online(Some(names(&["Q9"])))
@@ -219,14 +219,17 @@ mod tests {
             "{stranger}"
         );
 
-        let missing = Orders::of(Stress::Calm, roster("alpha=receive,gamma=send"), 0)
+        let missing = Orders::of(Stress::Calm, roster("alpha=receiving,gamma=sending"), 0)
             .refusal()
             .expect("nobody processes");
-        assert!(missing.ends_with("no node declares process."), "{missing}");
+        assert!(
+            missing.ends_with("no node declares processing."),
+            "{missing}"
+        );
 
         // Not RoundTrip: the roster is nobody's business.
         assert_eq!(
-            Orders::of(Stress::Calm, roster("alpha=receive,gamma=send"), 0)
+            Orders::of(Stress::Calm, roster("alpha=receiving,gamma=sending"), 0)
                 .driving(&names(&["filing"]))
                 .refusal(),
             None
@@ -239,7 +242,7 @@ mod tests {
     /// carries a node marker (the owner, 2026-09-20).
     #[test]
     fn a_node_whose_name_cannot_be_an_image_is_refused_before_anything_spawns() {
-        let wrong = Orders::of(Stress::Calm, roster("alpha=receive,9lives=process"), 0)
+        let wrong = Orders::of(Stress::Calm, roster("alpha=receiving,9lives=processing"), 0)
             .refusal()
             .expect("no file is called 9lives here");
         assert!(
@@ -250,7 +253,7 @@ mod tests {
         assert_eq!(
             Orders::of(
                 Stress::Calm,
-                roster("roll=receive,cluster=process,gamma=send"),
+                roster("roll=receiving,cluster=processing,gamma=sending"),
                 0
             )
             .refusal(),

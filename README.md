@@ -244,7 +244,7 @@ the roll — so `Get-Process xmip-*` is empty afterwards and nothing is
 orphaned. `Get-XmipProcess` shows all three kinds with the location and
 purpose each declared, and `Get-XmipTestNode` reports a node's roll, which is
 now its grandparent. A node also declares the flags it was started with —
-`node`, `shared`, `stress`, `rounds`, `snapshot`, `interval_ms`, `capability`,
+`node`, `shared`, `stress`, `rounds`, `snapshot`, `interval_ms`, `role`,
 `online` — and `Get-XmipTestNode` reads those from its declaration through the
 node's own reader, never from its command line (ADR-0053, amendment
 2026-09-27).
@@ -345,26 +345,29 @@ The owner: *Fleet is what I see in topology when running test, I would like to
 see cluster, nodes, receive, process, send.* What the Playground spawns is a
 cluster and its nodes, and the word it used until then is retired (ADR-0028).
 
-**A node declares what it can do** (`node::Capability`, `roster.rs`; ADR-0056). A
-node is started with a capability — `--can receive`, `--can process,send` —
-and serves the stages of the message path it declared, no more and no fewer. A
-node that declares none behaves as every node did before: it runs the
+**A node declares its roles** (`node::Capability`, `roster.rs`; ADR-0056,
+amendment 2026-10-01). A node is started with its roles — `--role receiving`,
+`--role processing,sending`, `--role executing` — and serves the stages of
+the message path its roles serve, no more and no fewer: receiving, processing
+and sending one each, executing all three in one process, the low-latency
+choice, which keeps each pair it received to the end with no process hop. A
+node serving no stage behaves as every node did before: it runs the
 shared-directory tests whole and no part of RoundTrip. Two of ADR-0056's four
-kinds are modelled here, feature capability (the stages) and online capability
-(`--online`, ADR-0045); authentication and runtime capability are not, and the
-node's own capability record says so rather than leaving it to be guessed.
+kinds are modelled here, the roles and online capability (`--online`,
+ADR-0045); authentication and runtime capability are not, and the node's own
+capability record says so rather than leaving it to be guessed.
 
-The words are not the Playground's. `node::Stage` (`xmip-core-node`) is the
-message-path stage every verdict, hop and scope here uses, and
-`Stage::declared` is the one parse of a declaration: `--can`, `--nodes` and a
-published capability record all read through it. The declaration itself —
-the evidence a node publishes and the `R1=receive` entry a run lists — is
-`node::Capability`; `capability.rs` keeps only the `--can`/`--online` flags
-the cluster starts a node process with. A word is lowercase exactly
-(the owner, 2026-09-24: `RECEIVE` or `Send` is an unknown word), and an
-unknown word is REFUSED by name, never dropped (open problem 25, row i).
-Placement — which node receives a pair and which one it is handed to — is
-the roster's (`roster.rs`).
+The words are not the Playground's. `node::NodeRole` (`xmip-core-node`) is
+the one declaration and `NodeRole::declared` the one parse: `--role`,
+`--nodes` and a published capability record all read through it, and
+`node::Stage` is the message-path stage every verdict, hop and scope here
+uses. The declaration itself — the evidence a node publishes and the
+`R1=receiving` entry a run lists — is `node::Capability`; `capability.rs`
+keeps only the `--role`/`--online` flags the cluster starts a node process
+with. A word is lowercase exactly (the owner, 2026-09-24), and an unknown
+word is REFUSED by name, never dropped (open problem 25, row i). Placement —
+which node receives a pair and which one it is handed to — is the roster's
+(`roster.rs`).
 
 The rig read a node's stage out of the first letter of its name for one
 afternoon on 2026-09-19, until the owner said *I know, so why do you break
@@ -373,11 +376,11 @@ ADR-0022 that placement must satisfy node capability. `Start-XmipTest` kept
 one shorthand at the operator's door for a day longer, and on 2026-09-20 the
 owner struck that too: *Rn, Pn and Sn are arbitrary node names* (ADR-0056,
 amendment). **Nowhere in Xmip is a node's name read.** A named node carries
-what `-NodeCapability @{ R1 = 'receive' }` states for it and nothing else; a
+what `-NodeRole @{ R1 = 'receiving' }` states for it and nothing else; a
 node given none declares none, and `Start-XmipTest` says so in words before it
 spawns anything. Omit `-Nodes` and the level's complement deals the whole
 path by position, which reads no name either. What leaves PowerShell is
-`XMIP_PLAYGROUND_NODE_CAPABILITIES=R1=receive,…` — a declaration, not a name.
+`XMIP_PLAYGROUND_NODE_ROLES=R1=receiving,…` — a declaration, not a name.
 The examples here name clusters `C1`, `C2` and nodes `R1`, `P1`, `S1`, as the
 owner does when he tests (ADR-0056, amendment 2026-09-25): the letter reminds
 the person, and the declaration beside it is all Xmip reads.
@@ -421,7 +424,7 @@ cluster from one file (until 2026-09-26 the roll wrote only its sums and
 every node and stage read a dash). When any node
 declares a stage and RoundTrip was chosen the roll does not also run it
 in-process; when a stage of the path is declared by nobody the roll is REFUSED
-at the start, naming the **capability** that went undeclared, and
+at the start, naming the **role** that went undeclared, and
 `Start-XmipTest` says the same before anything is spawned.
 
 **The handoff** (`handoff.rs`) is a file in the cluster's shared directory, one
@@ -441,8 +444,8 @@ too; this crate draws only its handoffs and its shared store) a roll
 publishes is the cluster (kind
 `cluster`), its nodes (`node`), the stages each runs (`stage`), and under a
 receive or a send stage one endpoint per transport it reported on (`endpoint`).
-A node's stages are the ones it **declared**, read from the capability record
-it publishes, and any it has reported on — never its name. The links are the
+A node's stages are the ones its **declared** roles serve, read from the
+capability record it publishes, and any it has reported on — never its name. The links are the
 handoffs, receive stage to process stage to send stage, for every pair of
 stages the roster configures when the run hands RoundTrip along declared
 stages, and every pair that exchanged any — pattern `send-receive`, protocol
@@ -461,11 +464,10 @@ worst leaf beneath the stage's endpoints, and its evidence names that
 leaf's transport.
 
 **The run says what it was started with** (`run.rs` fills `observe::Run`): the snapshot carries a
-`[run]` table — `cluster`, `tests`, `nodes`, `capabilities`, `online`,
-`stress` — that a reader which does not know it skips, and the web GUI shows as
-one line on every view. `capabilities` is what each node was started with,
-`R1=receive` or `P1=process+send`, a node that declared nothing listed by name
-alone.
+`[run]` table — `cluster`, `tests`, `nodes`, `roles`, `online`, `stress` —
+that a reader which does not know it skips, and the web GUI shows as one line
+on every view. `roles` is what each node was started with, `R1=receiving` or
+`P1=processing+sending`, a node that declared nothing listed by name alone.
 
 
 
@@ -502,9 +504,9 @@ own environment, never yours: `-Stress` is `XMIP_PLAYGROUND_STRESS`
 `-Nodes` is `XMIP_PLAYGROUND_NODE_NAMES` (the nodes to simulate, by name, one
 process each; an empty list is `XMIP_PLAYGROUND_NODES=0`, no nodes; omitted,
 the cmdlet resolves the level's full complement and sets those names, so the
-run record says what an operator got), `-NodeCapability` is
-`XMIP_PLAYGROUND_NODE_CAPABILITIES` (what each declares it can do,
-`R1=receive,P1=process+send`; a node it does not name declares nothing,
+run record says what an operator got), `-NodeRole` is
+`XMIP_PLAYGROUND_NODE_ROLES` (the roles each declares,
+`R1=receiving,P1=processing+sending`; a node it does not name declares nothing,
 and nothing here is worked out from a name), `-OnlineNodes` is
 `XMIP_PLAYGROUND_ONLINE_NODES`
 (which of them may assume the internet, by name, ADR-0045; unset, every node

@@ -95,9 +95,9 @@ mod tests {
     }
 
     /// The capability record a node publishes each round (ADR-0056), by the
-    /// words `--can` takes.
-    fn declares(stages: &str) -> String {
-        Capability::parse(stages).expect("a capability").evidence()
+    /// words `--role` takes.
+    fn declares(roles: &str) -> String {
+        Capability::parse(roles).expect("a declaration").evidence()
     }
 
     /// `alpha` received over tcp and file, `beta` processed, `gamma` sent over tcp
@@ -106,10 +106,10 @@ mod tests {
     fn published() -> Snapshot {
         let mut snapshot = Snapshot::new();
         for (leaf, capability) in [
-            ("alpha", "receive"),
-            ("beta", "process"),
-            ("gamma", "send"),
-            ("zeta", "send"),
+            ("alpha", "receiving"),
+            ("beta", "processing"),
+            ("gamma", "sending"),
+            ("zeta", "sending"),
         ] {
             let scope = format!("{ROOT}/node/{leaf}/capability");
             snapshot.record_health(record(&scope, Health::Fine, &declares(capability)));
@@ -153,7 +153,8 @@ mod tests {
     /// What the run configured: `alpha` receives, `beta` processes, `gamma` and `zeta`
     /// send.
     fn roster() -> Roster {
-        Roster::parse("alpha=receive,beta=process,gamma=send,zeta=send").expect("a roster")
+        Roster::parse("alpha=receiving,beta=processing,gamma=sending,zeta=sending")
+            .expect("a roster")
     }
 
     fn drawn() -> Topology {

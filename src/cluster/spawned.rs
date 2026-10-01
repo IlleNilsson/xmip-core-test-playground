@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn a_spawned_cluster_publishes_its_nodes_and_stops_them_with_itself() {
         let dir = scratch("spawned");
-        let roster = crate::Roster::parse("alpha=receive,beta=process,gamma=send")
+        let roster = crate::Roster::parse("alpha=receiving,beta=processing,gamma=sending")
             .expect("a well-formed roster");
         let orders = Orders::of(Stress::Calm, roster, 0)
             .driving(&["round-trip".to_string()])

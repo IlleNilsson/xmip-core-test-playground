@@ -220,7 +220,8 @@ mod tests {
     const NODE: &str = "xmip:///CT/node/beta";
 
     fn started(shared: &Path, audit: &ProgramAudit) -> Subscribing {
-        let roster = Roster::parse("alpha=receive,beta=process,gamma=send").expect("a roster");
+        let roster =
+            Roster::parse("alpha=receiving,beta=processing,gamma=sending").expect("a roster");
         Subscribing::start(NODE, "beta", &roster, shared, audit).expect("started")
     }
 

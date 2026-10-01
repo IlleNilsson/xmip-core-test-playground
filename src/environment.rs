@@ -54,8 +54,8 @@ pub enum Told {
 }
 
 /// The roster a roll spawns: the nodes [`node_names`] was told, each declaring
-/// what `XMIP_PLAYGROUND_NODE_CAPABILITIES` gives it — `alpha=receive,
-/// beta=process+send`, comma separated, a node it does not name declaring
+/// what `XMIP_PLAYGROUND_NODE_ROLES` gives it — `alpha=receiving,
+/// beta=processing+sending`, comma separated, a node it does not name declaring
 /// nothing — or, told nothing, the level's full complement dealt over the
 /// message path (`complement.rs`). Every node carries the online capability
 /// the environment says (ADR-0045, ADR-0056). Nothing is read out of a node's
@@ -63,10 +63,10 @@ pub enum Told {
 ///
 /// # Errors
 ///
-/// When a word is no capability, or a capability was given to a node that is
-/// no node of this roll: REFUSED, naming both sides (ADR-0055).
+/// When a word is no role, or a role was given to a node that is no node of
+/// this roll: REFUSED, naming both sides (ADR-0055).
 pub fn roster(stress: Stress) -> Result<Roster, String> {
-    let declared = std::env::var("XMIP_PLAYGROUND_NODE_CAPABILITIES").unwrap_or_default();
+    let declared = std::env::var("XMIP_PLAYGROUND_NODE_ROLES").unwrap_or_default();
     let mut roster = match told() {
         Some(Told::Named(named)) => Roster::declaring(&named, &declared)?,
         Some(Told::Count(count)) if declared.trim().is_empty() => complement::of_count(count),

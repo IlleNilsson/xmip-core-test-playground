@@ -24,7 +24,7 @@ pub fn started(cluster: &str, chosen: &[String], roster: &Roster, stress: Stress
         cluster: cluster.to_string(),
         tests: scenarios.into_iter().map(test_name).collect(),
         nodes: names.iter().map(ToString::to_string).collect(),
-        capabilities: names
+        roles: names
             .iter()
             .map(|name| roster.capability(name).entry(name))
             .collect(),
@@ -58,20 +58,20 @@ mod tests {
 
     #[test]
     fn a_run_names_its_tests_and_what_each_node_was_started_with() {
-        let roster = Roster::parse("alpha=receive,beta=process+send,n1")
+        let roster = Roster::parse("alpha=receiving,beta=processing+sending,n1")
             .expect("a well-formed roster")
             .declared(
                 "alpha",
-                node::Capability::parse("receive")
-                    .expect("receive")
+                node::Capability::parse("receiving")
+                    .expect("receiving")
                     .with_online(true),
             );
         let run = started("C1", &["round-trip".to_string()], &roster, Stress::Harsh);
         assert_eq!(run.tests, ["RoundTrip"]);
         assert_eq!(run.nodes, ["alpha", "beta", "n1"]);
         assert_eq!(
-            run.capabilities,
-            ["alpha=receive", "beta=process+send", "n1"]
+            run.roles,
+            ["alpha=receiving", "beta=processing+sending", "n1"]
         );
         assert_eq!(run.online, ["alpha"]);
         assert_eq!((run.cluster.as_str(), run.stress.as_str()), ("C1", "harsh"));

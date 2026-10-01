@@ -3,28 +3,31 @@
 //! ```text
 //! node --name <name> --shared <dir> --stress <level> --rounds <n> --snapshot <path>
 //!      [--interval-ms <ms>] [--beat-ms <ms>] [--online true|false]
-//!      [--can receive,process] [--nodes <name[=capability],...>]
+//!      [--role receiving,processing] [--nodes <name[=role+role],...>]
 //!      [--scenarios <scenario,...>]
 //! ```
 //!
-//! **A node declares what it can do** (ADR-0056). `--can` says which stages of
-//! the message path this node serves — `receive`, `process`, `send`, or more
-//! than one, in lowercase exactly (`Send` is no capability; the owner,
-//! 2026-09-24) — and `--nodes` says the same for every node of the cluster, so
-//! this one finds the others without asking. Nothing is read out of a name: on
-//! 2026-09-19 the rig took a node's stage from its first letter and the owner
-//! said *I know, so why do you break it!* A word that is no capability is
-//! REFUSED with exit code 2 and the words there are (ADR-0055).
+//! **A node declares its roles** (ADR-0056, amendment 2026-10-01). `--role`
+//! says what this node is for — `receiving`, `processing`, `sending`, or
+//! `executing`, their sum in one process, among the seven roles — in
+//! lowercase exactly (`Sending` is no role; the owner's rule of 2026-09-24),
+//! and its roles say which stages of the message path it serves; `--nodes`
+//! says the same for every node of the cluster, so this one finds the others
+//! without asking. Nothing is read out of a name: on 2026-09-19 the rig took
+//! a node's stage from its first letter and the owner said *I know, so why do
+//! you break it!* A word that is no role is REFUSED with exit code 2 and the
+//! words there are (ADR-0055).
 //!
 //! **It runs the tests that were named** (the owner, 2026-09-19) — its part
 //! of the `--scenarios` it is given, every one when none is given. A name
 //! that is no scenario is REFUSED with exit code 2 and the scenarios there
 //! are; it is never dropped.
 //!
-//!   - **`RoundTrip`**, for each stage it declared, when `--nodes` covers the
-//!     whole path: that stage of the message path, handing each pair on to a
-//!     node that declared the next through the inboxes under
-//!     `<shared>/handoff/` (`relay.rs`). A node that declared no stage runs no
+//!   - **`RoundTrip`**, for each stage its roles serve, when `--nodes` covers
+//!     the whole path: that stage of the message path, handing each pair on
+//!     to a node serving the next through the inboxes under
+//!     `<shared>/handoff/` (`relay.rs`) — to itself when it is executing,
+//!     whose Journey takes no process hop. A node serving no stage runs no
 //!     part of it; the roll runs it whole.
 //!   - **`ExclusiveClaim`** and **`DailyBacklog`**, over a directory the whole
 //!     cluster shares — `<shared>/exclusive-claim` and
@@ -58,7 +61,7 @@
 //! standing changed, and publishes what its hub holds with its snapshot.
 //!
 //! **It routes by its Subscriptions** (ADR-0013, amendment 2026-09-30;
-//! `subscribing.rs`): a node that declared process binds the Playground's
+//! `subscribing.rs`): a node whose roles serve process binds the Playground's
 //! `RoundTrip` Application as a real node binds one, routes what its process
 //! stage hands on through its Subscriptions, and publishes them with its
 //! snapshot. It takes the orders an operator left for it under
@@ -69,7 +72,7 @@
 //! `switch` record, so a surface reads a node's capabilities from the snapshot
 //! rather than from its name.
 //!
-//! **It audits** (ADR-0062): `start` with its scope, capability, stress and
+//! **It audits** (ADR-0062): `start` with its scope, roles, stress and
 //! scenarios, `stop` when its rounds are done or it was told to stop, a
 //! refused argument as the failure to `start`, a failed publish as a
 //! failure, and every panic as `unhandled` — into `XMIP_AUDIT_DIRECTORY`,
@@ -106,8 +109,8 @@ struct Arguments {
     interval: Duration,
     /// How often it beats, round or no round.
     beat: Duration,
-    /// What this node declared it can do (ADR-0056): the stages of the
-    /// message path from `--can`, and from `--online` whether it may assume
+    /// What this node declared (ADR-0056): its roles from `--role`, and
+    /// from `--online` whether it may assume
     /// the internet (ADR-0045). Published in its own health records, so the
     /// cluster's board shows both per node.
     capability: Capability,
@@ -120,11 +123,11 @@ struct Arguments {
 
 const USAGE: &str = "usage: node --name <name> --shared <dir> --stress <level> --rounds <n> \
      --snapshot <path> [--interval-ms <ms>] [--beat-ms <ms>] [--online true|false] \
-     [--can receive,process] [--nodes <name[=capability],...>] \
+     [--role receiving,processing] [--nodes <name[=role+role],...>] \
      [--scenarios <scenarios>]\n\
      example: node --name R1 --shared shared --stress calm --rounds 0 \
-     --snapshot R1.toml --can receive\n\
-     The name is the tester's and means nothing to Xmip; --can says what the node does.";
+     --snapshot R1.toml --role receiving\n\
+     The name is the tester's and means nothing to Xmip; --role says what the node is for.";
 
 fn main() -> ExitCode {
     // The command line is read before anything else, so the first beat is
@@ -267,7 +270,7 @@ fn declaration(
         ("rounds", arguments.rounds.to_string()),
         ("snapshot", arguments.snapshot.display().to_string()),
         ("interval_ms", interval),
-        ("capability", arguments.capability.words()),
+        ("role", arguments.capability.words()),
         ("online", arguments.capability.is_online().to_string()),
     ];
 
@@ -282,7 +285,7 @@ fn say_started(audit: &ProgramAudit, node: &str, arguments: &Arguments) {
         audit,
         &[
             ("node", node),
-            ("capability", &arguments.capability.words()),
+            ("role", &arguments.capability.words()),
             ("online", arguments.capability.word()),
             ("stress", arguments.stress.name()),
             ("scenarios", &arguments.scenarios.join(",")),
@@ -293,7 +296,7 @@ fn say_started(audit: &ProgramAudit, node: &str, arguments: &Arguments) {
     );
 }
 
-/// The node's Subscriptions, when it declared process and `RoundTrip` was
+/// The node's Subscriptions, when its roles serve process and `RoundTrip` was
 /// chosen: its `RoundTrip` Application bound and read as a real node reads its
 /// configuration. One that will not start is audited, and the node runs on
 /// without it.
@@ -306,10 +309,7 @@ fn subscribing(
         .roster
         .clone()
         .declared(&arguments.name, arguments.capability.clone());
-    let processes = arguments
-        .capability
-        .features()
-        .contains(&::node::Stage::Process);
+    let processes = arguments.capability.can(::node::Stage::Process);
     if !drives(&arguments.scenarios, ROUND_TRIP) || !processes || roster.refusal().is_some() {
         return None;
     }
@@ -319,9 +319,9 @@ fn subscribing(
         .ok()
 }
 
-/// One relay per stage this node declared, when `RoundTrip` was chosen. This
-/// node's own `--can` is the last word on itself; the roster says what the
-/// others declared, so it knows who can take the next stage.
+/// One relay per stage this node's roles serve, when `RoundTrip` was
+/// chosen. This node's own `--role` is the last word on itself; the roster
+/// says what the others declared, so it knows who can take the next stage.
 fn relays(arguments: &Arguments, node: &str, subscribing: Option<&Arc<Subscribing>>) -> Vec<Relay> {
     if !drives(&arguments.scenarios, ROUND_TRIP) {
         return Vec::new();
@@ -334,13 +334,13 @@ fn relays(arguments: &Arguments, node: &str, subscribing: Option<&Arc<Subscribin
     let work = shared.join("work").join(&arguments.name);
     arguments
         .capability
-        .features()
-        .iter()
+        .stages()
+        .into_iter()
         .filter_map(|stage| {
             Relay::new(
                 &arguments.name,
                 node.to_string(),
-                *stage,
+                stage,
                 &roster,
                 shared,
                 &work,
@@ -360,7 +360,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
     let mut interval = Duration::from_millis(250);
     let mut beat = Duration::from_millis(100);
     let mut online = false;
-    let mut can = Capability::none();
+    let mut role = Capability::none();
     let mut roster = Roster::default();
     let mut scenarios = Vec::new();
 
@@ -381,7 +381,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
                 online = xmip_core_test_playground::switch::parse(&value)
                     .ok_or(format!("--online wants true or false, not {value}"))?;
             }
-            "--can" => can = Capability::parse(&value)?,
+            "--role" => role = Capability::parse(&value)?,
             "--nodes" => roster = Roster::parse(&value)?,
             "--scenarios" => scenarios = scenario::chosen(Some(&value))?,
             other => return Err(format!("unknown flag {other}")),
@@ -396,7 +396,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
         snapshot: snapshot.ok_or("--snapshot is required")?,
         interval,
         beat,
-        capability: can.with_online(online),
+        capability: role.with_online(online),
         roster,
         scenarios,
     })
@@ -460,14 +460,14 @@ mod tests {
             "--scenarios",
             "Round-Trip",
             "--nodes",
-            "alpha=receive, beta=process,gamma=send",
-            "--can",
-            "receive",
+            "alpha=receiving, beta=processing,gamma=sending",
+            "--role",
+            "receiving",
         ])
         .expect("all three are well formed");
         assert_eq!(told.scenarios, ["round-trip"]);
         assert_eq!(told.roster.names(), ["alpha", "beta", "gamma"]);
-        assert_eq!(told.capability.words(), "receive");
+        assert_eq!(told.capability.words(), "receiving");
         assert!(
             arguments(&["--scenarios", ""])
                 .expect("empty is every one")
@@ -477,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_scenario_or_capability_is_refused_with_the_names_there_are() {
+    fn an_unknown_scenario_or_role_is_refused_with_the_names_there_are() {
         let refusal = arguments(&["--scenarios", "round-trip,pingpong"])
             .err()
             .expect("pingpong is no scenario");
@@ -487,13 +487,13 @@ mod tests {
             "{refusal}"
         );
 
-        for extra in [["--can", "relay"], ["--nodes", "alpha=relay"]] {
+        for extra in [["--role", "relay"], ["--nodes", "alpha=relay"]] {
             let refusal = arguments(&extra)
                 .err()
                 .unwrap_or_else(|| panic!("{extra:?}"));
             assert!(refusal.starts_with("REFUSED"), "{refusal}");
             assert!(
-                refusal.contains("relay") && refusal.contains("receive, process, send"),
+                refusal.contains("relay") && refusal.contains("receiving, processing, sending"),
                 "{refusal}"
             );
         }

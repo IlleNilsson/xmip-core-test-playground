@@ -3,17 +3,17 @@
 //! processes during tests*).
 //!
 //! ```text
-//! cluster --name <cluster> --shared <dir> --nodes <a[=capability],b,...>
+//! cluster --name <cluster> --shared <dir> --nodes <a[=role+role],b,...>
 //!         --stress <level> --rounds <n> --snapshot <path>
 //!         [--online <a,b>] [--scenarios <a,b>] [--interval-ms <ms>]
 //! ```
 //!
-//! `--nodes` carries what each node is **declared** with — `alpha=receive`,
-//! `beta=process+send`, or a bare name for a node that declares no stage of the
-//! message path — and the cluster passes each node's own to it as `--can`
-//! (ADR-0056). A capability word is lowercase exactly, and any other word is
-//! REFUSED (`node::Stage::declared`). It infers nothing: a name is not a
-//! capability.
+//! `--nodes` carries what each node is **declared** with — `alpha=receiving`,
+//! `beta=processing+sending`, or a bare name for a node that declares no
+//! role — and the cluster passes each node's own to it as `--role`
+//! (ADR-0056, amendment 2026-10-01). A role word is lowercase exactly, and
+//! any other word is REFUSED (`node::NodeRole::declared`). It infers
+//! nothing: a name is not a role.
 //!
 //! The tree the owner asked for is three deep. `xmip-playground-roll` is the
 //! test: it chooses the scenarios, sets the stress, judges and draws the
@@ -67,8 +67,8 @@ struct Arguments {
     /// The directory the cluster and its nodes share — handoffs, the
     /// contended tests' stores, the nodes' own snapshots, and `stop`.
     shared: PathBuf,
-    /// Every node to spawn, one process each, with the capability each is
-    /// declared with; the cluster passes it on and infers nothing.
+    /// Every node to spawn, one process each, with the roles each is
+    /// declared with; the cluster passes them on and infers nothing.
     nodes: Roster,
     /// The nodes that may assume the internet (ADR-0045); `None` when the
     /// flag was not given, which leaves it to the environment.
@@ -84,11 +84,11 @@ struct Arguments {
 }
 
 const USAGE: &str = "usage: cluster --name <cluster> --shared <dir> \
-     --nodes <a[=capability],b,...> --stress <level> --rounds <n> \
+     --nodes <a[=role+role],b,...> --stress <level> --rounds <n> \
      --snapshot <path> [--online <a,b>] [--scenarios <a,b>] [--interval-ms <ms>]\n\
-     example: cluster --name C1 --shared shared --nodes R1=receive,P1=process,S1=send \
+     example: cluster --name C1 --shared shared --nodes R1=receiving,P1=processing,S1=sending \
      --stress calm --rounds 0 --snapshot C1-snapshot.toml\n\
-     The names are the tester's and mean nothing to Xmip; each node's capability is \
+     The names are the tester's and mean nothing to Xmip; each node's roles are \
      what follows its =.";
 
 fn main() -> ExitCode {
@@ -249,7 +249,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
         name: name.ok_or("REFUSED: --name is required; a cluster is named, never invented")?,
         shared: shared.ok_or("REFUSED: --shared is required; it is the store the nodes share")?,
         nodes: nodes.ok_or(
-            "REFUSED: --nodes is required; --nodes alpha=receive,beta=process,gamma=send \
+            "REFUSED: --nodes is required; --nodes alpha=receiving,beta=processing,gamma=sending \
              names them and what each declares",
         )?,
         online,
@@ -310,7 +310,7 @@ mod tests {
             "--shared",
             "s",
             "--nodes",
-            "alpha=receive,beta=process,gamma=send",
+            "alpha=receiving,beta=processing,gamma=sending",
             "--stress",
             "calm",
             "--rounds",
@@ -326,7 +326,7 @@ mod tests {
         let bare = arguments(&[]).expect("the required flags suffice");
         assert_eq!(bare.name, "Zt");
         assert_eq!(bare.nodes.names(), ["alpha", "beta", "gamma"]);
-        assert_eq!(bare.nodes.capability("beta").words(), "process");
+        assert_eq!(bare.nodes.capability("beta").words(), "processing");
         assert_eq!(bare.stress, Stress::Calm);
         assert_eq!(bare.interval, Duration::from_millis(250));
         assert!(bare.online.is_none() && bare.scenarios.is_empty());
@@ -360,7 +360,7 @@ mod tests {
             (
                 ["--nodes", "alpha=relay"],
                 "relay",
-                "receive, process, send",
+                "receiving, processing, sending",
             ),
             (["--wobble", "yes"], "--wobble", "the flags are"),
         ] {
@@ -380,11 +380,18 @@ mod tests {
             "--rounds",
             "--snapshot",
         ] {
-            let given: Vec<String> = ["--name", "Zt", "--shared", "s", "--nodes", "alpha=receive"]
-                .into_iter()
-                .chain(["--stress", "calm", "--rounds", "0", "--snapshot", "z.toml"])
-                .map(ToString::to_string)
-                .collect();
+            let given: Vec<String> = [
+                "--name",
+                "Zt",
+                "--shared",
+                "s",
+                "--nodes",
+                "alpha=receiving",
+            ]
+            .into_iter()
+            .chain(["--stress", "calm", "--rounds", "0", "--snapshot", "z.toml"])
+            .map(ToString::to_string)
+            .collect();
             let without: Vec<String> = given
                 .chunks(2)
                 .filter(|pair| pair[0] != missing)

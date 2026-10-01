@@ -101,7 +101,7 @@ impl Eventing {
 
         Self {
             node: node.to_string(),
-            stages: capability.features().to_vec(),
+            stages: capability.stages(),
             _listening: listening,
             drained,
             failing: BTreeMap::new(),
@@ -194,7 +194,8 @@ mod tests {
         let shared = scratch("eventing");
         let node = "xmip:///CT/node/eventing-test";
         let audit = ProgramAudit::new("xmip-playground-eventing-test", Some(&shared));
-        let mut eventing = Eventing::start(node, &Capability::of(&[Stage::Receive]), &audit);
+        let mut eventing =
+            Eventing::start(node, &Capability::of(&[node::NodeRole::Receiving]), &audit);
 
         let mut first = Snapshot::new();
         first.record_health(record(&format!("{node}/receive/tcp/json"), Health::Done));
