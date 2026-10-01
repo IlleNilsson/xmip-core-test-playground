@@ -1,11 +1,11 @@
 //! The shared store — the one directory the nodes claim from and drain — and
 //! the links to it, drawn only for the nodes that ran a test over it.
 
+use observe::topology::draw::{CLUSTER, drawn, fraction, mood, node_id, worst};
 use observe::{
     Counted, Health, NodeKind, Origin, Pattern, Snapshot, Topology, TopologyLink, TopologyNode,
 };
 
-use super::{CLUSTER, drawn, fraction, mood, node_id, worst};
 use crate::scenario::{DAILY_BACKLOG, EXCLUSIVE_CLAIM};
 use crate::support::cluster_root;
 

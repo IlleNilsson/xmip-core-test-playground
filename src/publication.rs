@@ -9,12 +9,13 @@
 
 use std::path::{Path, PathBuf};
 
+use observe::publication::write_atomic;
 use observe::{Activity, History, Run, Snapshot, Topology};
 use xaudit::program_audit::ProgramAudit;
 
 use crate::environment::{publish_area, publish_paths};
 use crate::process_audit;
-use crate::report::{activity_toml, history_toml, roll_toml, write_atomic};
+use crate::report::{activity_toml, history_toml, roll_toml};
 
 /// Where one roll publishes, and the run it publishes under.
 pub struct Publication {

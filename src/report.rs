@@ -2,8 +2,10 @@
 //!
 //! The playground and the readers (the GUI, the CLI) are separate processes;
 //! the bridge between them is a file. It is written **atomically** — a temp file
-//! flushed to the device and renamed over the target — so a reader never
-//! catches a half-written file, or an empty one, even after a week of ticks.
+//! flushed to the device and renamed over the target, by
+//! `observe::publication::write_atomic`, the one writer every publisher
+//! uses — so a reader never catches a half-written file, or an empty one,
+//! even after a week of ticks.
 //!
 //! **The snapshot's shape is not this file's.** It is `observe::Publication`'s,
 //! which writes it and reads it, and which a surface reads through the
@@ -14,9 +16,6 @@
 //! **TOML, not JSON.** On disk the estate is TOML — the owner's rule, the same
 //! reason `architecture.json` was deleted for `architecture.toml`; JSON is
 //! reserved for what lives in memory or on the wire.
-
-use std::io::{self, Write};
-use std::path::Path;
 
 use observe::{Activity, Curve, History, Publication, Recent, Run, Snapshot, Topology};
 use serde::{Deserialize, Serialize};
@@ -98,34 +97,6 @@ pub fn history_toml(node: &str, history: &History) -> String {
 #[must_use]
 pub fn activity_toml(node: &str, activity: &Activity) -> String {
     Recent::of(node, activity).to_toml()
-}
-
-/// Write `contents` to `path` atomically: a sibling temp file, flushed to the
-/// device, then a rename over the target. A reader either sees the previous
-/// file or this one, never a torn write — and never an empty one: the rename
-/// is journaled and the data is not, so a hard stop between the write and the
-/// flush left a snapshot, a history and an activity file of the right length
-/// and nothing but zeros in them, and the prompt said unavailable for two
-/// days (2026-09-16).
-///
-/// # Errors
-///
-/// Where the parent could not be created, or the file could not be written,
-/// flushed or renamed.
-pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    // Its own temporary file: two processes publishing to one path — which
-    // Start-XmipTest now refuses, and a roll started by hand can still do —
-    // must not write into each other's half-finished file.
-    let temp = path.with_extension(format!("toml.writing-{}", std::process::id()));
-    let mut file = std::fs::File::create(&temp)?;
-    file.write_all(contents.as_bytes())?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&temp, path)
 }
 
 #[cfg(test)]
@@ -243,19 +214,5 @@ mod tests {
                 .any(|p| p["counted"].as_str() == Some("bytes"))
         );
         std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn an_atomic_write_lands_the_contents() {
-        let path = std::env::temp_dir().join("xmip-report-atomic/snapshot.toml");
-        std::fs::remove_dir_all(path.parent().expect("parent")).ok();
-
-        write_atomic(&path, "node = \"x\"\n").expect("write");
-
-        assert_eq!(
-            std::fs::read_to_string(&path).expect("read"),
-            "node = \"x\"\n"
-        );
-        std::fs::remove_dir_all(path.parent().expect("parent")).ok();
     }
 }

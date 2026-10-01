@@ -6,46 +6,41 @@
 //! it, and a link because the roster configures a handoff there or one was
 //! delivered over it — configured, observed or both, said on the link.
 //!
-//! The picture is the owner's, 2026-09-19: *cluster, nodes, receive, process,
-//! send*. The cluster holds its nodes; a node holds the stages of the message
-//! path it declared; a receive or a send stage holds one endpoint per transport
-//! it reported on. Between them run the handoffs, receive to process to send,
-//! one link per pair of stages configured to exchange them or that exchanged
-//! any, its volume the hops and its rate their rise per second since the
-//! roll's last publication (`Topology::rate_since`). Outside them the
-//! Parties (the owner, 2026-09-29: *something is sending streams to a Xmip
-//! Node; a Xmip Node sends streams to somethings*): the one that sends into
-//! the receive stages and the one the send stages deliver to, each linked to
-//! the stages facing it (`party`). A
-//! drawn thing above its leaves is Fine or Holding (`Health::rolled`,
-//! ADR-0041); a link shows the worst leaf at either end. The
+//! The cluster, its nodes, their stages and endpoints, and the Parties
+//! outside them are drawn by `observe::topology::draw` and
+//! `observe::topology::party`, the one drawing every publisher calls — a
+//! running node draws itself through it too (ADR-0018, amendment
+//! 2026-09-30). The Playground's Party is its own, `identity::PARTY`. What
+//! only a roll has is drawn here: between the stages run the handoffs,
+//! receive to process to send, one link per pair of stages configured to
+//! exchange them or that exchanged any, its volume the hops and its rate
+//! their rise per second since the roll's last publication
+//! (`Topology::rate_since`); a link shows the worst leaf at either end. The
 //! shared directory is drawn only when a node ran a test over it. The model
-//! and its words are `observe::topology`'s, which writes and reads them; this
-//! file only draws (open problem 25).
+//! and its words are `observe::topology`'s, which writes and reads them
+//! (open problem 25).
 
-mod party;
+mod handoff;
 mod shared;
-mod stage;
 
-use observe::{Health, HealthRecord, NodeKind, Origin, Scope, Snapshot, Topology, TopologyNode};
+use observe::Topology;
+use observe::topology::{draw, party};
 
 use crate::handoff::Hop;
+use crate::identity::PARTY;
 use crate::roster::Roster;
 use crate::support::cluster_root;
-
-/// The id of the cluster, the one node with no parent.
-const CLUSTER: &str = "cluster";
 
 /// The cluster's topology from what it was configured with, what its nodes
 /// published this round and the handoffs they delivered: the cluster, one
 /// node per name on the roster, each node's stages and their endpoints, the
 /// handoff links — configured where `relayed` says the run hands `RoundTrip`
 /// along the stages the roster declares, observed where a hop was
-/// delivered — and the shared store with its links when a node ran a test
-/// over it.
+/// delivered — the Parties outside them, and the shared store with its links
+/// when a node ran a test over it.
 #[must_use]
 pub fn cluster_topology(
-    snapshot: &Snapshot,
+    snapshot: &observe::Snapshot,
     roster: &Roster,
     relayed: bool,
     hops: &[Hop],
@@ -54,124 +49,18 @@ pub fn cluster_topology(
     let names: Vec<&str> = roster.names();
     let root = cluster_root();
     let mut topology = Topology {
-        source: format!("playground — cluster {}", label(&root)),
+        source: format!("playground — cluster {}", draw::label(&root)),
         observed_unix_nanos: now,
-        nodes: vec![cluster_node(snapshot, &root, &names)],
+        nodes: draw::members(snapshot, &root, &names),
         links: Vec::new(),
     };
-    for name in &names {
-        let scope = format!("{root}/node/{name}");
-        topology.nodes.push(node(snapshot, name, &scope));
-        topology.nodes.extend(stage::nodes(snapshot, name, &scope));
-    }
     let configured = relayed.then_some(roster);
     topology
         .links
-        .extend(stage::handoff_links(snapshot, configured, hops));
-    party::draw(snapshot, &names, &mut topology);
+        .extend(handoff::handoff_links(snapshot, configured, hops));
+    party::draw(snapshot, &root, &names, PARTY, &mut topology);
     shared::draw(snapshot, &names, &mut topology);
     topology
-}
-
-/// The id of the node called `name`.
-fn node_id(name: &str) -> String {
-    format!("node/{name}")
-}
-
-/// The last segment of a scope: what a thing is called.
-fn label(scope: &str) -> &str {
-    scope.rsplit('/').next().unwrap_or(scope)
-}
-
-/// The worst record at or beneath `scope`, if anything was published there.
-fn worst(snapshot: &Snapshot, scope: &str) -> Option<HealthRecord> {
-    snapshot.health(scope).into_iter().next()
-}
-
-/// What a drawn thing at `scope` shows (ADR-0041): the mood of the record
-/// at the scope itself, or — for a parent — `Health::rolled` over the worst
-/// record beneath it, Fine or Holding; the evidence is the worst record's
-/// either way, so a Holding cluster says what it is holding on.
-fn drawn(record: Option<&HealthRecord>, scope: &str) -> (Health, String) {
-    let (health, evidence) = mood(record);
-    match record {
-        Some(record) if Scope::new(&record.scope) != Scope::new(scope) => {
-            (health.rolled(), evidence)
-        }
-        _ => (health, evidence),
-    }
-}
-
-/// The mood and the evidence of a record, or what an empty scope says: what
-/// a link between two things shows, which is no parent of anything.
-fn mood(record: Option<&HealthRecord>) -> (Health, String) {
-    record.map_or_else(
-        || (Health::Working, "nothing published yet".to_string()),
-        |record| (record.health, record.evidence.clone()),
-    )
-}
-
-/// Whether the cluster's own record says the node's process is running.
-fn alive(snapshot: &Snapshot, scope: &str) -> bool {
-    worst(snapshot, &format!("{scope}/system-process"))
-        .is_some_and(|record| record.evidence.starts_with("alive"))
-}
-
-/// The cluster: its mood the rollup over its nodes, its activity the share
-/// of them running.
-fn cluster_node(snapshot: &Snapshot, root: &str, names: &[&str]) -> TopologyNode {
-    let (state, evidence) = drawn(worst(snapshot, &format!("{root}/node")).as_ref(), root);
-    let running = names
-        .iter()
-        .filter(|name| alive(snapshot, &format!("{root}/node/{name}")))
-        .count();
-    TopologyNode {
-        id: CLUSTER.to_string(),
-        parent: String::new(),
-        label: label(root).to_string(),
-        kind: NodeKind::Cluster,
-        scope: root.to_string(),
-        state,
-        origin: Origin::Configured,
-        load: 0.0,
-        activity: fraction(running, names.len()),
-        evidence,
-    }
-}
-
-/// One node of the cluster, the System Process it is (ADR-0028 clause 2).
-fn node(snapshot: &Snapshot, name: &str, scope: &str) -> TopologyNode {
-    let (state, evidence) = drawn(worst(snapshot, scope).as_ref(), scope);
-    TopologyNode {
-        id: node_id(name),
-        parent: CLUSTER.to_string(),
-        label: name.to_string(),
-        kind: NodeKind::Node,
-        scope: scope.to_string(),
-        state,
-        origin: origin(snapshot, scope),
-        load: 0.0,
-        activity: if alive(snapshot, scope) { 1.0 } else { 0.0 },
-        evidence,
-    }
-}
-
-/// Configured by the cluster, and observed too once something reported on it.
-fn origin(snapshot: &Snapshot, scope: &str) -> Origin {
-    if snapshot.health(scope).is_empty() {
-        Origin::Configured
-    } else {
-        Origin::Both
-    }
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn fraction(part: usize, whole: usize) -> f64 {
-    if whole == 0 {
-        0.0
-    } else {
-        part as f64 / whole as f64
-    }
 }
 
 #[cfg(test)]
@@ -180,7 +69,9 @@ mod tests {
     use crate::cluster::ROOT;
     use crate::report::roll_toml;
     use node::Capability;
-    use observe::{Count, Counted, Publication};
+    use observe::{
+        Count, Counted, Health, HealthRecord, NodeKind, Origin, Publication, Snapshot, TopologyNode,
+    };
 
     fn record(scope: &str, health: Health, evidence: &str) -> HealthRecord {
         HealthRecord {

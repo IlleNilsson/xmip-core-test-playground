@@ -434,8 +434,11 @@ false` gates what is outside the cluster only: an offline node takes handoffs
 like any other. This rehearses option A of `doc/planning/open-problems.md`
 problem 17 in the rig; it rules nothing for the runtime.
 
-**The topology** (`topology.rs` draws it; the model and its words are
-`observe::topology`'s) a roll publishes is the cluster (kind
+**The topology** (`topology.rs` composes it; the model, its words, and the
+drawing of the cluster, its nodes, stages, endpoints and Parties are
+`observe::topology`'s, the one drawing a running node's publication uses
+too; this crate draws only its handoffs and its shared store) a roll
+publishes is the cluster (kind
 `cluster`), its nodes (`node`), the stages each runs (`stage`), and under a
 receive or a send stage one endpoint per transport it reported on (`endpoint`).
 A node's stages are the ones it **declared**, read from the capability record

@@ -82,6 +82,7 @@ use std::time::Duration;
 
 use node::Capability;
 use observe::Snapshot;
+use observe::publication::write_atomic;
 use xaudit::program_audit::ProgramAudit;
 use xmip_core_test_playground::cluster::merge;
 use xmip_core_test_playground::eventing::Eventing;
@@ -92,7 +93,6 @@ use xmip_core_test_playground::scenario::{
 use xmip_core_test_playground::subscribing::Subscribing;
 use xmip_core_test_playground::{
     DailyBacklog, ExclusiveClaim, Heartbeat, Relay, Roster, Stress, cluster_root, node_toml,
-    write_atomic,
 };
 use xmip_core_test_playground::{image, process_audit};
 

@@ -109,7 +109,7 @@ pub use heavy_load::HeavyLoad;
 pub use identity::{IdentityFaults, Step};
 pub use low_latency::LowLatency;
 pub use relay::Relay;
-pub use report::{activity_toml, history_toml, node_toml, roll_toml, write_atomic};
+pub use report::{activity_toml, history_toml, node_toml, roll_toml};
 pub use retention::Retention;
 pub use roster::Roster;
 pub use round_trip::round_trip;

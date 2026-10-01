@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::process::{Child, ExitStatus};
 use std::time::Instant;
 
+use observe::topology::draw::{ALIVE, system_process};
 use observe::{Health, HealthRecord, Snapshot};
 
 use super::Liveness;
@@ -158,11 +159,11 @@ impl Member {
                 20,
                 "starting: beating, its first round under way".to_string(),
             ),
-            (None, 0) => (Health::Fine, 0, "alive".to_string()),
-            (None, _) => (Health::Stressed, 60, format!("alive; {restarted}")),
+            (None, 0) => (Health::Fine, 0, ALIVE.to_string()),
+            (None, _) => (Health::Stressed, 60, format!("{ALIVE}; {restarted}")),
         };
         HealthRecord {
-            scope: format!("{}/node/{}/system-process", cluster_root(), self.name),
+            scope: system_process(&format!("{}/node/{}", cluster_root(), self.name)),
             health,
             severity,
             evidence,
