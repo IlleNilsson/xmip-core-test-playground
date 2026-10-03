@@ -120,18 +120,17 @@ existed and is the level a hand-started roll takes when
 `Start-XmipTest` has said `brutal` since 2026-09-19, because an omitted
 selector there means the most the rig can give (ADR-0059, amendment).
 
-### The full complement a level brings
+### The nodes are the cluster's xmip.toml
 
-Told no nodes at all — neither `XMIP_PLAYGROUND_NODE_NAMES` nor
-`XMIP_PLAYGROUND_NODES` — a roll brings the level's own count of them,
-`node-01` up, dealt receive, process and send in message-path order and round
-again (`complement.rs`). Twenty nodes are seven receiving, seven processing
-and six sending, and `RoundTrip` runs between the processes rather than whole
-in the roll. A level with fewer than three cannot cover the path; those nodes
-declare no stage, each runs whole tests itself, and both the roll's first line
-and `Start-XmipTest` say so. `roll --roster <level>` prints the complement and
-starts nothing, which is how the cmdlet resolves an omitted `-Nodes` at its
-own door and records what an operator got.
+A roll spawns the nodes of the cluster file `XMIP_TEST_CLUSTER` names: every
+node under its `[nodes]` is one process, declaring the roles its `roles` key
+says (`Roster::of_cluster`, over `configure::cluster::roles`), and a roll told
+no file is REFUSED. `Start-XmipTest` writes the run's own file from
+`-Cluster`, `-Nodes` and `-NodeRole`, or names the test cluster's,
+`test/xmip.toml`, where `-Nodes` was not given. Nothing is counted or
+numbered (ADR-0056, amendment 2026-10-03). Where no node declares a stage,
+each runs whole tests itself, and both the roll's first line and
+`Start-XmipTest` say so.
 
 ### Every transport declares its ceiling
 
@@ -200,8 +199,8 @@ runs for minutes is a node at work: judging by rounds once restarted every
 node into the same wait (2026-09-25). Exclusive
 pickup and backlog draining are thereby contended by real processes, which is
 the property ADR-0024's claim exists to prove and a thread could only imitate.
-`XMIP_PLAYGROUND_NODES` or a harsh or brutal level puts the nodes on the board
-beside the in-process scenarios. What the cluster knows of a node's process —
+A cluster file with nodes puts them on the board beside the in-process
+scenarios. What the cluster knows of a node's process —
 alive, exited, restarted — is at `node/<name>/system-process`.
 
 ### Even clusters are spawned as processes, 2026-09-19
@@ -287,11 +286,14 @@ convenient; only a name no file can carry is REFUSED before anything spawns.
 
 Every node subscribes two Parties in its own process, through
 `xmip-core-event`'s hub and nothing of its own (`src/eventing.rs`; ADR-0065,
-amendment 2026-09-29): *operations* hears every Event on the node and is
+amendment 2026-09-29). Being in the Playground's process admits nobody: the
+Playground, the program hosting the hub, hands it the policy that allows the
+two — the authorize capability's party technology, `PartyPolicy`
+(`Hub::authorize_by`; amendment 2026-09-26). *operations* hears every Event on the node and is
 called back, *on-call* hears the failures and is drained each round. A node
 raises an Event for each stage it serves whose failing pairs changed since
 the round before, so a steady node is quiet. It records what its hub holds in
-its snapshot, the cluster and the roll merge the Event subscriptions as they
+its snapshot, and the members of the cluster it does not hear, the cluster and the roll merge the Event subscriptions as they
 merge health, and the roll's snapshot says where the nodes take orders —
 `<shared>/orders`, beneath the directory the cluster shares. A surface over
 that snapshot leaves a pause, resume or remove there; the node that holds the
@@ -300,14 +302,16 @@ applies it to its hub and publishes what came of it.
 
 ### A node that processes routes by real Subscriptions, 2026-09-30
 
-The RoundTrip test is an Xmip Application,
-[`configuration/round-trip.application.toml`](configuration/round-trip.application.toml):
-four Subscriptions, one per family of content contracts — structured, edi,
-flat and schema — each to the Send Port the send stage serves. A node that
-declared process writes it and a node configuration binding it into
-`<shared>/configuration` and reads both back as a real node reads its
-configuration, through the runtime (`src/subscribing.rs`; ADR-0013,
-amendment 2026-09-30). Every pair its process stage hands on is published
+The RoundTrip test is an Xmip Application, a section of the Playground's
+cluster configuration, [`configuration/xmip.toml`](configuration/xmip.toml)
+(ADR-0064 and ADR-0031, amendments 2026-10-03): four Subscriptions, one per
+family of content contracts — structured, edi, flat and schema — each to
+the Send Port the send stage serves. A node that declared process writes
+the cluster's file with the run's names and the bindings that place the
+Application on the run's nodes, slices its own configuration from it as
+deployment does, writes that into `<shared>/configuration` and reads it
+back as a real node reads its configuration, through the runtime
+(`src/subscribing.rs`; ADR-0013, amendment 2026-09-30). Every pair its process stage hands on is published
 against them: a Subscription that picks it up hands it to the send stage; a
 paused one holds it in the node's runtime store — persist over RocksDB under
 `<shared>/store/<node>`, sealed under a key-encryption key of the machine's
@@ -315,7 +319,8 @@ key store in `<shared>/keys/<node>` — so it is counted as held, nothing is
 lost, and a restarted node is still paused. A resume hands on what was held,
 oldest first. The node publishes its Subscriptions with its snapshot, and an
 operator pauses and resumes them through an order left under
-`<shared>/orders`; they are added and removed in the Application's TOML.
+`<shared>/orders`; they are added and removed in the Application's section
+of `configuration/xmip.toml`.
 
 ### Every process audits, 2026-09-25
 
@@ -378,9 +383,9 @@ owner struck that too: *Rn, Pn and Sn are arbitrary node names* (ADR-0056,
 amendment). **Nowhere in Xmip is a node's name read.** A named node carries
 what `-NodeRole @{ R1 = 'receiving' }` states for it and nothing else; a
 node given none declares none, and `Start-XmipTest` says so in words before it
-spawns anything. Omit `-Nodes` and the level's complement deals the whole
-path by position, which reads no name either. What leaves PowerShell is
-`XMIP_PLAYGROUND_NODE_ROLES=R1=receiving,…` — a declaration, not a name.
+spawns anything. Omit `-Nodes` and the test cluster's `xmip.toml` declares
+them. What leaves PowerShell is a cluster file, `[nodes.R1] roles =
+"receiving"` — a declaration, not a name.
 The examples here name clusters `C1`, `C2` and nodes `R1`, `P1`, `S1`, as the
 owner does when he tests (ADR-0056, amendment 2026-09-25): the letter reminds
 the person, and the declaration beside it is all Xmip reads.
@@ -501,13 +506,13 @@ Every Start and Stop takes `-WhatIf`. A roll's switches reach it through its
 own environment, never yours: `-Stress` is `XMIP_PLAYGROUND_STRESS`
 (`calm`, `realistic`, `harsh`, `brutal`), `-Test` is
 `XMIP_PLAYGROUND_SCENARIOS` (the scope segments above; unset means all),
-`-Nodes` is `XMIP_PLAYGROUND_NODE_NAMES` (the nodes to simulate, by name, one
-process each; an empty list is `XMIP_PLAYGROUND_NODES=0`, no nodes; omitted,
-the cmdlet resolves the level's full complement and sets those names, so the
-run record says what an operator got), `-NodeRole` is
-`XMIP_PLAYGROUND_NODE_ROLES` (the roles each declares,
-`R1=receiving,P1=processing+sending`; a node it does not name declares nothing,
-and nothing here is worked out from a name), `-OnlineNodes` is
+`-Nodes` and `-NodeRole` are the run's cluster file,
+`<Path>/<Cluster>.xmip.toml`, which `XMIP_TEST_CLUSTER` names (the nodes to
+simulate, one process each, each declaring the roles `-NodeRole` gives it —
+`[nodes.R1] roles = "receiving"`; a node it does not name declares nothing,
+and nothing here is worked out from a name; an empty list is a cluster of no
+nodes; omitted, `XMIP_TEST_CLUSTER` names the test cluster's file as it is,
+and the run record says the nodes and the file), `-OnlineNodes` is
 `XMIP_PLAYGROUND_ONLINE_NODES`
 (which of them may assume the internet, by name, ADR-0045; unset, every node
 reads `XMIP_ONLINE`), `-Duration` is

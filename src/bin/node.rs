@@ -95,7 +95,8 @@ use xmip_core_test_playground::scenario::{
 };
 use xmip_core_test_playground::subscribing::Subscribing;
 use xmip_core_test_playground::{
-    DailyBacklog, ExclusiveClaim, Heartbeat, Relay, Roster, Stress, cluster_root, node_toml,
+    DailyBacklog, ExclusiveClaim, Heartbeat, Relay, Roster, Stress, cluster_name, cluster_root,
+    node_toml,
 };
 use xmip_core_test_playground::{image, process_audit};
 
@@ -129,6 +130,35 @@ const USAGE: &str = "usage: node --name <name> --shared <dir> --stress <level> -
      --snapshot R1.toml --role receiving\n\
      The name is the tester's and means nothing to Xmip; --role says what the node is for.";
 
+/// What the node can do, recorded each round: its switch, offline in the
+/// estate's tests, and the capability it declared.
+fn record_capability(snapshot: &mut Snapshot, node: &str, arguments: &Arguments) {
+    snapshot.record_health(record(
+        format!("{node}/switch"),
+        format!(
+            "{}; the estate's tests run offline",
+            arguments.capability.word()
+        ),
+    ));
+    snapshot.record_health(record(
+        observe::capability::scope(node),
+        arguments.capability.evidence(),
+    ));
+}
+
+/// A node is of the cluster that spawned it, which says so; it never invents
+/// one (ADR-0052). Refused, in words and audited, where none is named.
+fn refused_without_cluster(audit: &ProgramAudit) -> Option<ExitCode> {
+    if cluster_name().is_some() {
+        return None;
+    }
+    let problem = "REFUSED: a node is of a cluster, and none is named; the cluster \
+                   that spawns it sets XMIP_PLAYGROUND_CLUSTER.";
+    process_audit::fail(audit, "start", &format!("node: {problem}"));
+    eprintln!("{problem}");
+    Some(ExitCode::from(2))
+}
+
 fn main() -> ExitCode {
     // The command line is read before anything else, so the first beat is
     // the first thing a node does: alive within milliseconds of its start,
@@ -156,6 +186,9 @@ fn main() -> ExitCode {
         }
     };
 
+    if let Some(refused) = refused_without_cluster(&audit) {
+        return refused;
+    }
     let node = format!("{}/node/{}", cluster_root(), arguments.name);
     // Every record from here, the panic hook's too, carries the location this
     // node declares, so a reader knows whose it is (ADR-0062, amendment
@@ -209,17 +242,7 @@ fn main() -> ExitCode {
         if let Some(daily_backlog) = daily_backlog.as_mut() {
             merge(&mut snapshot, &daily_backlog.tick());
         }
-        snapshot.record_health(record(
-            format!("{node}/switch"),
-            format!(
-                "{}; the estate's tests run offline",
-                arguments.capability.word()
-            ),
-        ));
-        snapshot.record_health(record(
-            observe::capability::scope(&node),
-            arguments.capability.evidence(),
-        ));
+        record_capability(&mut snapshot, &node, &arguments);
         operator_orders::take(shared, &node, &eventing, subscribing.as_deref(), &audit);
         eventing.round(&mut snapshot);
         if let Some(subscribing) = &subscribing {
@@ -425,11 +448,20 @@ fn number(flag: &str, value: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use configure::fixture::test_cluster;
+
+    /// The test cluster's receiving, processing and sending node.
+    fn path() -> [String; 3] {
+        let cluster = test_cluster();
+        ["receiving", "processing", "sending"].map(|role| cluster.with_role(role).name.clone())
+    }
 
     fn arguments(extra: &[&str]) -> Result<Arguments, String> {
+        let [name, ..] = path();
+        let snapshot = format!("{name}.toml");
         let required = [
             "--name",
-            "alpha",
+            &name,
             "--shared",
             "s",
             "--stress",
@@ -437,7 +469,7 @@ mod tests {
             "--rounds",
             "1",
             "--snapshot",
-            "alpha.toml",
+            &snapshot,
         ];
         parse(required.iter().chain(extra).map(ToString::to_string))
     }
@@ -456,17 +488,19 @@ mod tests {
             "a node told nothing declares nothing and runs whole tests"
         );
 
+        let [receiving, processing, sending] = path();
+        let nodes = format!("{receiving}=receiving, {processing}=processing,{sending}=sending");
         let told = arguments(&[
             "--scenarios",
             "Round-Trip",
             "--nodes",
-            "alpha=receiving, beta=processing,gamma=sending",
+            &nodes,
             "--role",
             "receiving",
         ])
         .expect("all three are well formed");
         assert_eq!(told.scenarios, ["round-trip"]);
-        assert_eq!(told.roster.names(), ["alpha", "beta", "gamma"]);
+        assert_eq!(told.roster.names(), [receiving, processing, sending]);
         assert_eq!(told.capability.words(), "receiving");
         assert!(
             arguments(&["--scenarios", ""])
@@ -487,7 +521,9 @@ mod tests {
             "{refusal}"
         );
 
-        for extra in [["--role", "relay"], ["--nodes", "alpha=relay"]] {
+        let [name, ..] = path();
+        let relaying = format!("{name}=relay");
+        for extra in [["--role", "relay"], ["--nodes", &relaying]] {
             let refusal = arguments(&extra)
                 .err()
                 .unwrap_or_else(|| panic!("{extra:?}"));

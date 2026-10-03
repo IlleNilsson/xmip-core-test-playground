@@ -348,13 +348,13 @@ fn not_reached(after: Step) -> Outcome {
 }
 
 fn run_identification(subject_present: bool) -> Vec<Presented> {
-    let stream = Contract::Text.stream();
     let properties: Vec<(String, String)> = if subject_present {
         vec![("peer.subject".to_string(), SUBJECT.to_string())]
     } else {
         Vec::new()
     };
-    let arrival = StreamArrival::new(&stream, Arriving::Pushed, "xmip:///playground", &properties);
+    let location = crate::support::cluster_root();
+    let arrival = StreamArrival::new(Arriving::Pushed, &location, &properties);
     let identifier = SubjectIdentifier;
     let identifiers: [&dyn TransportIdentifier; 1] = [&identifier];
     identify_transport(&identifiers, &arrival).unwrap_or_default()

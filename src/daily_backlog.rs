@@ -221,18 +221,17 @@ fn measure(dir: &Path) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::support::scratch;
+    use crate::support::{scope, scratch};
     use observe::Health;
 
     #[test]
     fn a_backlog_escalates_through_a_tweak_then_a_node_and_clears() {
         let dir = scratch("escalate");
-        let mut daily_backlog = DailyBacklog::new("xmip:///playground/daily-backlog", &dir);
+        let mut daily_backlog = DailyBacklog::new(scope("daily-backlog"), &dir);
         let mut cleared = false;
         for _ in 0..30 {
             let snapshot = daily_backlog.tick();
-            if snapshot.worst("xmip:///playground/daily-backlog") == Some(Health::Fine)
-                && daily_backlog.scaled
+            if snapshot.worst(&scope("daily-backlog")) == Some(Health::Fine) && daily_backlog.scaled
             {
                 cleared = true;
             }
@@ -255,7 +254,7 @@ mod tests {
     #[test]
     fn the_backlog_is_real_files_and_a_tweak_alone_does_not_clear_it() {
         let dir = scratch("files");
-        let mut daily_backlog = DailyBacklog::new("xmip:///playground/daily-backlog", &dir);
+        let mut daily_backlog = DailyBacklog::new(scope("daily-backlog"), &dir);
         // A few rounds in, the backlog is real files on disk and rising.
         for _ in 0..3 {
             daily_backlog.tick();
@@ -274,7 +273,7 @@ mod tests {
         for n in 0..40 {
             std::fs::write(dir.join(format!("daily_other_{n:08}")), b"x").expect("a file");
         }
-        let mut daily_backlog = DailyBacklog::shared("xmip:///playground/daily-backlog", &dir);
+        let mut daily_backlog = DailyBacklog::shared(scope("daily-backlog"), &dir);
         assert_eq!(
             measure(&dir),
             (40, 1),
@@ -282,7 +281,7 @@ mod tests {
         );
 
         let snapshot = daily_backlog.tick();
-        let record = &snapshot.health("xmip:///playground/daily-backlog")[0];
+        let record = &snapshot.health(&scope("daily-backlog"))[0];
         assert_eq!(daily_backlog.feeders, 2, "two feeders are seen");
         assert!(
             record.evidence.contains("over 2 feeders"),

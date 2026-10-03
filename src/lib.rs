@@ -25,7 +25,7 @@
 //!
 //! It runs more than one scenario over those adapters, each a different question
 //! asked of the same estate, published under its own subtree of
-//! `xmip:///playground`:
+//! `xmip:///<cluster>`:
 //!
 //!   - **`RoundTrip`** — did it arrive whole and hold its contract, across the
 //!     message-path stages, and does Receive run the identity pipeline and Send
@@ -52,7 +52,6 @@ pub mod budget;
 pub mod cabinet;
 pub mod capability;
 pub mod cluster;
-pub mod complement;
 pub mod contracts;
 pub mod curve;
 pub mod daily_backlog;

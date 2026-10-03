@@ -62,11 +62,15 @@ party = { package = "xmip-core-party", git = "https://github.com/IlleNilsson/xmi
 runtime = { package = "xmip-core-runtime", git = "https://github.com/IlleNilsson/xmip-core-runtime", branch = "main" }
 configure = { package = "xmip-core-configure", git = "https://github.com/IlleNilsson/xmip-core-configure", branch = "main" }
 route = { package = "xmip-core-route", git = "https://github.com/IlleNilsson/xmip-core-route", branch = "main" }
-# Where a paused Subscription keeps what it holds, so a pause survives the
-# node: persist's runtime store over RocksDB, sealed under a key-encryption
-# key of the machine's key store — DPAPI on Windows, a private file on Unix.
+# Where a paused Subscription's pause and what it holds are kept, so both
+# survive the node: the node's own embedded Storage node — RocksDB for the
+# Ledger, SQLite for the administration database — sealed under a
+# key-encryption key of the machine's key store: DPAPI on Windows, a
+# private file on Unix. And the Journey a held pair is, read back.
 persist = { package = "xmip-core-persist", git = "https://github.com/IlleNilsson/xmip-core-persist", branch = "main" }
 rocksdb = { package = "xmip-core-persist-rocksdb", git = "https://github.com/IlleNilsson/xmip-core-persist-rocksdb", branch = "main" }
+sqlite = { package = "xmip-core-persist-sqlite", git = "https://github.com/IlleNilsson/xmip-core-persist-sqlite", branch = "main" }
+journey = { package = "xmip-core-journey", git = "https://github.com/IlleNilsson/xmip-core-journey", branch = "main" }
 secret = { package = "xmip-core-secret", git = "https://github.com/IlleNilsson/xmip-core-secret", branch = "main" }
 secret_dpapi = { package = "xmip-core-secret-dpapi", git = "https://github.com/IlleNilsson/xmip-core-secret-dpapi", branch = "main" }
 secret_file = { package = "xmip-core-secret-file", git = "https://github.com/IlleNilsson/xmip-core-secret-file", branch = "main" }
@@ -181,6 +185,8 @@ codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNil
 identify = { package = "xmip-core-identify", git = "https://github.com/IlleNilsson/xmip-core-identify", branch = "main" }
 authenticate = { package = "xmip-core-authenticate", git = "https://github.com/IlleNilsson/xmip-core-authenticate", branch = "main" }
 authorize = { package = "xmip-core-authorize", git = "https://github.com/IlleNilsson/xmip-core-authorize", branch = "main" }
+# The policy each node hands its hub, allowing its two Parties to subscribe.
+authorize-party = { package = "xmip-core-authorize-party", git = "https://github.com/IlleNilsson/xmip-core-authorize-party", branch = "main" }
 context = { package = "xmip-core-context", git = "https://github.com/IlleNilsson/xmip-core-context", branch = "main" }
 
 # The retention and archiving axis: the Retention test drives the
@@ -233,6 +239,10 @@ contract_sql = { package = "xmip-core-contract-sql", git = "https://github.com/I
 # derives the shapes; toml serialises them.
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+
+[dev-dependencies]
+# The test cluster's names, from its `xmip.toml` (`configure::fixture`).
+configure = { package = "xmip-core-configure", git = "https://github.com/IlleNilsson/xmip-core-configure", branch = "main", features = ["test-support"] }
 
 [lints.rust]
 # forbid, not deny: a module has no business writing unsafe. The one exception

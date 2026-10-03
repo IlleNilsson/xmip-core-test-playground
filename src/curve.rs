@@ -45,6 +45,7 @@ fn rollup(node: &str, snapshot: &Snapshot) -> Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::support::cluster_root;
     use crate::{Schedule, history_toml};
 
     /// A scenario as a roll composes it: publishing under its own subtree of
@@ -59,7 +60,8 @@ mod tests {
 
     #[test]
     fn a_node_s_history_holds_the_points_its_scenarios_counted() {
-        let node = "xmip:///Y1";
+        let root = cluster_root();
+        let node = root.as_str();
         let (mut schedule, dir) = scenario(node, "round-trip");
         let mut history = History::default();
 
@@ -86,7 +88,8 @@ mod tests {
         // The defect of 2026-09-19, kept as a test: the scenarios' counts are
         // recorded beneath the node, and a series is read at one exact scope,
         // so recording the snapshot alone leaves the node's own curve empty.
-        let node = "xmip:///Y1";
+        let root = cluster_root();
+        let node = root.as_str();
         let (mut schedule, dir) = scenario(node, "heavy-load");
         let mut history = History::default();
 
@@ -99,7 +102,8 @@ mod tests {
 
     #[test]
     fn the_point_is_the_rollup_the_snapshot_file_publishes() {
-        let node = "xmip:///Y1";
+        let root = cluster_root();
+        let node = root.as_str();
         let (mut schedule, dir) = scenario(node, "filing");
         let mut history = History::default();
         let snapshot = schedule.tick();

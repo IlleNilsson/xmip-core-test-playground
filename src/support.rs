@@ -8,24 +8,43 @@
 /// nodes, never a cluster (the owner, 2026-09-14; ADR-0052), so the binaries
 /// refuse to start without a name rather than inventing one. A roll's nodes
 /// inherit the variable, so the roll and every node agree on the root without
-/// being told twice.
+/// being told twice. This crate's own tests run in the test cluster, by the
+/// name its `xmip.toml` gives it.
 #[must_use]
 pub fn cluster_name() -> Option<String> {
     std::env::var("XMIP_PLAYGROUND_CLUSTER")
         .ok()
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty())
+        .or_else(test_cluster_name)
 }
 
-/// The scope root every record in this cluster hangs under. Unnamed, it is the
-/// crate's own fixture root, which only this crate's tests reach: a binary has
-/// refused by then.
+/// The test cluster's name (`configure::fixture`), read once.
+#[cfg(test)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as the variant outside tests, which has none"
+)]
+fn test_cluster_name() -> Option<String> {
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    Some(
+        NAME.get_or_init(|| configure::fixture::test_cluster().name)
+            .clone(),
+    )
+}
+
+/// Outside this crate's tests nobody names a cluster but the owner.
+#[cfg(not(test))]
+fn test_cluster_name() -> Option<String> {
+    None
+}
+
+/// The scope root every record in this cluster hangs under,
+/// `xmip:///<cluster>`. Unnamed, it is the bare `xmip:///`, which no binary
+/// reaches: each has refused by then.
 #[must_use]
 pub fn cluster_root() -> String {
-    cluster_name().map_or_else(
-        || crate::cluster::ROOT.to_string(),
-        |name| format!("xmip:///{name}"),
-    )
+    format!("xmip:///{}", cluster_name().unwrap_or_default())
 }
 
 /// Three transports, one of each kind a schedule meets — a directory, a
@@ -56,6 +75,57 @@ pub(crate) fn scratch(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("xmip-play-{name}-{}", observe::now_unix_nanos()));
     std::fs::remove_dir_all(&dir).ok();
     dir
+}
+
+/// The test cluster, what every test takes its cluster's and its nodes'
+/// names from.
+#[cfg(test)]
+pub(crate) use configure::fixture::{TestCluster, test_cluster};
+
+/// A scope beneath the test cluster's, `xmip:///<cluster>/<path>`.
+#[cfg(test)]
+pub(crate) fn scope(path: &str) -> String {
+    format!("{}/{path}", cluster_root())
+}
+
+/// A roster's text, `<node>=<role>,...`, for the nodes and roles `declared`.
+#[cfg(test)]
+pub(crate) fn roster_text(declared: &[(&str, &str)]) -> String {
+    declared
+        .iter()
+        .map(|(name, role)| format!("{name}={role}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The test cluster's receiving, processing and sending node, a
+/// `RoundTrip`'s whole path, in that order.
+#[cfg(test)]
+pub(crate) fn path(cluster: &TestCluster) -> [&str; 3] {
+    ["receiving", "processing", "sending"].map(|role| cluster.with_role(role).name.as_str())
+}
+
+/// The test cluster's nodes declaring `role`, in the order of their names.
+#[cfg(test)]
+pub(crate) fn declaring<'a>(cluster: &'a TestCluster, role: &str) -> Vec<&'a str> {
+    cluster
+        .nodes
+        .iter()
+        .filter(|node| node.roles.iter().any(|declared| declared == role))
+        .map(|node| node.name.as_str())
+        .collect()
+}
+
+/// The roster of the test cluster's whole path: its receiving, processing
+/// and sending node, each declaring that.
+#[cfg(test)]
+pub(crate) fn path_roster(cluster: &TestCluster) -> String {
+    let [receiving, processing, sending] = path(cluster);
+    roster_text(&[
+        (receiving, "receiving"),
+        (processing, "processing"),
+        (sending, "sending"),
+    ])
 }
 
 /// A short, a long and an empty payload, each filed through `cabinet` and

@@ -7,11 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::complement;
 use crate::roster::Roster;
 use crate::scenario;
-use crate::stress::Stress;
-use crate::switch::{names, node_is_online};
+use crate::switch::node_is_online;
 
 /// The scenarios named in `XMIP_PLAYGROUND_SCENARIOS`: none named is every
 /// one.
@@ -24,59 +22,37 @@ pub fn scenarios() -> Result<Vec<String>, String> {
     scenario::chosen(raw.as_deref())
 }
 
-/// What a roll was **told** to spawn, if it was told at all:
-/// `XMIP_PLAYGROUND_NODE_NAMES` names the nodes outright, and
-/// `XMIP_PLAYGROUND_NODES` says how many instead, of which `0` is none at any
-/// level. `None` when neither is set, and when the count is set but empty —
-/// nothing was said, which is the level's full complement (ADR-0059,
-/// amendment 2026-09-19).
-#[must_use]
-pub fn told() -> Option<Told> {
-    if let Ok(raw) = std::env::var("XMIP_PLAYGROUND_NODE_NAMES") {
-        return Some(Told::Named(names(&raw)));
-    }
-    let count = std::env::var("XMIP_PLAYGROUND_NODES").ok()?;
+/// The variable naming the cluster's `xmip.toml` a roll spawns the nodes
+/// of: the run's own, written by `Start-XmipTest` from `-Cluster`, `-Nodes`
+/// and `-NodeRole`, or the test cluster's where `-Nodes` was not given
+/// (ADR-0056, amendment 2026-10-03). The variable the tests' fixtures read.
+pub const CLUSTER_FILE: &str = "XMIP_TEST_CLUSTER";
 
-    Some(Told::Count(count.trim().parse::<usize>().ok()?))
-}
-
-/// How many nodes, or which: an operator says one or the other.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Told {
-    /// The nodes by name, each declaring what it was given and no more.
-    Named(Vec<String>),
-    /// How many, numbered `node-01` up and dealt over the message path, as
-    /// the level's own complement is: the owner, 2026-09-23, wanting to say
-    /// how many nodes a cluster has without naming each one. A count that
-    /// cannot cover the path leaves every node declaring nothing, which is
-    /// what `complement::of_count` already does for a small level.
-    Count(usize),
-}
-
-/// The roster a roll spawns: the nodes [`node_names`] was told, each declaring
-/// what `XMIP_PLAYGROUND_NODE_ROLES` gives it — `alpha=receiving,
-/// beta=processing+sending`, comma separated, a node it does not name declaring
-/// nothing — or, told nothing, the level's full complement dealt over the
-/// message path (`complement.rs`). Every node carries the online capability
-/// the environment says (ADR-0045, ADR-0056). Nothing is read out of a node's
-/// name.
+/// The roster a roll spawns: the nodes the cluster's file
+/// [`CLUSTER_FILE`] names declares under `[nodes]`, each with the roles its
+/// `roles` says ([`Roster::of_cluster`]), and each carrying the online
+/// capability the environment says (ADR-0045, ADR-0056). Nothing is read
+/// out of a node's name, and nothing is counted or numbered: the nodes are
+/// configuration.
 ///
 /// # Errors
 ///
-/// When a word is no role, or a role was given to a node that is no node of
-/// this roll: REFUSED, naming both sides (ADR-0055).
-pub fn roster(stress: Stress) -> Result<Roster, String> {
-    let declared = std::env::var("XMIP_PLAYGROUND_NODE_ROLES").unwrap_or_default();
-    let mut roster = match told() {
-        Some(Told::Named(named)) => Roster::declaring(&named, &declared)?,
-        Some(Told::Count(count)) if declared.trim().is_empty() => complement::of_count(count),
-        Some(Told::Count(count)) => {
-            let dealt = complement::of_count(count);
-            let names: Vec<String> = dealt.names().into_iter().map(str::to_string).collect();
-            Roster::declaring(&names, &declared)?
-        }
-        None => complement::full(stress),
-    };
+/// When no file is named or it cannot be read, or a word is no role:
+/// REFUSED, naming the file (ADR-0055).
+pub fn roster() -> Result<Roster, String> {
+    let file = std::env::var_os(CLUSTER_FILE)
+        .filter(|named| !named.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            format!(
+                "REFUSED: a roll spawns the nodes of a cluster's xmip.toml; \
+                 {CLUSTER_FILE} names none."
+            )
+        })?;
+    let text = std::fs::read_to_string(&file)
+        .map_err(|error| format!("REFUSED: the cluster file {}: {error}", file.display()))?;
+    let mut roster = Roster::of_cluster(&text)
+        .map_err(|problem| format!("REFUSED: the cluster file {}: {problem}", file.display()))?;
     let nodes: Vec<String> = roster.names().into_iter().map(str::to_string).collect();
     for node in &nodes {
         let capability = roster.capability(node).with_online(node_is_online(node));

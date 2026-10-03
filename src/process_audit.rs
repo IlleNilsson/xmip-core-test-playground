@@ -92,23 +92,33 @@ fn owned(properties: &[(&str, &str)]) -> BTreeMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::support::scratch;
+    use crate::support::{cluster_name, cluster_root, scratch};
     use node::Purpose;
+
+    /// The test cluster's name, and its roll's program name.
+    fn named() -> (String, String) {
+        let cluster = cluster_name().expect("the test cluster is named");
+        let roll = crate::image::named(&cluster, "roll");
+        (cluster, roll)
+    }
 
     #[test]
     fn a_process_records_its_start_failure_and_stop_where_it_was_told() {
         let directory = scratch("process-audit");
-        let audit = ProgramAudit::new("xmip-playground-Zt-roll", Some(&directory));
+        let (cluster, roll) = named();
+        let audit = ProgramAudit::new(&roll, Some(&directory));
 
-        start(&audit, &[("cluster", "Zt"), ("stress", "calm")]);
+        start(&audit, &[("cluster", cluster.as_str()), ("stress", "calm")]);
         fail(&audit, "publish", "could not write the snapshot");
         stop(&audit, &[("rounds", "3")]);
 
         let text = std::fs::read_to_string(audit.file().expect("a file sink")).expect("read");
+        let program = format!("program = \"{roll}\"");
+        let property = format!("\"cluster\" = \"{cluster}\"");
         for said in [
-            "program = \"xmip-playground-Zt-roll\"",
+            program.as_str(),
             "action = \"start\"",
-            "\"cluster\" = \"Zt\"",
+            property.as_str(),
             "action = \"publish\"",
             "could not write the snapshot",
             "action = \"stop\"",
@@ -122,8 +132,9 @@ mod tests {
     #[test]
     fn a_hidden_run_says_so_in_the_declaration_and_on_every_record() {
         let directory = scratch("process-audit-hidden");
-        let audit = ProgramAudit::new("xmip-playground-Zt-roll", Some(&directory));
-        let bare = || Declaration::new("xmip-playground-Zt-roll", "xmip:///Zt", Purpose::Test);
+        let (cluster, roll) = named();
+        let audit = ProgramAudit::new(&roll, Some(&directory));
+        let bare = || Declaration::new(&roll, cluster_root(), Purpose::Test);
 
         let shown = declared_as(&audit, bare(), false).expect("declared");
         assert!(!format!("{shown:?}").contains("hidden"), "{shown:?}");
@@ -131,7 +142,7 @@ mod tests {
 
         let hidden = declared_as(&audit, bare(), true).expect("declared");
         assert!(format!("{hidden:?}").contains("hidden"), "{hidden:?}");
-        start(&audit, &[("cluster", "Zt")]);
+        start(&audit, &[("cluster", cluster.as_str())]);
         let text = std::fs::read_to_string(audit.file().expect("a file sink")).expect("read");
         assert!(text.contains("hidden = \"true\""), "{text}");
         std::fs::remove_dir_all(&directory).ok();

@@ -235,36 +235,34 @@ fn difference(filed: &ArchiveItem, returned: &ArchiveItem) -> &'static str {
 mod tests {
     use super::*;
     use crate::cabinet::{FileCabinet, ParquetCabinet, SqliteCabinet};
-    use crate::support::scratch;
+    use crate::support::{scope, scratch};
     use observe::Health;
-
-    const NODE: &str = "xmip:///playground/filing";
 
     #[test]
     fn one_tick_files_every_contract_through_every_cabinet_and_rolls_up_green() {
         let dir = scratch("filing");
-        let mut filing = Filing::new(NODE, &dir);
+        let mut filing = Filing::new(scope("filing"), &dir);
 
         let snapshot = filing.tick();
 
         let pairs = (all_cabinets(&dir).len() * CONTRACTS.len()) as u64;
-        let records = snapshot.health(NODE);
+        let records = snapshot.health(&scope("filing"));
         assert_eq!(records.len() as u64, pairs, "one record per pair");
         assert!(
             records.iter().all(|r| r.health == Health::Fine),
             "every cabinet returns every contract whole: {:?}",
             records.iter().find(|r| r.health != Health::Fine)
         );
-        assert_eq!(snapshot.worst(NODE), Some(Health::Fine));
+        assert_eq!(snapshot.worst(&scope("filing")), Some(Health::Fine));
         assert_eq!(
-            snapshot.health(&format!("{NODE}/sqlite/json")).len(),
+            snapshot.health(&scope("filing/sqlite/json")).len(),
             1,
             "the scope is <node>/<technology>/<contract>"
         );
         assert_eq!(filing.filed(), pairs);
         assert!(
             snapshot
-                .measure(NODE, Counted::Bytes)
+                .measure(&scope("filing"), Counted::Bytes)
                 .is_some_and(|count| count.value > 0),
             "the bytes moved are published at the node"
         );
@@ -274,10 +272,12 @@ mod tests {
     #[test]
     fn under_pressure_a_skipped_filing_surfaces_as_a_fault() {
         let dir = scratch("filing-pressure");
-        let mut filing = Filing::new(NODE, &dir).under_pressure().over(vec![
-            Box::new(FileCabinet::new(dir.join("file"))),
-            Box::new(ParquetCabinet::new(dir.join("parquet"))),
-        ]);
+        let mut filing = Filing::new(scope("filing"), &dir)
+            .under_pressure()
+            .over(vec![
+                Box::new(FileCabinet::new(dir.join("file"))),
+                Box::new(ParquetCabinet::new(dir.join("parquet"))),
+            ]);
 
         // A skip is red the round it happens and fades to yellow after, so the
         // proof is that some round went red, not the state of the last one.
@@ -285,7 +285,7 @@ mod tests {
         for _ in 0..60 {
             let snapshot = filing.tick();
             // A Done leaf rolls up to Holding at the node (ADR-0041).
-            if snapshot.worst(NODE) == Some(Health::Holding) {
+            if snapshot.worst(&scope("filing")) == Some(Health::Holding) {
                 ever_red = true;
                 break;
             }
@@ -301,9 +301,9 @@ mod tests {
         let mut ever_red = false;
         for round in 1..=rounds {
             let snapshot = filing.tick();
-            let lying = crate::storm::violations(&snapshot, NODE);
+            let lying = crate::storm::violations(&snapshot, &scope("filing"));
             assert!(lying.is_empty(), "round {round}: {}", lying.join("; "));
-            for record in snapshot.health(NODE) {
+            for record in snapshot.health(&scope("filing")) {
                 if record.health == Health::Done {
                     ever_red = true;
                     assert!(
@@ -319,11 +319,13 @@ mod tests {
     #[test]
     fn harsh_skips_surface_and_every_size_files_whole() {
         let dir = scratch("filing-harsh");
-        let mut filing = Filing::new(NODE, &dir).at(Stress::Harsh).over(vec![
-            Box::new(FileCabinet::new(dir.join("file"))),
-            Box::new(ParquetCabinet::new(dir.join("parquet"))),
-            Box::new(SqliteCabinet::new(dir.join("sqlite"))),
-        ]);
+        let mut filing = Filing::new(scope("filing"), &dir)
+            .at(Stress::Harsh)
+            .over(vec![
+                Box::new(FileCabinet::new(dir.join("file"))),
+                Box::new(ParquetCabinet::new(dir.join("parquet"))),
+                Box::new(SqliteCabinet::new(dir.join("sqlite"))),
+            ]);
         let faulted = stress_rounds(&mut filing, Stress::Harsh.rounds());
         assert!(
             faulted,
@@ -336,7 +338,7 @@ mod tests {
     #[ignore = "brutal: every cabinet at every size, for the runner"]
     fn brutal_sizes_through_every_cabinet() {
         let dir = scratch("filing-brutal");
-        let mut filing = Filing::new(NODE, &dir).at(Stress::Brutal);
+        let mut filing = Filing::new(scope("filing"), &dir).at(Stress::Brutal);
         stress_rounds(&mut filing, Stress::Brutal.rounds());
         std::fs::remove_dir_all(&dir).ok();
     }

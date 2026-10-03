@@ -1,13 +1,15 @@
 //! The orders an operator leaves for a node the surfaces reach through its
 //! publication only: an act on one of its Event subscriptions (ADR-0065,
-//! amendment 2026-09-29) or on one of its Subscriptions (ADR-0013,
-//! amendment 2026-09-30).
+//! amendment 2026-09-29), on one of its Subscriptions (ADR-0013, amendment
+//! 2026-09-30), or a Replay from its Dead Message Queue (ADR-0052,
+//! amendment 2026-10-01).
 //!
 //! The roll says in its publication that the cluster's nodes take orders
 //! under `<shared>/orders`; a surface leaves each there as `observe::Order`
 //! writes it, and every node takes its own at each round and applies it to
-//! what it names — its hub's Event subscription ([`Eventing::act`]) or its
-//! Subscription ([`Subscribing::act`]). An order a node cannot apply is
+//! what it names — its hub's Event subscription ([`Eventing::act`]), its
+//! Subscription ([`Subscribing::act`]) or a Message its Dead Message Queue
+//! keeps ([`Subscribing::replay`]). An order a node cannot apply is
 //! audited as the failure to `order`, in the words that refused it.
 
 use std::path::{Path, PathBuf};
@@ -46,6 +48,14 @@ pub fn take(
                 (Noun::Subscription, None) => Err(format!(
                     "REFUSED: {node} routes by no Subscription; the Subscription '{}' is \
                      configured on another node",
+                    order.target
+                )),
+                (Noun::DeadMessage, Some(subscribing)) => {
+                    subscribing.replay(&order.target, &order.who)
+                }
+                (Noun::DeadMessage, None) => Err(format!(
+                    "REFUSED: {node} routes nothing, so its Dead Message Queue keeps no \
+                     Message {}",
                     order.target
                 )),
             });

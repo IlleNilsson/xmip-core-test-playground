@@ -338,6 +338,7 @@ struct Leaks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::support::scope;
     use observe::Health;
 
     /// Drive the test across `ticks` rounds, advancing simulated time by
@@ -353,11 +354,11 @@ mod tests {
 
     #[test]
     fn a_methodical_run_retains_then_archives_without_a_leak() {
-        let mut retention = Retention::new("xmip:///playground/retention");
+        let mut retention = Retention::new(scope("retention"));
         // Three simulated years at ten days a tick — long past the retention window.
         let snapshot = run(&mut retention, 10, 120);
         assert_eq!(
-            snapshot.worst("xmip:///playground/retention"),
+            snapshot.worst(&scope("retention")),
             Some(Health::Fine),
             "a clean run never leaks"
         );
@@ -390,7 +391,7 @@ mod tests {
     fn items_age_on_the_simulated_clock_not_the_round_count() {
         // Many rounds, but simulated time barely moves: nothing ages out of the
         // window, so nothing is archived. Round count alone would have archived them.
-        let mut retention = Retention::new("xmip:///playground/retention");
+        let mut retention = Retention::new(scope("retention"));
         for _ in 0..50 {
             retention.tick(Duration::from_secs(SECONDS_PER_DAY)); // one simulated day, held
         }
@@ -402,7 +403,7 @@ mod tests {
 
     #[test]
     fn the_live_set_stays_bounded_and_the_archive_only_grows() {
-        let mut retention = Retention::new("xmip:///playground/retention");
+        let mut retention = Retention::new(scope("retention"));
         run(&mut retention, 5, 200);
         let archived_first = retention.archived.len();
         // Live is items younger than KEEP_DAYS — bounded by the window regardless
@@ -418,7 +419,7 @@ mod tests {
 
     #[test]
     fn under_pressure_a_leak_surfaces() {
-        let mut retention = Retention::new("xmip:///playground/retention").under_pressure();
+        let mut retention = Retention::new(scope("retention")).under_pressure();
         // A leak is red on the round it happens and fades to yellow after, so the
         // proof is that some round went red, not the state of the last one.
         let mut ever_red = false;
@@ -426,7 +427,7 @@ mod tests {
             let simulated = Duration::from_secs(round * 10 * SECONDS_PER_DAY);
             let snapshot = retention.tick(simulated);
             // A Done leaf rolls up to Holding at the node (ADR-0041).
-            if snapshot.worst("xmip:///playground/retention") == Some(Health::Holding) {
+            if snapshot.worst(&scope("retention")) == Some(Health::Holding) {
                 ever_red = true;
             }
         }
@@ -441,12 +442,12 @@ mod tests {
         for round in 1..=rounds {
             let simulated = Duration::from_secs(round * days_per_tick * SECONDS_PER_DAY);
             let snapshot = retention.tick(simulated);
-            let lying = crate::storm::violations(&snapshot, "xmip:///playground/retention");
+            let lying = crate::storm::violations(&snapshot, &scope("retention"));
             assert!(lying.is_empty(), "round {round}: {}", lying.join("; "));
-            if snapshot.worst("xmip:///playground/retention") == Some(Health::Holding) {
+            if snapshot.worst(&scope("retention")) == Some(Health::Holding) {
                 ever_red = true;
                 let leaks: Vec<_> = snapshot
-                    .health("xmip:///playground/retention")
+                    .health(&scope("retention"))
                     .into_iter()
                     .filter(|r| r.health == Health::Done)
                     .collect();
@@ -466,7 +467,7 @@ mod tests {
         // Thirty days a tick: the first items cross the ninety-day window on
         // the fourth round, leaving most of Harsh's rounds for sweeps to miss
         // at three times the rate.
-        let mut retention = Retention::new("xmip:///playground/retention").at(Stress::Harsh);
+        let mut retention = Retention::new(scope("retention")).at(Stress::Harsh);
         let leaked = stress_rounds(&mut retention, 30, Stress::Harsh.rounds());
         assert!(leaked, "at Harsh a leak surfaces within the level's rounds");
         assert!(!retention.archived.is_empty(), "and the rest was archived");
@@ -475,7 +476,7 @@ mod tests {
     #[test]
     #[ignore = "brutal: the ceiling miss rate over the level's rounds, for the runner"]
     fn brutal_missed_sweeps_over_the_rounds() {
-        let mut retention = Retention::new("xmip:///playground/retention").at(Stress::Brutal);
+        let mut retention = Retention::new(scope("retention")).at(Stress::Brutal);
         assert!(stress_rounds(&mut retention, 10, Stress::Brutal.rounds()));
     }
 }

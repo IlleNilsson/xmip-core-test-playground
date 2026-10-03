@@ -1,0 +1,53 @@
+# The Playground's cluster configuration: what every node of a run shares
+# (ADR-0031, amendment 2026-10-03: one xmip.toml per cluster). The run names
+# the cluster and its nodes — Start-XmipTest's -Cluster and -Nodes — so
+# [service], [nodes.<name>] and the bindings, whose addresses are the run's
+# own directories, are written by the node that declared process as it
+# starts (src/subscribing.rs), and its slice is what it reads.
+#
+# The RoundTrip test is an Xmip Application (ADR-0064): a pair arrives at a
+# node that declared receive, is published at a node that declared process,
+# and each of these Subscriptions picks up the pairs of its family of content
+# contracts and routes them to the send stage. An operator pauses and resumes
+# these Subscriptions in the Subscriptions view (ADR-0013, amendment
+# 2026-09-30). They are added and removed here, in this file, and nowhere
+# else.
+
+[[xmip_applications]]
+name = "RoundTrip"
+
+[[xmip_applications.receive_ports]]
+name = "RoundTrip"
+
+[[xmip_applications.receive_locations]]
+name = "RoundTripIn"
+receive_port = "RoundTrip"
+interaction = "data-transfer"
+depth = "light"
+
+[[xmip_applications.send_ports]]
+name = "RoundTripOut"
+
+# Structured documents: JSON, XML and what is written in either.
+[[xmip_applications.subscriptions]]
+id = "structured"
+destination = { send-port = "RoundTripOut" }
+filter = "MessageType in ('json', 'xml', 'html', 'fhir', 'schematron')"
+
+# Interchanges between trading Parties and in care.
+[[xmip_applications.subscriptions]]
+id = "edi"
+destination = { send-port = "RoundTripOut" }
+filter = "MessageType in ('edi-edifact', 'edi-x12', 'hl7-v2')"
+
+# Records and lines: text a reader splits.
+[[xmip_applications.subscriptions]]
+id = "flat"
+destination = { send-port = "RoundTripOut" }
+filter = "MessageType in ('bytes', 'text', 'csv', 'fixed-width', 'regex', 'sql')"
+
+# Schemas and the formats they describe.
+[[xmip_applications.subscriptions]]
+id = "schema"
+destination = { send-port = "RoundTripOut" }
+filter = "MessageType in ('avro', 'protobuf', 'graphql-schema', 'wsdl', 'openapi', 'asyncapi')"

@@ -306,18 +306,18 @@ mod tests {
         ]
     }
     use crate::storm::violations;
-    use crate::support::scratch;
+    use crate::support::{scope, scratch};
 
     #[test]
     fn a_clean_run_stays_within_budget_and_is_green() {
         let dir = scratch("clean");
-        let mut ff = LowLatency::new("xmip:///playground/low-latency", &dir).over(sample(&dir));
+        let mut ff = LowLatency::new(scope("low-latency"), &dir).over(sample(&dir));
         let mut snapshot = ff.tick();
         for _ in 0..15 {
             snapshot = ff.tick();
         }
         assert_eq!(
-            snapshot.worst("xmip:///playground/low-latency"),
+            snapshot.worst(&scope("low-latency")),
             Some(Health::Fine),
             "loopback beats every budget with no spikes"
         );
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn spikes_push_a_pair_over_its_budget() {
         let dir = scratch("spikes");
-        let mut ff = LowLatency::new("xmip:///playground/low-latency", &dir)
+        let mut ff = LowLatency::new(scope("low-latency"), &dir)
             .over(sample(&dir))
             .under_pressure();
         let mut snapshot = ff.tick();
@@ -335,14 +335,14 @@ mod tests {
             snapshot = ff.tick();
         }
         assert_eq!(
-            snapshot.worst("xmip:///playground/low-latency"),
+            snapshot.worst(&scope("low-latency")),
             Some(Health::Holding),
             "injected spikes should drive p99 past a budget — a Done rolls up to Holding \
              (ADR-0041)"
         );
         // file never spikes: it stays green.
         assert_eq!(
-            snapshot.worst("xmip:///playground/low-latency/file"),
+            snapshot.worst(&scope("low-latency/file")),
             Some(Health::Fine),
             "file is left fast"
         );
@@ -356,9 +356,9 @@ mod tests {
         let mut snapshot = Snapshot::new();
         for round in 1..=rounds {
             snapshot = ff.tick();
-            let lying = violations(&snapshot, "xmip:///playground/low-latency");
+            let lying = violations(&snapshot, &scope("low-latency"));
             assert!(lying.is_empty(), "round {round}: {}", lying.join("; "));
-            for record in snapshot.health("xmip:///playground/low-latency") {
+            for record in snapshot.health(&scope("low-latency")) {
                 let reported = record.evidence.contains("p99") || record.health == Health::Done;
                 assert!(
                     record.health == Health::Fine || reported,
@@ -372,17 +372,17 @@ mod tests {
     #[test]
     fn harsh_spikes_are_reported_against_the_budget_and_file_stays_fast() {
         let dir = scratch("low-latency-harsh");
-        let mut ff = LowLatency::new("xmip:///playground/low-latency", &dir)
+        let mut ff = LowLatency::new(scope("low-latency"), &dir)
             .at(Stress::Harsh)
             .over(sample(&dir));
         let snapshot = stress_rounds(&mut ff, Stress::Harsh.rounds());
         assert_ne!(
-            snapshot.worst("xmip:///playground/low-latency"),
+            snapshot.worst(&scope("low-latency")),
             Some(Health::Fine),
             "at three times the spike rate, a p99 blows its budget within the rounds"
         );
         assert_eq!(
-            snapshot.worst("xmip:///playground/low-latency/file"),
+            snapshot.worst(&scope("low-latency/file")),
             Some(Health::Fine),
             "file is left fast"
         );
@@ -393,7 +393,7 @@ mod tests {
     #[ignore = "brutal: every transport at the ceiling spike rate, for the runner"]
     fn brutal_spikes_over_every_transport() {
         let dir = scratch("low-latency-brutal");
-        let mut ff = LowLatency::new("xmip:///playground/low-latency", &dir).at(Stress::Brutal);
+        let mut ff = LowLatency::new(scope("low-latency"), &dir).at(Stress::Brutal);
         stress_rounds(&mut ff, Stress::Brutal.rounds());
         std::fs::remove_dir_all(&dir).ok();
     }

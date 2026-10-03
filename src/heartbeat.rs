@@ -158,7 +158,7 @@ mod tests {
     fn the_first_beat_is_written_within_milliseconds_of_the_start() {
         let dir = scratch("heartbeat-first");
         std::fs::create_dir_all(&dir).expect("the scratch directory");
-        let path = dir.join("alpha.toml");
+        let path = dir.join("node.toml");
         let started = Instant::now();
         let heart = Heartbeat::start(&path, Duration::from_secs(60));
         let took = started.elapsed();
@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn a_node_beats_between_rounds_and_counts_them() {
         let dir = scratch("heartbeat");
-        let path = dir.join("alpha.toml");
+        let path = dir.join("node.toml");
         let heart = Heartbeat::start(&path, Duration::from_millis(20));
         let first = read(&path);
         std::thread::sleep(Duration::from_millis(200));

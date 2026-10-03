@@ -91,14 +91,16 @@ mod tests {
 
     #[test]
     fn a_list_names_the_online_nodes_and_no_list_defers_to_all() {
-        let online = names(" alpha, Beta ,, ");
-        assert_eq!(online, ["alpha", "Beta"]);
-        assert!(node_online("alpha", Some(&online), false));
-        assert!(node_online("Beta", Some(&online), false));
-        assert!(!node_online("gamma", Some(&online), true));
-        assert!(!node_online("alpha", Some(&[]), true));
-        assert!(node_online("gamma", None, true));
-        assert!(!node_online("gamma", None, false));
+        let cluster = crate::support::test_cluster();
+        let [first, second, other] = [0, 1, 2].map(|place| cluster.node(place).name.as_str());
+        let online = names(&format!(" {first}, {second} ,, "));
+        assert_eq!(online, [first, second]);
+        assert!(node_online(first, Some(&online), false));
+        assert!(node_online(second, Some(&online), false));
+        assert!(!node_online(other, Some(&online), true));
+        assert!(!node_online(first, Some(&[]), true));
+        assert!(node_online(other, None, true));
+        assert!(!node_online(other, None, false));
     }
 
     #[test]

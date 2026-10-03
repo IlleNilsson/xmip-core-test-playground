@@ -16,7 +16,7 @@
 //!     per execution style (sequential, parallel, concurrent).
 //!   - **`DailyBacklog`** — drain a backlog as fast as possible; tweak, add a node.
 //!
-//! Each publishes under its own subtree of `xmip:///playground`, merged into one
+//! Each publishes under its own subtree of `xmip:///<cluster>`, merged into one
 //! snapshot so the rollup covers all four and an operator drills scenario →
 //! detail → the failing leaf.
 //!
@@ -43,21 +43,19 @@
 //! supervises one `xmip-playground-node` per node (ADR-0028 clause 2). The
 //! roll merges the one file the cluster publishes into its own snapshot each
 //! round; the board shows the nodes' rollup row, and a node's leaf only when
-//! it is not fine. `XMIP_PLAYGROUND_NODE_NAMES` names the nodes, comma
-//! separated, one process each, at any level; `XMIP_PLAYGROUND_NODES` names a
-//! count instead, numbered `node-01` up, of which `0` is none at all;
+//! it is not fine.
+//!
+//! **The nodes are the cluster's `xmip.toml`** (ADR-0056, amendment
+//! 2026-10-03): `XMIP_TEST_CLUSTER` names the file, and every node under its
+//! `[nodes]` is one process, declaring the roles its `roles` says
+//! (`environment::roster`). `Start-XmipTest` writes the run's file from
+//! `-Cluster`, `-Nodes` and `-NodeRole`, or names the test cluster's where
+//! `-Nodes` was not given; nothing is counted or numbered.
 //! `XMIP_PLAYGROUND_ONLINE_NODES` names the ones among them that may assume
 //! the internet (ADR-0045); unset, every node reads `XMIP_ONLINE`.
 //!
-//! **Told neither, the level brings its full complement** — `complement.rs`,
-//! and the owner's rule of 2026-09-19 that an omitted selector means the most
-//! the rig can give (ADR-0059). `roll --roster <level>` prints that
-//! complement and starts nothing, which is how `Start-XmipTest` resolves an
-//! omitted `-Nodes` at its own door.
-//!
-//! **A node declares its roles** (ADR-0056, amendment 2026-10-01).
-//! `XMIP_PLAYGROUND_NODE_ROLES` says what each node is for —
-//! `alpha=receiving,beta=processing+sending`, or `delta=executing` for all
+//! **A node declares its roles** (ADR-0056, amendment 2026-10-01) —
+//! `receiving`, `processing+sending`, or `executing` for all
 //! three in one process — and every node runs its part of the scenarios
 //! named. Where a node's roles serve a stage, `RoundTrip` is the nodes' —
 //! each pair handed receive to process to send between the processes, or
@@ -85,8 +83,8 @@ use xmip_core_test_playground::operator_orders;
 use xmip_core_test_playground::publication::Publication;
 use xmip_core_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_core_test_playground::{
-    Budget, Headroom, Roster, Stress, cluster_name, cluster_root, cluster_topology, complement,
-    record_round, redraw, started, summarise,
+    Budget, Headroom, Roster, Stress, cluster_name, cluster_root, cluster_topology, record_round,
+    redraw, started, summarise,
 };
 use xmip_core_test_playground::{image, process_audit};
 
@@ -97,17 +95,6 @@ fn main() {
     let called = image::this_process("xmip-playground-roll");
     let audit = ProgramAudit::new(&called, None);
     audit.watch_panics();
-
-    // Asked what a level brings, this process answers and starts nothing:
-    // `Start-XmipTest` asks before it spawns, so an omitted `-Nodes` is
-    // resolved once, at the operator's door, by the rig that owns the numbers.
-    if std::env::args().nth(1).as_deref() == Some("--roster") {
-        println!(
-            "{}",
-            or_refuse(&audit, the_complement(std::env::args().nth(2).as_deref()))
-        );
-        return;
-    }
 
     // Asked where a cluster publishes, it answers the same way: the names
     // are decided here (`environment::publish_paths`), and `Start-XmipTest`
@@ -140,7 +127,7 @@ fn main() {
         });
     let stress = Stress::from_env();
     let chosen = or_refuse(&audit, environment::scenarios());
-    let roster = or_refuse(&audit, environment::roster(stress));
+    let roster = or_refuse(&audit, environment::roster());
     let relayed = or_refuse(&audit, relayed(&chosen, &roster));
     let run = started(&cluster, &chosen, &roster, stress);
 
@@ -267,39 +254,20 @@ fn or_refuse<T>(audit: &ProgramAudit, told: Result<T, String>) -> T {
     })
 }
 
-/// The first lines of a run: the level, the cluster and the roster it
-/// resolved to. A run nobody gave switches to is still told from the one
-/// before it (ADR-0059, amendment 2026-09-19), and where an omitted `-Nodes`
-/// brought a complement too small for the message path, that is said here
-/// rather than left to be noticed. The board clears a live terminal every
-/// round; a redirected log keeps these lines, and the `[run]` table of every
-/// snapshot carries the same answer.
+/// The first lines of a run: the level, the cluster and the roster its
+/// cluster file declares. Where the nodes declare no stage, that is said
+/// here rather than left to be noticed. The board clears a live terminal
+/// every round; a redirected log keeps these lines, and the `[run]` table of
+/// every snapshot carries the same answer.
 fn announce(cluster: &str, stress: Stress, roster: &Roster) {
     println!(
         "roll at {} as cluster {cluster}: {}",
         stress.name(),
-        complement::describe(roster)
+        roster.describe()
     );
     if !roster.is_empty() {
         println!("  roster: {}", roster.text());
     }
-}
-
-/// What a level brings when nobody names nodes, printed as `--nodes` takes it
-/// back: `node-01=receiving,node-02=processing,…`. The level is the argument and
-/// the environment is not read, so the answer is the level's alone; an unknown
-/// one is REFUSED naming the four (ADR-0055). `Start-XmipTest` asks this, sets
-/// the names it gets, and records them, so the operator's door and the roll
-/// agree on one roster and the numbers stay in `stress.rs` alone.
-fn the_complement(level: Option<&str>) -> Result<String, String> {
-    let Some(stress) = level.and_then(Stress::parse) else {
-        return Err(format!(
-            "REFUSED: --roster takes a stress level; '{}' is none. The levels are {}.",
-            level.unwrap_or_default(),
-            Stress::NAMES.join(", ")
-        ));
-    };
-    Ok(complement::full(stress).text())
 }
 
 /// Where the roll of a cluster publishes in an area, one `name=path` line
@@ -380,6 +348,7 @@ fn this_cluster() -> Result<(String, String, PathBuf), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use configure::fixture::test_cluster;
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(ToString::to_string).collect()
@@ -391,45 +360,40 @@ mod tests {
 
     #[test]
     fn round_trip_is_the_nodes_when_any_declares_a_stage_and_it_was_chosen() {
-        let path = roster("alpha=receiving,beta=processing,gamma=sending");
+        let cluster = test_cluster();
+        let [receiving, processing, sending] =
+            ["receiving", "processing", "sending"].map(|role| &cluster.with_role(role).name);
+        let path = roster(&format!(
+            "{receiving}=receiving,{processing}=processing,{sending}=sending"
+        ));
         assert_eq!(relayed(&[], &path), Ok(true));
         assert_eq!(relayed(&names(&["round-trip"]), &path), Ok(true));
         assert_eq!(relayed(&names(&["heavy-load"]), &path), Ok(false));
-        assert_eq!(relayed(&[], &roster("node-01,node-02")), Ok(false));
+        let bare = roster(&format!("{receiving},{processing}"));
+        assert_eq!(relayed(&[], &bare), Ok(false));
         assert_eq!(relayed(&[], &Roster::default()), Ok(false));
         // A capability missing is no refusal when RoundTrip was not chosen.
-        assert_eq!(
-            relayed(&names(&["filing"]), &roster("alpha=receiving")),
-            Ok(false)
-        );
-        let refused = relayed(&[], &roster("alpha=receiving")).expect_err("no node processes");
+        let receives = roster(&format!("{receiving}=receiving"));
+        assert_eq!(relayed(&names(&["filing"]), &receives), Ok(false));
+        let refused = relayed(&[], &receives).expect_err("no node processes");
         assert!(refused.starts_with("REFUSED"), "{refused}");
     }
 
     #[test]
-    fn an_unknown_level_is_refused_naming_the_levels() {
-        let refused = the_complement(Some("gentle")).expect_err("gentle is no level");
-        assert!(
-            refused.contains("gentle") && refused.contains("brutal"),
-            "{refused}"
-        );
-        assert!(the_complement(Some("calm")).is_ok());
-    }
-
-    #[test]
     fn the_publication_names_the_cluster_s_files_in_the_area() {
-        let said = the_publication(&names(&["C1", "area"])).expect("a cluster and an area");
+        let cluster = test_cluster().name;
+        let said = the_publication(&names(&[&cluster, "area"])).expect("a cluster and an area");
         let area = Path::new("area");
         assert_eq!(
             said,
             format!(
                 "snapshot={}\nhistory={}\nactivity={}",
-                area.join("C1-snapshot.toml").display(),
-                area.join("C1-history.toml").display(),
-                area.join("C1-activity.toml").display()
+                area.join(format!("{cluster}-snapshot.toml")).display(),
+                area.join(format!("{cluster}-history.toml")).display(),
+                area.join(format!("{cluster}-activity.toml")).display()
             )
         );
-        let refused = the_publication(&names(&["C1"])).expect_err("no area");
+        let refused = the_publication(&names(&[&cluster])).expect_err("no area");
         assert!(refused.starts_with("REFUSED"), "{refused}");
     }
 }

@@ -317,6 +317,7 @@ impl Verdict {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::support::{cluster_root, scope};
 
     #[test]
     fn a_delivered_verdict_is_green_and_scopes_by_stage() {
@@ -330,9 +331,9 @@ mod tests {
             observed_unix_nanos: 1,
         };
 
-        let record = verdict.health("xmip:///playground");
+        let record = verdict.health(&cluster_root());
 
-        assert_eq!(record.scope, "xmip:///playground/receive/file/text");
+        assert_eq!(record.scope, scope("receive/file/text"));
         assert_eq!(record.health, Health::Fine);
         assert!(record.evidence.contains("14 bytes"));
     }
@@ -350,8 +351,8 @@ mod tests {
                 observed_unix_nanos: 1,
             };
             assert_eq!(
-                verdict.scope("xmip:///n"),
-                format!("xmip:///n/{}/tcp/json", stage.name())
+                verdict.scope(&cluster_root()),
+                scope(&format!("{}/tcp/json", stage.name()))
             );
         }
     }
@@ -368,7 +369,7 @@ mod tests {
             observed_unix_nanos: 1,
         };
 
-        assert_eq!(verdict.health("xmip:///p").health, Health::Stressed);
+        assert_eq!(verdict.health(&cluster_root()).health, Health::Stressed);
     }
 
     #[test]
@@ -383,7 +384,7 @@ mod tests {
             observed_unix_nanos: 1,
         };
 
-        let record = verdict.health("xmip:///p");
+        let record = verdict.health(&cluster_root());
         assert_eq!(record.health, Health::Done);
         assert_eq!(record.evidence, "connection refused");
     }

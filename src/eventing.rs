@@ -16,7 +16,10 @@
 //! pauses one sees its queue fill, and one who removes one sees it gone.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
+
+use authorize_party::PartyPolicy;
 
 use node::{Capability, Stage};
 use observe::{Act, Health, Scope, Snapshot};
@@ -67,12 +70,18 @@ pub struct Eventing {
 }
 
 impl Eventing {
-    /// The node at `node` subscribes its two Parties. A subscription the
-    /// hub refused is audited as the failure to `subscribe`, and the node
-    /// runs on without it.
+    /// The node at `node` subscribes its two Parties, which the Playground,
+    /// the program hosting the hub, allows by handing the hub its policy:
+    /// being in its process admits nobody (ADR-0065, amendment 2026-09-26).
+    /// A subscription the hub refused is audited as the failure to
+    /// `subscribe`, and the node runs on without it.
     #[must_use]
     pub fn start(node: &str, capability: &Capability, audit: &ProgramAudit) -> Self {
         let hub = Hub::process();
+        let its = PartyPolicy::new()
+            .allow(operations().party_id)
+            .allow(on_call().party_id);
+        hub.authorize_by(vec![Arc::new(its)]);
         let everything = Filter::everything().beneath(node);
         let failures = Filter::everything().ending(Outcome::Failure).beneath(node);
         let listening = hub
@@ -144,6 +153,14 @@ impl Eventing {
         for subscription in hub.standing(&self.node) {
             snapshot.record_event_subscription(subscription);
         }
+        snapshot.clear_unheard(&self.node);
+        for unheard in hub
+            .unheard()
+            .into_iter()
+            .filter(|gone| gone.by == self.node)
+        {
+            snapshot.record_unheard(unheard);
+        }
     }
 
     /// An Event for `stage` when its failing pairs changed since the round
@@ -192,7 +209,10 @@ mod tests {
     #[test]
     fn a_node_publishes_its_event_subscriptions_and_applies_an_act_on_one() {
         let shared = scratch("eventing");
-        let node = "xmip:///CT/node/eventing-test";
+        let cluster = crate::support::test_cluster();
+        let receiving = &cluster.with_role("receiving").name;
+        let node = format!("{}/node/{receiving}", cluster.scope());
+        let node = node.as_str();
         let audit = ProgramAudit::new("xmip-playground-eventing-test", Some(&shared));
         let mut eventing =
             Eventing::start(node, &Capability::of(&[node::NodeRole::Receiving]), &audit);

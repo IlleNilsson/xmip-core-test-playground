@@ -184,34 +184,35 @@ mod tests {
     use super::*;
     use crate::cluster::built_cluster_binary;
     use crate::stress::Stress;
-    use crate::support::scratch;
+    use crate::support::{path, path_roster, scratch, test_cluster};
 
     /// The tree the owner asked for: the test spawns a cluster, the cluster
     /// spawns its nodes, each publishes, and the roll's half reads one file.
     #[test]
     fn a_spawned_cluster_publishes_its_nodes_and_stops_them_with_itself() {
         let dir = scratch("spawned");
-        let roster = crate::Roster::parse("alpha=receiving,beta=processing,gamma=sending")
-            .expect("a well-formed roster");
+        let test = test_cluster();
+        let [receiving, processing, sending] = path(&test);
+        let roster = crate::Roster::parse(&path_roster(&test)).expect("a well-formed roster");
         let orders = Orders::of(Stress::Calm, roster, 0)
             .driving(&["round-trip".to_string()])
-            .with_online(Some(vec!["alpha".to_string()]));
-        let path = dir.join("Zt-cluster.toml");
+            .with_online(Some(vec![receiving.to_string()]));
+        let published_to = dir.join(format!("{}-cluster.toml", test.name));
         let mut cluster = Spawned::start(
             &built_cluster_binary(),
-            "Zt",
+            &test.name,
             &orders,
             &dir.join("shared"),
-            &path,
+            &published_to,
         )
         .expect("the cluster process starts");
 
-        let root = "xmip:///Zt";
+        let root = test.scope();
         let mut published = false;
         for _ in 0..40 {
             let snapshot = cluster.tick();
             published = !snapshot
-                .health(&format!("{root}/node/gamma/send"))
+                .health(&format!("{root}/node/{sending}/send"))
                 .is_empty();
             if published {
                 break;
@@ -219,11 +220,11 @@ mod tests {
         }
         assert!(
             published,
-            "gamma published its send stage through the cluster"
+            "{sending} published its send stage through the cluster"
         );
 
         let snapshot = cluster.tick();
-        for name in ["alpha", "beta", "gamma"] {
+        for name in [receiving, processing, sending] {
             let process = format!("{root}/node/{name}/system-process");
             assert!(
                 !snapshot.health(&process).is_empty(),
@@ -239,8 +240,8 @@ mod tests {
             .iter()
             .map(|hop| (hop.from.as_str(), hop.to.as_str()))
             .collect();
-        assert!(links.contains(&("alpha", "beta")), "{links:?}");
-        assert!(links.contains(&("beta", "gamma")), "{links:?}");
+        assert!(links.contains(&(receiving, processing)), "{links:?}");
+        assert!(links.contains(&(processing, sending)), "{links:?}");
 
         cluster.stop();
         assert!(!cluster.alive(), "the cluster left when it was asked");

@@ -51,7 +51,7 @@ pub fn named(cluster: &str, what: &str) -> String {
 
 /// What the node called `name` of `cluster` goes by:
 /// `xmip-playground-<cluster>-node-<name>`. A node called `roll` reads as
-/// `xmip-playground-W1-node-roll` and is nobody's roll, which is why no name
+/// `xmip-playground-<cluster>-node-roll` and is nobody's roll, which is why no name
 /// has to be forbidden.
 #[must_use]
 pub fn node_named(cluster: &str, name: &str) -> String {
@@ -157,14 +157,20 @@ pub fn clear() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::support::test_cluster;
 
     #[test]
     fn a_name_says_the_suite_the_cluster_and_which_of_the_tree_it_is() {
-        assert_eq!(named("W1", "roll"), "xmip-playground-W1-roll");
-        assert_eq!(named("W1", "cluster"), "xmip-playground-W1-cluster");
-        assert_eq!(node_named("W1", "alpha"), "xmip-playground-W1-node-alpha");
+        let cluster = test_cluster();
+        let (c, node) = (cluster.name.as_str(), cluster.node(0).name.as_str());
+        assert_eq!(named(c, "roll"), format!("xmip-playground-{c}-roll"));
+        assert_eq!(named(c, "cluster"), format!("xmip-playground-{c}-cluster"));
+        assert_eq!(
+            node_named(c, node),
+            format!("xmip-playground-{c}-node-{node}")
+        );
         // Every one still answers the owner's one line, Get-Process xmip-*.
-        for name in [named("W1", "roll"), node_named("W1", "alpha")] {
+        for name in [named(c, "roll"), node_named(c, node)] {
             assert!(name.starts_with("xmip-"), "{name}");
         }
     }
@@ -174,16 +180,23 @@ mod tests {
     /// so a node may be called anything a file may be called.
     #[test]
     fn a_node_called_roll_or_cluster_is_a_node_and_collides_with_nothing() {
+        let cluster = test_cluster().name;
+        let c = cluster.as_str();
         assert_eq!(refusal("roll"), None);
         assert_eq!(refusal("cluster"), None);
-        assert_eq!(node_named("U1", "roll"), "xmip-playground-U1-node-roll");
-        assert_ne!(node_named("U1", "roll"), named("U1", "roll"));
-        assert_ne!(node_named("U1", "cluster"), named("U1", "cluster"));
+        assert_eq!(
+            node_named(c, "roll"),
+            format!("xmip-playground-{c}-node-roll")
+        );
+        assert_ne!(node_named(c, "roll"), named(c, "roll"));
+        assert_ne!(node_named(c, "cluster"), named(c, "cluster"));
     }
 
     #[test]
     fn a_node_named_what_no_file_can_be_called_is_refused_before_anything_spawns() {
-        assert_eq!(refusal("alpha"), None);
+        for node in &test_cluster().nodes {
+            assert_eq!(refusal(&node.name), None);
+        }
         assert_eq!(refusal("node-01"), None);
         for wrong in ["", "9lives", "a/b", "a b", "a.b", "a:b"] {
             let refusal = refusal(wrong).unwrap_or_else(|| panic!("{wrong}"));
@@ -197,8 +210,9 @@ mod tests {
     #[test]
     fn no_image_directory_is_the_binary_itself() {
         let base = Path::new("target/debug/xmip-playground-node");
+        let cluster = test_cluster();
         assert_eq!(
-            of_node(base, "W1", "alpha").expect("nothing to do"),
+            of_node(base, &cluster.name, &cluster.node(0).name).expect("nothing to do"),
             base.to_path_buf()
         );
     }

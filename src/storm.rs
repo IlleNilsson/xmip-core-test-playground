@@ -318,9 +318,7 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
 mod tests {
     use super::*;
     use crate::exchange::{Exchange, FileRoundTrip, TcpRoundTrip, UdpRoundTrip};
-    use crate::support::scratch;
-
-    const NODE: &str = "xmip:///playground/storm";
+    use crate::support::{scope, scratch};
 
     fn sample(dir: &std::path::Path) -> Vec<Box<dyn RoundTrip>> {
         vec![
@@ -343,10 +341,10 @@ mod tests {
             );
             assert!(storm.last_tick() <= storm.budget());
             assert_eq!(storm.panics(), 0, "nothing panics");
-            let lying = violations(&snapshot, NODE);
+            let lying = violations(&snapshot, &scope("storm"));
             assert!(lying.is_empty(), "round {round}: {}", lying.join("; "));
             assert_eq!(
-                snapshot.worst(&format!("{NODE}/tick")),
+                snapshot.worst(&scope("storm/tick")),
                 Some(Health::Fine),
                 "the tick leaf is green when every invariant held"
             );
@@ -357,15 +355,17 @@ mod tests {
     #[test]
     fn a_calm_storm_over_file_is_green_and_times_its_tick() {
         let dir = scratch("storm-calm");
-        let mut storm = Storm::new(NODE, &dir)
+        let mut storm = Storm::new(scope("storm"), &dir)
             .at(Stress::Calm)
             .over(vec![Box::new(FileRoundTrip::new(&dir))]);
         let snapshot = weather(&mut storm, 2);
-        assert_eq!(snapshot.worst(NODE), Some(Health::Fine));
-        let tick = snapshot.health(&format!("{NODE}/tick"));
+        assert_eq!(snapshot.worst(&scope("storm")), Some(Health::Fine));
+        let tick = snapshot.health(&scope("storm/tick"));
         assert!(tick[0].evidence.contains("budget"), "{}", tick[0].evidence);
         assert_eq!(
-            snapshot.measure(NODE, Counted::Streams).map(|c| c.value),
+            snapshot
+                .measure(&scope("storm"), Counted::Streams)
+                .map(|c| c.value),
             Some(2 * CONTRACTS.len() as u64),
             "every pair delivered, both rounds"
         );
@@ -375,7 +375,9 @@ mod tests {
     #[test]
     fn the_budget_is_pairs_by_three_timeouts_over_the_workers() {
         let dir = scratch("storm-budget");
-        let storm = Storm::new(NODE, &dir).at(Stress::Harsh).over(sample(&dir));
+        let storm = Storm::new(scope("storm"), &dir)
+            .at(Stress::Harsh)
+            .over(sample(&dir));
         let pairs = u32::try_from(3 * CONTRACTS.len()).expect("small");
         let workers = u32::try_from(Stress::Harsh.workers()).expect("small");
         assert_eq!(storm.budget(), TIMEOUT * 3 * pairs / workers);
@@ -397,7 +399,7 @@ mod tests {
     #[test]
     fn a_panicking_pair_is_caught_counted_and_published_red() {
         let dir = scratch("storm-panic");
-        let mut storm = Storm::new(NODE, &dir)
+        let mut storm = Storm::new(scope("storm"), &dir)
             .at(Stress::Calm)
             .over(vec![Box::new(FileRoundTrip::new(&dir)), Box::new(Explodes)]);
         let snapshot = storm.tick();
@@ -407,12 +409,12 @@ mod tests {
             "{:?}",
             storm.broken()
         );
-        let leaf = snapshot.health(&format!("{NODE}/explodes/json"));
+        let leaf = snapshot.health(&scope("storm/explodes/json"));
         assert_eq!(leaf[0].health, Health::Done);
         assert!(leaf[0].evidence.contains("the adapter blew up"));
-        assert_eq!(snapshot.worst(NODE), Some(Health::Holding));
+        assert_eq!(snapshot.worst(&scope("storm")), Some(Health::Holding));
         assert!(
-            violations(&snapshot, NODE).is_empty(),
+            violations(&snapshot, &scope("storm")).is_empty(),
             "the rollup still tells the truth"
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -421,11 +423,13 @@ mod tests {
     #[test]
     fn harsh_storm_over_three_transports_keeps_every_invariant() {
         let dir = scratch("storm-harsh");
-        let mut storm = Storm::new(NODE, &dir).at(Stress::Harsh).over(sample(&dir));
+        let mut storm = Storm::new(scope("storm"), &dir)
+            .at(Stress::Harsh)
+            .over(sample(&dir));
         let snapshot = weather(&mut storm, Stress::Harsh.rounds());
         // Harsh faults and a datagram refused above its ceiling both surface.
-        assert_eq!(snapshot.worst(NODE), Some(Health::Holding));
-        let udp = snapshot.health(&format!("{NODE}/udp"));
+        assert_eq!(snapshot.worst(&scope("storm")), Some(Health::Holding));
+        let udp = snapshot.health(&scope("storm/udp"));
         assert!(
             udp.iter()
                 .any(|r| r.health == Health::Done || r.health == Health::Stressed),
@@ -438,7 +442,7 @@ mod tests {
     #[ignore = "brutal: the whole matrix at every core, for the runner"]
     fn brutal_storm_over_every_transport() {
         let dir = scratch("storm-brutal");
-        let mut storm = Storm::new(NODE, &dir).at(Stress::Brutal);
+        let mut storm = Storm::new(scope("storm"), &dir).at(Stress::Brutal);
         weather(&mut storm, Stress::Brutal.rounds());
         std::fs::remove_dir_all(&dir).ok();
     }

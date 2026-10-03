@@ -8,8 +8,8 @@
 //!         [--online <a,b>] [--scenarios <a,b>] [--interval-ms <ms>]
 //! ```
 //!
-//! `--nodes` carries what each node is **declared** with — `alpha=receiving`,
-//! `beta=processing+sending`, or a bare name for a node that declares no
+//! `--nodes` carries what each node is **declared** with — `<node>=receiving`,
+//! `<node>=processing+sending`, or a bare name for a node that declares no
 //! role — and the cluster passes each node's own to it as `--role`
 //! (ADR-0056, amendment 2026-10-01). A role word is lowercase exactly, and
 //! any other word is REFUSED (`node::NodeRole::declared`). It infers
@@ -249,8 +249,8 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Arguments, String> {
         name: name.ok_or("REFUSED: --name is required; a cluster is named, never invented")?,
         shared: shared.ok_or("REFUSED: --shared is required; it is the store the nodes share")?,
         nodes: nodes.ok_or(
-            "REFUSED: --nodes is required; --nodes alpha=receiving,beta=processing,gamma=sending \
-             names them and what each declares",
+            "REFUSED: --nodes is required; --nodes <node>=receiving,<node>=processing,\
+             <node>=sending names them and what each declares",
         )?,
         online,
         stress: stress.ok_or(format!(
@@ -302,38 +302,56 @@ fn number(flag: &str, value: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use configure::fixture::test_cluster;
+
+    /// The test cluster's name, and its receiving, processing and sending
+    /// node.
+    fn named() -> (String, [String; 3]) {
+        let cluster = test_cluster();
+        let path =
+            ["receiving", "processing", "sending"].map(|role| cluster.with_role(role).name.clone());
+        (cluster.name, path)
+    }
 
     fn arguments(extra: &[&str]) -> Result<Arguments, String> {
+        let (cluster, [receiving, processing, sending]) = named();
+        let nodes = format!("{receiving}=receiving,{processing}=processing,{sending}=sending");
+        let snapshot = format!("{cluster}-cluster.toml");
         let required = [
             "--name",
-            "Zt",
+            &cluster,
             "--shared",
             "s",
             "--nodes",
-            "alpha=receiving,beta=processing,gamma=sending",
+            &nodes,
             "--stress",
             "calm",
             "--rounds",
             "0",
             "--snapshot",
-            "Zt-cluster.toml",
+            &snapshot,
         ];
         parse(required.iter().chain(extra).map(ToString::to_string))
     }
 
     #[test]
     fn the_required_flags_are_read_and_the_optional_ones_have_the_nodes_defaults() {
+        let (cluster, [receiving, processing, sending]) = named();
         let bare = arguments(&[]).expect("the required flags suffice");
-        assert_eq!(bare.name, "Zt");
-        assert_eq!(bare.nodes.names(), ["alpha", "beta", "gamma"]);
-        assert_eq!(bare.nodes.capability("beta").words(), "processing");
+        assert_eq!(bare.name, cluster);
+        assert_eq!(
+            bare.nodes.names(),
+            [receiving.as_str(), processing.as_str(), sending.as_str()]
+        );
+        assert_eq!(bare.nodes.capability(&processing).words(), "processing");
         assert_eq!(bare.stress, Stress::Calm);
         assert_eq!(bare.interval, Duration::from_millis(250));
         assert!(bare.online.is_none() && bare.scenarios.is_empty());
 
+        let online = format!("{receiving}, {sending}");
         let told = arguments(&[
             "--online",
-            "alpha, gamma",
+            &online,
             "--scenarios",
             "Round-Trip",
             "--interval-ms",
@@ -342,7 +360,7 @@ mod tests {
         .expect("all three are well formed");
         assert_eq!(
             told.online.as_deref(),
-            Some(["alpha".to_string(), "gamma".into()].as_slice())
+            Some([receiving, sending].as_slice())
         );
         assert_eq!(told.scenarios, ["round-trip"]);
         assert_eq!(told.interval, Duration::from_millis(500));
@@ -352,13 +370,15 @@ mod tests {
     /// right — and nothing is spawned, because parsing comes first.
     #[test]
     fn every_malformed_argument_is_refused_with_what_would_be_right() {
+        let (cluster, [receiving, ..]) = named();
+        let relaying = format!("{receiving}=relay");
         for (extra, wrong, right) in [
             (["--stress", "gentle"], "gentle", "brutal"),
             (["--name", "9lives"], "9lives", "starting with a letter"),
             (["--rounds", "many"], "many", "whole number"),
             (["--scenarios", "pingpong"], "pingpong", "exclusive-claim"),
             (
-                ["--nodes", "alpha=relay"],
+                ["--nodes", relaying.as_str()],
                 "relay",
                 "receiving, processing, sending",
             ),
@@ -380,13 +400,14 @@ mod tests {
             "--rounds",
             "--snapshot",
         ] {
+            let receives = format!("{receiving}=receiving");
             let given: Vec<String> = [
                 "--name",
-                "Zt",
+                cluster.as_str(),
                 "--shared",
                 "s",
                 "--nodes",
-                "alpha=receiving",
+                receives.as_str(),
             ]
             .into_iter()
             .chain(["--stress", "calm", "--rounds", "0", "--snapshot", "z.toml"])

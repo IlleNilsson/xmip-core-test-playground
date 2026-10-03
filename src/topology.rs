@@ -66,12 +66,34 @@ pub fn cluster_topology(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cluster::ROOT;
     use crate::report::roll_toml;
+    use crate::support::{declaring, path, test_cluster};
     use node::Capability;
     use observe::{
         Count, Counted, Health, HealthRecord, NodeKind, Origin, Publication, Snapshot, TopologyNode,
     };
+
+    /// The test cluster's receiving, processing and two sending nodes: the
+    /// first sending node reports, the second has only declared.
+    fn nodes() -> [String; 4] {
+        let cluster = test_cluster();
+        let [receiving, processing, _] = path(&cluster);
+        let [sending, idle] = declaring(&cluster, "sending")[..] else {
+            panic!("the test cluster has two sending nodes");
+        };
+        [receiving, processing, sending, idle].map(ToString::to_string)
+    }
+
+    /// `text` with `<r>`, `<p>`, `<s>` and `<z>` the names of [`nodes`], in
+    /// that order, and `<root>` the cluster's scope.
+    fn named(text: &str) -> String {
+        let [receiving, processing, sending, idle] = nodes();
+        text.replace("<root>", &cluster_root())
+            .replace("<r>", &receiving)
+            .replace("<p>", &processing)
+            .replace("<s>", &sending)
+            .replace("<z>", &idle)
+    }
 
     fn record(scope: &str, health: Health, evidence: &str) -> HealthRecord {
         HealthRecord {
@@ -100,46 +122,43 @@ mod tests {
         Capability::parse(roles).expect("a declaration").evidence()
     }
 
-    /// `alpha` received over tcp and file, `beta` processed, `gamma` sent over tcp
-    /// with one pair stressed; `gamma` also ran the two shared-directory tests.
-    /// `zeta` has only said what it can do and reported nothing yet.
+    /// `<r>` received over tcp and file, `<p>` processed, `<s>` sent over tcp
+    /// with one pair stressed; `<s>` also ran the two shared-directory tests.
+    /// `<z>` has only said what it can do and reported nothing yet.
     fn published() -> Snapshot {
         let mut snapshot = Snapshot::new();
         for (leaf, capability) in [
-            ("alpha", "receiving"),
-            ("beta", "processing"),
-            ("gamma", "sending"),
-            ("zeta", "sending"),
+            ("<r>", "receiving"),
+            ("<p>", "processing"),
+            ("<s>", "sending"),
+            ("<z>", "sending"),
         ] {
-            let scope = format!("{ROOT}/node/{leaf}/capability");
+            let scope = named(&format!("<root>/node/{leaf}/capability"));
             snapshot.record_health(record(&scope, Health::Fine, &declares(capability)));
         }
         for (leaf, health, evidence) in [
-            ("alpha/system-process", Health::Fine, "alive"),
-            ("alpha/receive/tcp/json", Health::Fine, "3/3 rounds passed"),
+            ("<r>/system-process", Health::Fine, "alive"),
+            ("<r>/receive/tcp/json", Health::Fine, "3/3 rounds passed"),
+            ("<r>/receive/tcp/json/identification", Health::Fine, "held"),
+            ("<r>/receive/file/text", Health::Fine, "3/3 rounds passed"),
+            ("<p>/system-process", Health::Fine, "alive"),
+            ("<p>/process/tcp/json", Health::Fine, "3/3 rounds passed"),
+            ("<s>/system-process", Health::Fine, "alive"),
             (
-                "alpha/receive/tcp/json/identification",
-                Health::Fine,
-                "held",
-            ),
-            ("alpha/receive/file/text", Health::Fine, "3/3 rounds passed"),
-            ("beta/system-process", Health::Fine, "alive"),
-            ("beta/process/tcp/json", Health::Fine, "3/3 rounds passed"),
-            ("gamma/system-process", Health::Fine, "alive"),
-            (
-                "gamma/send/tcp/json",
+                "<s>/send/tcp/json",
                 Health::Stressed,
                 "2/3 rounds passed, 1 failed",
             ),
-            ("gamma/exclusive-claim/file", Health::Fine, "one holder"),
-            ("gamma/daily-backlog/drain", Health::Fine, "drained"),
+            ("<s>/exclusive-claim/file", Health::Fine, "one holder"),
+            ("<s>/daily-backlog/drain", Health::Fine, "drained"),
         ] {
-            snapshot.record_health(record(&format!("{ROOT}/node/{leaf}"), health, evidence));
+            let scope = named(&format!("<root>/node/{leaf}"));
+            snapshot.record_health(record(&scope, health, evidence));
         }
-        snapshot.record_health(record(&format!("{ROOT}/node"), Health::Stressed, "3 nodes"));
+        snapshot.record_health(record(&named("<root>/node"), Health::Stressed, "3 nodes"));
         for (counted, value) in [(Counted::Streams, 6), (Counted::Messages, 2)] {
             snapshot.record_count(Count {
-                scope: format!("{ROOT}/node/gamma/daily-backlog"),
+                scope: named("<root>/node/<s>/daily-backlog"),
                 counted,
                 value,
                 window_start_unix_nanos: 7,
@@ -150,17 +169,20 @@ mod tests {
         snapshot
     }
 
-    /// What the run configured: `alpha` receives, `beta` processes, `gamma` and `zeta`
-    /// send.
+    /// What the run configured: `<r>` receives, `<p>` processes, `<s>` and
+    /// `<z>` send.
     fn roster() -> Roster {
-        Roster::parse("alpha=receiving,beta=processing,gamma=sending,zeta=sending")
-            .expect("a roster")
+        Roster::parse(&named(
+            "<r>=receiving,<p>=processing,<s>=sending,<z>=sending",
+        ))
+        .expect("a roster")
     }
 
     fn drawn() -> Topology {
+        let [receiving, processing, sending, _] = nodes();
         let hops = [
-            hop("alpha", "receive", "beta", "process", 3),
-            hop("beta", "process", "gamma", "send", 2),
+            hop(&receiving, "receive", &processing, "process", 3),
+            hop(&processing, "process", &sending, "send", 2),
         ];
         cluster_topology(&published(), &roster(), true, &hops, 9)
     }
@@ -176,55 +198,57 @@ mod tests {
     #[test]
     fn the_cluster_holds_nodes_that_hold_stages_that_hold_endpoints() {
         let topology = drawn();
-        let shape: Vec<(&str, &str, &str)> = topology
+        let shape: Vec<(String, &str, String)> = topology
             .nodes
             .iter()
-            .map(|node| (node.id.as_str(), node.kind.word(), node.parent.as_str()))
+            .map(|node| (node.id.clone(), node.kind.word(), node.parent.clone()))
             .collect();
-        assert_eq!(
-            shape,
-            [
-                ("cluster", "cluster", ""),
-                ("node/alpha", "node", "cluster"),
-                ("node/alpha/receive", "stage", "node/alpha"),
-                ("node/alpha/receive/file", "endpoint", "node/alpha/receive"),
-                ("node/alpha/receive/tcp", "endpoint", "node/alpha/receive"),
-                ("node/beta", "node", "cluster"),
-                ("node/beta/process", "stage", "node/beta"),
-                ("node/gamma", "node", "cluster"),
-                ("node/gamma/send", "stage", "node/gamma"),
-                ("node/gamma/send/tcp", "endpoint", "node/gamma/send"),
-                ("node/zeta", "node", "cluster"),
-                ("node/zeta/send", "stage", "node/zeta"),
-                ("party/sending/party-x", "party", "cluster"),
-                ("party/receiving/party-x", "party", "cluster"),
-                ("shared", "location", "cluster"),
-            ]
-        );
+        let expected: Vec<(String, &str, String)> = [
+            ("cluster", "cluster", ""),
+            ("node/<r>", "node", "cluster"),
+            ("node/<r>/receive", "stage", "node/<r>"),
+            ("node/<r>/receive/file", "endpoint", "node/<r>/receive"),
+            ("node/<r>/receive/tcp", "endpoint", "node/<r>/receive"),
+            ("node/<p>", "node", "cluster"),
+            ("node/<p>/process", "stage", "node/<p>"),
+            ("node/<s>", "node", "cluster"),
+            ("node/<s>/send", "stage", "node/<s>"),
+            ("node/<s>/send/tcp", "endpoint", "node/<s>/send"),
+            ("node/<z>", "node", "cluster"),
+            ("node/<z>/send", "stage", "node/<z>"),
+            ("party/sending/party-x", "party", "cluster"),
+            ("party/receiving/party-x", "party", "cluster"),
+            ("shared", "location", "cluster"),
+        ]
+        .into_iter()
+        .map(|(id, kind, parent)| (named(id), kind, named(parent)))
+        .collect();
+        assert_eq!(shape, expected);
 
         let cluster = find(&topology, "cluster");
+        let root = cluster_root();
         assert_eq!(
             (
                 cluster.label.as_str(),
                 cluster.scope.as_str(),
                 cluster.state.word()
             ),
-            ("playground", ROOT, "holding")
+            (test_cluster().name.as_str(), root.as_str(), "holding")
         );
         assert!((cluster.activity - 0.75).abs() < f64::EPSILON);
         // ADR-0041: a parent is Fine or Holding, never its leaf's mood.
-        assert_eq!(find(&topology, "node/alpha").state, Health::Fine);
-        assert_eq!(find(&topology, "node/gamma").state, Health::Holding);
-        let endpoint = find(&topology, "node/gamma/send/tcp");
+        assert_eq!(find(&topology, &named("node/<r>")).state, Health::Fine);
+        assert_eq!(find(&topology, &named("node/<s>")).state, Health::Holding);
+        let endpoint = find(&topology, &named("node/<s>/send/tcp"));
         assert_eq!(
             (
                 endpoint.label.as_str(),
                 endpoint.scope.as_str(),
                 endpoint.state.word()
             ),
-            ("tcp", "xmip:///playground/node/gamma/send/tcp", "holding")
+            ("tcp", named("<root>/node/<s>/send/tcp").as_str(), "holding")
         );
-        let idle = find(&topology, "node/zeta/send");
+        let idle = find(&topology, &named("node/<z>/send"));
         assert_eq!(
             (idle.origin.word(), idle.state.word()),
             ("configured", "working")
@@ -234,68 +258,71 @@ mod tests {
     #[test]
     fn handoffs_link_the_stages_and_the_store_is_linked_only_by_who_ran_over_it() {
         let topology = drawn();
-        let links: Vec<(&str, &str, &str, &str, u64)> = topology
+        let links: Vec<(String, String, &str, &str, u64)> = topology
             .links
             .iter()
             .map(|link| {
                 (
-                    link.from.as_str(),
-                    link.to.as_str(),
+                    link.from.clone(),
+                    link.to.clone(),
                     link.pattern.word(),
                     link.protocol.as_str(),
                     link.volume,
                 )
             })
             .collect();
-        assert_eq!(
-            links,
-            [
-                (
-                    "node/alpha/receive",
-                    "node/beta/process",
-                    "send-receive",
-                    "handoff",
-                    3
-                ),
-                (
-                    "node/beta/process",
-                    "node/gamma/send",
-                    "send-receive",
-                    "handoff",
-                    2
-                ),
-                (
-                    "node/beta/process",
-                    "node/zeta/send",
-                    "send-receive",
-                    "handoff",
-                    0
-                ),
-                (
-                    "party/sending/party-x",
-                    "node/alpha/receive",
-                    "send-receive",
-                    "2 transports",
-                    0
-                ),
-                (
-                    "node/gamma/send",
-                    "party/receiving/party-x",
-                    "send-receive",
-                    "tcp",
-                    0
-                ),
-                (
-                    "node/zeta/send",
-                    "party/receiving/party-x",
-                    "send-receive",
-                    "no transport reported",
-                    0
-                ),
-                ("node/gamma", "shared", "publish-consume", "file", 0),
-                ("node/gamma", "shared", "publish-consume", "file", 6),
-            ]
-        );
+        let expected: Vec<(String, String, &str, &str, u64)> = [
+            (
+                "node/<r>/receive",
+                "node/<p>/process",
+                "send-receive",
+                "handoff",
+                3,
+            ),
+            (
+                "node/<p>/process",
+                "node/<s>/send",
+                "send-receive",
+                "handoff",
+                2,
+            ),
+            (
+                "node/<p>/process",
+                "node/<z>/send",
+                "send-receive",
+                "handoff",
+                0,
+            ),
+            (
+                "party/sending/party-x",
+                "node/<r>/receive",
+                "send-receive",
+                "2 transports",
+                0,
+            ),
+            (
+                "node/<s>/send",
+                "party/receiving/party-x",
+                "send-receive",
+                "tcp",
+                0,
+            ),
+            (
+                "node/<z>/send",
+                "party/receiving/party-x",
+                "send-receive",
+                "no transport reported",
+                0,
+            ),
+            ("node/<s>", "shared", "publish-consume", "file", 0),
+            ("node/<s>", "shared", "publish-consume", "file", 6),
+        ]
+        .into_iter()
+        .map(|(from, to, pattern, protocol, volume)| {
+            (named(from), named(to), pattern, protocol, volume)
+        })
+        .collect();
+        assert_eq!(links, expected);
         assert_eq!(topology.links[0].state, Health::Fine);
         assert_eq!(
             topology.links[1].state,
@@ -305,17 +332,12 @@ mod tests {
         assert_eq!(topology.links[1].origin, Origin::Both);
         assert!((topology.links[7].progress - 0.75).abs() < f64::EPSILON);
 
-        let bare = cluster_topology(
-            &Snapshot::new(),
-            &Roster::of(&["node-01".into()]),
-            false,
-            &[],
-            9,
-        );
+        let [only, ..] = nodes();
+        let bare = cluster_topology(&Snapshot::new(), &Roster::of(&[only]), false, &[], 9);
         let ids: Vec<&str> = bare.nodes.iter().map(|node| node.id.as_str()).collect();
         assert_eq!(
             ids,
-            ["cluster", "node/node-01"],
+            ["cluster", named("node/<r>").as_str()],
             "no store until a test runs over it"
         );
         assert!(bare.links.is_empty());
@@ -327,26 +349,27 @@ mod tests {
     /// declares is observed; and the rate is the rise since the last round.
     #[test]
     fn a_configured_path_is_drawn_before_its_first_handoff_and_says_so() {
+        let [receiving, processing, sending, _] = nodes();
         let topology = drawn();
         let idle = topology
             .links
             .iter()
-            .find(|link| link.to == "node/zeta/send")
-            .expect("beta to zeta is configured and drawn");
+            .find(|link| link.to == named("node/<z>/send"))
+            .expect("the processing node to the idle one is configured and drawn");
         assert_eq!((idle.origin, idle.volume), (Origin::Configured, 0));
         assert!(
             idle.evidence
-                .starts_with("configured beta to zeta; no handoff observed yet"),
+                .starts_with(&named("configured <p> to <z>; no handoff observed yet")),
             "{}",
             idle.evidence
         );
 
-        let stray = [hop("gamma", "process", "alpha", "send", 1)];
+        let stray = [hop(&sending, "process", &receiving, "send", 1)];
         let observed = cluster_topology(&published(), &roster(), true, &stray, 9);
         let link = observed
             .links
             .iter()
-            .find(|link| link.from == "node/gamma/process")
+            .find(|link| link.from == named("node/<s>/process"))
             .expect("a delivered hop is drawn");
         assert_eq!(link.origin, Origin::Observed);
 
@@ -364,14 +387,14 @@ mod tests {
             &published(),
             &roster(),
             true,
-            &[hop("alpha", "receive", "beta", "process", 1)],
+            &[hop(&receiving, "receive", &processing, "process", 1)],
             1_000_000_009,
         );
         let mut later = cluster_topology(
             &published(),
             &roster(),
             true,
-            &[hop("alpha", "receive", "beta", "process", 5)],
+            &[hop(&receiving, "receive", &processing, "process", 5)],
             3_000_000_009,
         );
         later.rate_since(&earlier);
@@ -386,17 +409,17 @@ mod tests {
     fn a_party_sends_into_the_receive_stages_and_the_send_stages_deliver_to_one() {
         let mut snapshot = published();
         snapshot.record_health(record(
-            &format!("{ROOT}/node/alpha/receive/file/text/authorization"),
+            &named("<root>/node/<r>/receive/file/text/authorization"),
             Health::Stressed,
             "the party is not permitted on this Receive Location",
         ));
         for (stage, counted, value) in [
-            ("alpha/receive", Counted::Streams, 40),
-            ("gamma/send", Counted::Messages, 31),
-            ("gamma/send", Counted::Bytes, 9000),
+            ("<r>/receive", Counted::Streams, 40),
+            ("<s>/send", Counted::Messages, 31),
+            ("<s>/send", Counted::Bytes, 9000),
         ] {
             snapshot.record_count(Count {
-                scope: format!("{ROOT}/node/{stage}"),
+                scope: named(&format!("<root>/node/{stage}")),
                 counted,
                 value,
                 window_start_unix_nanos: 7,
@@ -413,34 +436,36 @@ mod tests {
                 .unwrap_or_else(|| panic!("{id} is drawn"))
         };
 
-        let sends = link("party/sending/party-x/alpha");
+        let sends = link(&named("party/sending/party-x/<r>"));
         assert_eq!(
             (sends.from.as_str(), sends.to.as_str()),
-            ("party/sending/party-x", "node/alpha/receive")
+            ("party/sending/party-x", named("node/<r>/receive").as_str())
         );
         assert_eq!((sends.volume, sends.state), (40, Health::Stressed));
         assert_eq!(sends.origin, Origin::Both);
         assert_eq!(
             sends.evidence,
-            "party-x sends into alpha over 2 transports; worst over file: \
-             the party is not permitted on this Receive Location"
+            named(
+                "party-x sends into <r> over 2 transports; worst over file: \
+                 the party is not permitted on this Receive Location"
+            )
         );
 
-        let delivers = link("party/receiving/party-x/gamma");
+        let delivers = link(&named("party/receiving/party-x/<s>"));
         assert_eq!(
             (delivers.from.as_str(), delivers.to.as_str()),
-            ("node/gamma/send", "party/receiving/party-x")
+            (named("node/<s>/send").as_str(), "party/receiving/party-x")
         );
         assert_eq!(
             (delivers.volume, delivers.state, delivers.protocol.as_str()),
             (31, Health::Stressed, "tcp"),
             "Messages at Send, not its bytes"
         );
-        let idle = link("party/receiving/party-x/zeta");
+        let idle = link(&named("party/receiving/party-x/<z>"));
         assert_eq!((idle.origin, idle.volume), (Origin::Configured, 0));
         assert_eq!(
             idle.evidence,
-            "zeta delivers to party-x; no transport reported yet"
+            named("<z> delivers to party-x; no transport reported yet")
         );
 
         // A Party is Fine or Holding over the worst it faces (ADR-0041).
@@ -449,14 +474,14 @@ mod tests {
             (sender.label.as_str(), sender.scope.as_str(), sender.state),
             (
                 "party-x",
-                "xmip:///playground/party/party-x",
+                named("<root>/party/party-x").as_str(),
                 Health::Holding
             )
         );
         assert!(
             sender
                 .evidence
-                .starts_with("sends into alpha; worst at alpha over file: "),
+                .starts_with(&named("sends into <r>; worst at <r> over file: ")),
             "{}",
             sender.evidence
         );
@@ -465,11 +490,12 @@ mod tests {
         assert!(
             receiver
                 .evidence
-                .starts_with("is delivered to by gamma, zeta; worst at gamma over tcp")
+                .starts_with(&named("is delivered to by <s>, <z>; worst at <s> over tcp"))
         );
 
         // No stage, no Party.
-        let bare = cluster_topology(&Snapshot::new(), &Roster::of(&["n".into()]), false, &[], 9);
+        let [only, ..] = nodes();
+        let bare = cluster_topology(&Snapshot::new(), &Roster::of(&[only]), false, &[], 9);
         assert!(bare.nodes.iter().all(|node| node.kind != NodeKind::Party));
     }
 
@@ -477,8 +503,9 @@ mod tests {
     fn the_topology_rides_the_snapshot_and_the_records_still_read_back() {
         let snapshot = published();
         let topology = drawn();
+        let root = cluster_root();
 
-        let text = roll_toml(ROOT, &snapshot, Some(topology.clone()), None, "");
+        let text = roll_toml(&root, &snapshot, Some(topology.clone()), None, "");
         assert!(text.contains("[[topology.nodes]]"));
         assert!(text.contains("[[topology.links]]"));
         let parsed: toml::Value = text.parse().expect("valid TOML");
@@ -488,7 +515,7 @@ mod tests {
         );
 
         let back = Publication::read(&text).expect("reads back");
-        assert_eq!(back.records.len(), snapshot.health(ROOT).len());
+        assert_eq!(back.records.len(), snapshot.health(&root).len());
         assert_eq!(back.topology, Some(topology));
     }
 }

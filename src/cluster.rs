@@ -62,9 +62,6 @@ use crate::handoff::Hop;
 use crate::stress::Stress;
 use observe::now_unix_nanos;
 
-/// The fixture root this crate's tests publish under. A roll is a cluster the
-/// owner named; a test spawns nodes, never a cluster (ADR-0052, 2026-09-14).
-pub const ROOT: &str = "xmip:///playground";
 /// How long a tick waits for every live node to publish something new before
 /// it judges with what it has.
 const GRACE: Duration = Duration::from_secs(2);
@@ -159,6 +156,9 @@ impl Cluster {
         // of which cluster each row is (ADR-0053, amendment 2026-09-20).
         let image = crate::image::of_node(&self.binary, &orders.cluster, name)?;
         Command::new(image)
+            // The cluster the node's scope root is, said rather than
+            // inherited.
+            .env("XMIP_PLAYGROUND_CLUSTER", &orders.cluster)
             .args(["--name", name, "--stress", orders.stress.name()])
             .args(["--rounds", &orders.rounds.to_string()])
             .args([
@@ -328,18 +328,34 @@ impl Drop for Cluster {
 mod tests {
     use super::*;
     use crate::heartbeat::{self, Beat};
-    use crate::support::scratch;
+    use crate::support::{cluster_name, cluster_root, path, path_roster, scratch, test_cluster};
     use observe::{Health, HealthRecord};
+
+    /// The test cluster's name, which every node a test spawns is told.
+    fn named() -> String {
+        cluster_name().expect("the test cluster is named")
+    }
+
+    /// The scope of the cluster's first node.
+    fn first(cluster: &Cluster) -> String {
+        let name = cluster.names().next().expect("a node");
+        format!("{}/node/{name}", cluster_root())
+    }
 
     fn spawn(stress: Stress, count: usize, rounds: u64) -> (PathBuf, Cluster) {
         judged(stress, count, rounds, Liveness::OWNERS)
     }
 
+    /// A cluster of the test cluster's first `count` nodes, by place, none
+    /// declaring a stage.
     fn judged(stress: Stress, count: usize, rounds: u64, liveness: Liveness) -> (PathBuf, Cluster) {
         let dir = scratch("cluster");
+        let names: Vec<String> = (0..count)
+            .map(|place| test_cluster().node(place).name.clone())
+            .collect();
         let cluster = Cluster::judged(
             &built_node_binary(),
-            &Orders::numbered(stress, count, rounds),
+            &Orders::of(stress, crate::Roster::of(&names), rounds).in_cluster(&named()),
             &dir.join("shared"),
             &dir.join("snapshots"),
             liveness,
@@ -352,14 +368,16 @@ mod tests {
     /// processes was double-picked, and stop leaves no child running.
     #[test]
     fn a_realistic_cluster_publishes_rolls_up_and_stops_clean() {
-        let (dir, mut cluster) = spawn(Stress::Calm, Stress::Realistic.nodes(), 0);
+        let (dir, mut cluster) = spawn(Stress::Calm, 3, 0);
         assert_eq!(cluster.alive(), 3);
 
         let mut snapshot = cluster.tick().clone();
         snapshot = merge_into(snapshot, cluster.tick());
 
-        for name in ["node-01", "node-02", "node-03"] {
-            let claim = format!("{ROOT}/node/{name}/exclusive-claim/file");
+        let root = cluster_root();
+        let names: Vec<String> = cluster.names().map(ToString::to_string).collect();
+        for name in &names {
+            let claim = format!("{root}/node/{name}/exclusive-claim/file");
             let verdicts = snapshot.health(&claim);
             assert_eq!(verdicts.len(), 3, "{name}: three styles published");
             for record in verdicts {
@@ -372,17 +390,17 @@ mod tests {
             }
             assert!(
                 snapshot
-                    .worst(&format!("{ROOT}/node/{name}/daily-backlog"))
+                    .worst(&format!("{root}/node/{name}/daily-backlog"))
                     .is_some(),
                 "{name}: the DailyBacklog drain published"
             );
             assert_eq!(
-                snapshot.worst(&format!("{ROOT}/node/{name}/system-process")),
+                snapshot.worst(&format!("{root}/node/{name}/system-process")),
                 Some(Health::Fine),
                 "{name} is alive"
             );
         }
-        let rollup = snapshot_record(&snapshot, &format!("{ROOT}/node"));
+        let rollup = snapshot_record(&snapshot, &format!("{root}/node"));
         assert!(
             rollup.evidence.starts_with("3 nodes"),
             "{}",
@@ -405,7 +423,7 @@ mod tests {
                 break;
             }
         }
-        let process = snapshot_record(&last, &format!("{ROOT}/node/node-01/system-process"));
+        let process = snapshot_record(&last, &format!("{}/system-process", first(&cluster)));
         assert_eq!(process.health, Health::Fine, "{}", process.evidence);
         assert!(
             process.evidence.starts_with("exited 0"),
@@ -448,10 +466,10 @@ mod tests {
             1,
             "silent past its missed beats is hung"
         );
-        let process = snapshot_record(&last, &format!("{ROOT}/node/node-01/system-process"));
+        let process = snapshot_record(&last, &format!("{}/system-process", first(&cluster)));
         assert_eq!(process.health, Health::Stressed, "{}", process.evidence);
         assert!(process.evidence.contains("hung"), "{}", process.evidence);
-        let rollup = snapshot_record(&last, &format!("{ROOT}/node"));
+        let rollup = snapshot_record(&last, &format!("{}/node", cluster_root()));
         assert_ne!(rollup.health, Health::Fine, "the rollup carries the fault");
         cluster.stop();
         assert_eq!(cluster.alive(), 0);
@@ -469,7 +487,7 @@ mod tests {
         let beating = dir.join("beating.toml");
         cluster.nodes[0].path.clone_from(&beating);
         std::fs::create_dir_all(&dir).expect("the scratch directory");
-        let scope = format!("{ROOT}/node/node-01");
+        let scope = first(&cluster);
         let beater = std::thread::spawn(move || {
             let started = Instant::now();
             while started.elapsed() < Duration::from_secs(4) {
@@ -509,7 +527,7 @@ mod tests {
         // A file the node never writes: as far as the cluster can tell, it
         // has not beaten once.
         cluster.nodes[0].path = dir.join("never-written.toml");
-        let process = format!("{ROOT}/node/node-01/system-process");
+        let process = format!("{}/system-process", first(&cluster));
         cluster.tick();
         let last = cluster.tick().clone();
         assert_eq!(cluster.restarts(), 0, "starting, within its allowance");
@@ -539,17 +557,18 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("the scratch directory");
         // A publication the size a brutal node writes, and a beat saying its
         // first round is done, each only this test writes.
+        let idle = first(&cluster);
         let mut published = Snapshot::new();
         for leaf in 0..2_000 {
             published.record_health(HealthRecord {
-                scope: format!("{ROOT}/node/idle/exclusive-claim/file/{leaf}"),
+                scope: format!("{idle}/exclusive-claim/file/{leaf}"),
                 health: Health::Fine,
                 severity: 0,
                 evidence: "one holder at a time".to_string(),
                 observed_unix_nanos: 7,
             });
         }
-        let text = crate::report::node_toml(&format!("{ROOT}/node/idle"), &published, Vec::new());
+        let text = crate::report::node_toml(&idle, &published, Vec::new());
         let beat = toml::to_string(&Beat {
             unix_nanos: 7,
             rounds: 1,
@@ -588,9 +607,13 @@ mod tests {
     #[test]
     fn declared_nodes_run_the_named_test_and_hand_each_pair_along_the_path() {
         let dir = scratch("cluster-declared");
-        let roster = crate::Roster::parse("alpha=receiving,beta=processing,gamma=sending")
-            .expect("a well-formed roster");
-        let orders = Orders::of(Stress::Calm, roster, 0).driving(&["round-trip".to_string()]);
+        let test = test_cluster();
+        let [receiving, processing, sending] = path(&test);
+        let root = cluster_root();
+        let roster = crate::Roster::parse(&path_roster(&test)).expect("a well-formed roster");
+        let orders = Orders::of(Stress::Calm, roster, 0)
+            .driving(&["round-trip".to_string()])
+            .in_cluster(&named());
         let mut cluster = Cluster::spawn(
             &built_node_binary(),
             &orders,
@@ -603,14 +626,18 @@ mod tests {
         for _ in 0..40 {
             snapshot = merge_into(snapshot, cluster.tick());
             if !snapshot
-                .health(&format!("{ROOT}/node/gamma/send"))
+                .health(&format!("{root}/node/{sending}/send"))
                 .is_empty()
             {
                 break;
             }
         }
-        for (name, stage) in [("alpha", "receive"), ("beta", "process"), ("gamma", "send")] {
-            let leaves = snapshot.health(&format!("{ROOT}/node/{name}/{stage}"));
+        for (name, stage) in [
+            (receiving, "receive"),
+            (processing, "process"),
+            (sending, "send"),
+        ] {
+            let leaves = snapshot.health(&format!("{root}/node/{name}/{stage}"));
             assert!(!leaves.is_empty(), "{name} published its {stage} stage");
             for other in [
                 "receive",
@@ -619,7 +646,7 @@ mod tests {
                 "exclusive-claim",
                 "daily-backlog",
             ] {
-                let foreign = snapshot.health(&format!("{ROOT}/node/{name}/{other}"));
+                let foreign = snapshot.health(&format!("{root}/node/{name}/{other}"));
                 assert!(other == stage || foreign.is_empty(), "{name} ran {other}");
             }
         }
@@ -630,11 +657,11 @@ mod tests {
             .map(|hop| (hop.from, hop.to))
             .collect();
         assert!(
-            links.contains(&("alpha".to_string(), "beta".to_string())),
+            links.contains(&(receiving.to_string(), processing.to_string())),
             "{links:?}"
         );
         assert!(
-            links.contains(&("beta".to_string(), "gamma".to_string())),
+            links.contains(&(processing.to_string(), sending.to_string())),
             "{links:?}"
         );
 
@@ -651,14 +678,17 @@ mod tests {
     #[test]
     fn a_node_beats_within_milliseconds_of_its_start() {
         let dir = scratch("cluster-first-beat");
-        let snapshot = dir.join("alpha.toml");
+        let test = test_cluster();
+        let name = test.node(0).name.as_str();
+        let snapshot = dir.join(format!("{name}.toml"));
         let binary = built_node_binary();
         // Once refused first: the operating system's scan of an image it has
         // not run before is the machine's load, not the node's start.
         Command::new(&binary).args(["--refused", "x"]).output().ok();
         let asked = now_unix_nanos();
         let mut child = Command::new(binary)
-            .args(["--name", "alpha", "--stress", "calm", "--rounds", "0"])
+            .env("XMIP_PLAYGROUND_CLUSTER", &test.name)
+            .args(["--name", name, "--stress", "calm", "--rounds", "0"])
             .args(["--beat-ms", "60000"])
             .arg("--shared")
             .arg(dir.join("shared"))
@@ -670,8 +700,8 @@ mod tests {
             .expect("the node binary runs");
         let waiting = Instant::now();
         let beat = loop {
-            let text = std::fs::read_to_string(heartbeat::beside(&snapshot)).ok();
-            if let Some(beat) = text.as_deref().and_then(Beat::read) {
+            let written = std::fs::read_to_string(heartbeat::beside(&snapshot)).ok();
+            if let Some(beat) = written.as_deref().and_then(Beat::read) {
                 break beat;
             }
             assert!(waiting.elapsed() < Duration::from_secs(10), "no beat");
@@ -692,14 +722,18 @@ mod tests {
     #[test]
     fn a_node_told_an_unknown_scenario_is_refused_with_exit_code_two() {
         let dir = scratch("cluster-refused");
+        let test = test_cluster();
+        let name = test.with_role("receiving").name.as_str();
+        let snapshot = dir.join(format!("{name}.toml"));
         let output = Command::new(built_node_binary())
-            .args(["--name", "alpha", "--stress", "calm", "--rounds", "1"])
+            .env("XMIP_PLAYGROUND_CLUSTER", &test.name)
+            .args(["--name", name, "--stress", "calm", "--rounds", "1"])
             .args(["--role", "receiving"])
             .args(["--scenarios", "round-trip,pingpong"])
             .arg("--shared")
             .arg(dir.join("shared"))
             .arg("--snapshot")
-            .arg(dir.join("alpha.toml"))
+            .arg(&snapshot)
             .output()
             .expect("the node binary runs");
         assert_eq!(output.status.code(), Some(2));
@@ -709,28 +743,32 @@ mod tests {
             said.contains("pingpong") && said.contains("daily-backlog"),
             "{said}"
         );
-        assert!(!dir.join("alpha.toml").exists(), "nothing ran");
+        assert!(!snapshot.exists(), "nothing ran");
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// Forty processes, the owner's ceiling. For the runner, not the gate.
+    /// Every node of the test cluster at the brutal level: forty processes,
+    /// the owner's ceiling, where `XMIP_TEST_CLUSTER` names a cluster of
+    /// forty. For the runner, not the gate.
     #[test]
-    #[ignore = "forty processes; run on purpose"]
-    fn brutal_cluster_of_forty() {
-        let (dir, mut cluster) = spawn(Stress::Brutal, Stress::Brutal.nodes(), 0);
+    #[ignore = "the whole test cluster at brutal; run on purpose"]
+    fn brutal_cluster_of_every_node() {
+        let (dir, mut cluster) = spawn(Stress::Brutal, test_cluster().nodes.len(), 0);
         let mut snapshot = cluster.tick().clone();
         for _ in 0..4 {
             snapshot = merge_into(snapshot, cluster.tick());
         }
+        let root = cluster_root();
         let published = cluster
             .names()
             .filter(|name| {
                 snapshot
-                    .worst(&format!("{ROOT}/node/{name}/exclusive-claim"))
+                    .worst(&format!("{root}/node/{name}/exclusive-claim"))
                     .is_some()
             })
             .count();
-        assert_eq!(published, 40, "every one of forty nodes published");
+        let every = test_cluster().nodes.len();
+        assert_eq!(published, every, "every one of {every} nodes published");
         cluster.stop();
         assert_eq!(cluster.alive(), 0);
         std::fs::remove_dir_all(&dir).ok();

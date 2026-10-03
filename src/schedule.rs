@@ -291,10 +291,8 @@ mod tests {
     use super::*;
     use crate::exchange::{FileRoundTrip, TIMEOUT, TcpRoundTrip, UdpRoundTrip};
     use crate::storm::violations;
-    use crate::support::scratch;
+    use crate::support::{cluster_root, scope, scratch};
     use observe::{Counted, Health};
-
-    const NODE: &str = "xmip:///playground";
 
     fn sample(dir: &std::path::Path) -> Vec<Box<dyn RoundTrip>> {
         vec![
@@ -320,7 +318,7 @@ mod tests {
                 took <= budget,
                 "round {round} took {took:?}, budget {budget:?}"
             );
-            let lying = violations(&snapshot, NODE);
+            let lying = violations(&snapshot, &cluster_root());
             assert!(lying.is_empty(), "round {round}: {}", lying.join("; "));
         }
         snapshot
@@ -329,7 +327,7 @@ mod tests {
     #[test]
     fn harsh_faults_sizes_and_workers_keep_the_invariants_and_leave_file_fine() {
         let dir = scratch("harsh");
-        let mut schedule = Schedule::new(NODE, &dir)
+        let mut schedule = Schedule::new(cluster_root(), &dir)
             .at(Stress::Harsh)
             .over(sample(&dir));
         // Four workers at harsh, or fewer within the headroom (ADR-0028, 2026-09-11).
@@ -341,12 +339,12 @@ mod tests {
         let snapshot = stress_rounds(&mut schedule, Stress::Harsh.rounds());
 
         assert_eq!(
-            snapshot.worst(NODE),
+            snapshot.worst(&cluster_root()),
             Some(Health::Holding),
             "harsh faults surface"
         );
         let file: Vec<_> = snapshot
-            .health(&format!("{NODE}/receive/file"))
+            .health(&scope("receive/file"))
             .into_iter()
             .filter(|r| r.health != Health::Fine)
             .collect();
@@ -356,7 +354,7 @@ mod tests {
         );
         // A datagram cannot carry sixteen bits plus one; that round is red
         // with the transport's reason, not a hang and not a blank.
-        let udp = snapshot.health(&format!("{NODE}/receive/udp/bytes"));
+        let udp = snapshot.health(&scope("receive/udp/bytes"));
         assert!(
             udp.iter()
                 .any(|r| r.health != Health::Fine && !r.evidence.is_empty()),
@@ -368,7 +366,7 @@ mod tests {
     #[test]
     fn the_verdicts_come_back_in_pair_order_whatever_thread_reached_them() {
         let dir = scratch("order");
-        let schedule = Schedule::new(NODE, &dir)
+        let schedule = Schedule::new(cluster_root(), &dir)
             .at(Stress::Harsh)
             .over(sample(&dir));
         let verdicts = schedule.run_once(1);
@@ -389,7 +387,7 @@ mod tests {
     #[ignore = "brutal: the whole matrix at every core, for the runner"]
     fn brutal_schedule_over_every_transport() {
         let dir = scratch("brutal");
-        let mut schedule = Schedule::new(NODE, &dir).at(Stress::Brutal);
+        let mut schedule = Schedule::new(cluster_root(), &dir).at(Stress::Brutal);
         stress_rounds(&mut schedule, Stress::Brutal.rounds());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -397,7 +395,7 @@ mod tests {
     #[test]
     fn a_tick_reports_every_pair_across_the_three_stages() {
         let dir = scratch("tick");
-        let mut schedule = Schedule::new("xmip:///playground", &dir);
+        let mut schedule = Schedule::new(cluster_root(), &dir);
 
         let snapshot = schedule.tick();
 
@@ -406,7 +404,7 @@ mod tests {
         // transport verdict plus three identity steps per contract; Send carries
         // the transport verdict plus the identity presentation.
         for (stage, per_contract) in [("receive", 4), ("process", 1), ("send", 2)] {
-            let records = snapshot.health(&format!("xmip:///playground/{stage}/file"));
+            let records = snapshot.health(&scope(&format!("{stage}/file")));
             assert_eq!(
                 records.len(),
                 CONTRACTS.len() * per_contract,
@@ -420,7 +418,7 @@ mod tests {
     #[test]
     fn a_fault_free_schedule_has_no_red_and_says_why_it_is_not_all_green() {
         let dir = scratch("rollup");
-        let mut schedule = Schedule::new("xmip:///playground", &dir);
+        let mut schedule = Schedule::new(cluster_root(), &dir);
 
         let snapshot = schedule.tick();
         // Nothing is broken. What is not green is a transport that declares
@@ -428,7 +426,7 @@ mod tests {
         // an OS object this machine lacks — judged one-sided, yellow, with
         // the reason (ADR-0028 clause 5, ADR-0051).
         let red: Vec<_> = snapshot
-            .health("xmip:///playground")
+            .health(&cluster_root())
             .into_iter()
             .filter(|record| record.health == Health::Done)
             .map(|record| format!("{}: {}", record.scope, record.evidence))
@@ -443,14 +441,14 @@ mod tests {
             )
         );
         // A yellow leaf rolls up as Holding (ADR-0041); red never appears.
-        assert_ne!(snapshot.worst("xmip:///playground"), Some(Health::Done));
+        assert_ne!(snapshot.worst(&cluster_root()), Some(Health::Done));
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn injected_faults_turn_pairs_done_but_leave_file_fine() {
         let dir = scratch("faults");
-        let mut schedule = Schedule::new("xmip:///playground", &dir)
+        let mut schedule = Schedule::new(cluster_root(), &dir)
             .with_faults(FaultPlan::realistic())
             .over(vec![
                 Box::new(crate::exchange::FileRoundTrip::new(&dir)),
@@ -464,12 +462,12 @@ mod tests {
         }
 
         assert_eq!(
-            snapshot.worst("xmip:///playground"),
+            snapshot.worst(&cluster_root()),
             Some(Health::Holding),
             "faults should surface — a Done leaf rolls up to Holding (ADR-0041)"
         );
         assert_eq!(
-            snapshot.worst("xmip:///playground/receive/file"),
+            snapshot.worst(&scope("receive/file")),
             Some(Health::Fine),
             "file is left alone"
         );
@@ -481,7 +479,7 @@ mod tests {
         let dir = scratch("throughput");
         let transports = crate::support::three(&dir);
         let pairs = (CONTRACTS.len() * transports.len()) as u64;
-        let mut schedule = Schedule::new("xmip:///playground", &dir).over(transports);
+        let mut schedule = Schedule::new(cluster_root(), &dir).over(transports);
 
         let snapshot = schedule.tick();
 
@@ -504,7 +502,7 @@ mod tests {
         // reads four times too high.
         let delivered = |stage: &str| {
             let undelivered = snapshot
-                .health(&format!("xmip:///playground/{stage}"))
+                .health(&scope(stage))
                 .iter()
                 .filter(|record| matches!(record.health, Health::Stressed | Health::Done))
                 .count() as u64;
@@ -513,14 +511,14 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .measure("xmip:///playground", Counted::Streams)
+                .measure(&cluster_root(), Counted::Streams)
                 .map(|c| c.value),
             Some(delivered("receive")),
             "one Stream in per pair delivered at Receive"
         );
         assert_eq!(
             snapshot
-                .measure("xmip:///playground", Counted::Journeys)
+                .measure(&cluster_root(), Counted::Journeys)
                 .map(|c| c.value),
             Some(delivered("process")),
             "one Journey per pair delivered at Process"
@@ -529,11 +527,7 @@ mod tests {
         // Each figure sits at the stage that counts it, so a stage card reads
         // its own stage and not the cluster's sum (2026-09-26: the Receive
         // card counted the daily backlog's drained Streams as received).
-        let at = |stage: &str, counted| {
-            snapshot
-                .measure(&format!("xmip:///playground/{stage}"), counted)
-                .map(|c| c.value)
-        };
+        let at = |stage: &str, counted| snapshot.measure(&scope(stage), counted).map(|c| c.value);
         assert_eq!(at("receive", Counted::Streams), Some(delivered("receive")));
         assert_eq!(at("process", Counted::Journeys), Some(delivered("process")));
         assert_eq!(

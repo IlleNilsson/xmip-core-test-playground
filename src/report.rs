@@ -103,20 +103,21 @@ pub fn activity_toml(node: &str, activity: &Activity) -> String {
 mod tests {
     use super::*;
     use crate::Schedule;
+    use crate::support::{cluster_root, path, test_cluster};
     use observe::Counted;
 
     #[test]
     fn a_ticked_schedule_serialises_to_toml_with_records_and_counts() {
         let dir = std::env::temp_dir().join("xmip-report-test");
         std::fs::remove_dir_all(&dir).ok();
-        let mut schedule =
-            Schedule::new("xmip:///playground", &dir).over(crate::support::three(&dir));
+        let root = cluster_root();
+        let mut schedule = Schedule::new(root.as_str(), &dir).over(crate::support::three(&dir));
         let snapshot = schedule.tick();
 
-        let text = roll_toml("xmip:///playground", &snapshot, None, None, "");
+        let text = roll_toml(&root, &snapshot, None, None, "");
         let parsed: toml::Value = text.parse().expect("valid TOML");
 
-        assert_eq!(parsed["node"].as_str(), Some("xmip:///playground"));
+        assert_eq!(parsed["node"].as_str(), Some(root.as_str()));
         assert!(!parsed["records"].as_array().expect("records").is_empty());
         assert!(!parsed["counts"].as_array().expect("counts").is_empty());
         std::fs::remove_dir_all(&dir).ok();
@@ -126,84 +127,80 @@ mod tests {
     fn a_written_snapshot_reads_back_whole() {
         let dir = std::env::temp_dir().join("xmip-report-readback-test");
         std::fs::remove_dir_all(&dir).ok();
-        let mut schedule =
-            Schedule::new("xmip:///playground", &dir).over(crate::support::three(&dir));
+        let root = cluster_root();
+        let receive = format!("{root}/receive");
+        let mut schedule = Schedule::new(root.as_str(), &dir).over(crate::support::three(&dir));
         let written = schedule.tick();
 
         let (read, hops) =
-            node_from_toml(&roll_toml("xmip:///playground", &written, None, None, ""))
-                .expect("reads back");
+            node_from_toml(&roll_toml(&root, &written, None, None, "")).expect("reads back");
         assert!(hops.is_empty(), "a roll writes no handoffs");
 
-        let before: Vec<_> = written.health("xmip:///playground");
-        let after: Vec<_> = read.health("xmip:///playground");
+        let before: Vec<_> = written.health(&root);
+        let after: Vec<_> = read.health(&root);
         assert_eq!(before, after, "every record survives the round trip");
         assert_eq!(
-            read.measure("xmip:///playground", Counted::Bytes)
-                .map(|count| count.value),
+            read.measure(&root, Counted::Bytes).map(|count| count.value),
             written
-                .measure("xmip:///playground", Counted::Bytes)
+                .measure(&root, Counted::Bytes)
                 .map(|count| count.value),
             "the node's counts survive at the node's scope"
         );
         assert_eq!(
-            read.measure("xmip:///playground/receive", Counted::Streams)
+            read.measure(&receive, Counted::Streams)
                 .map(|count| count.value),
             written
-                .measure("xmip:///playground/receive", Counted::Streams)
+                .measure(&receive, Counted::Streams)
                 .map(|count| count.value),
             "a count stays at the stage it was taken at, so a stage has figures"
         );
-        assert!(
-            read.measure("xmip:///playground/receive", Counted::Streams)
-                .is_some()
-        );
+        assert!(read.measure(&receive, Counted::Streams).is_some());
         assert!(node_from_toml("not = [toml").is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn a_nodes_file_carries_its_handoffs_beside_its_publication() {
+        let cluster = test_cluster();
+        let [receiving, processing, _] = path(&cluster);
+        let node = format!("{}/node/{receiving}", cluster.scope());
         let hop = Hop {
-            from: "alpha".to_string(),
+            from: receiving.to_string(),
             from_stage: "receive".to_string(),
-            to: "beta".to_string(),
+            to: processing.to_string(),
             to_stage: "process".to_string(),
             count: 3,
             last_unix_nanos: 7,
         };
         let mut snapshot = Snapshot::new();
         snapshot.record_health(observe::HealthRecord {
-            scope: "xmip:///alpha/receive/tcp".to_string(),
+            scope: format!("{node}/receive/tcp"),
             health: observe::Health::Fine,
             severity: 0,
             evidence: "3/3".to_string(),
             observed_unix_nanos: 7,
         });
 
-        let text = node_toml("xmip:///alpha", &snapshot, vec![hop.clone()]);
+        let text = node_toml(&node, &snapshot, vec![hop.clone()]);
         let (read, hops) = node_from_toml(&text).expect("reads back");
 
         assert_eq!(hops, [hop]);
-        assert_eq!(
-            read.health("xmip:///alpha"),
-            snapshot.health("xmip:///alpha")
-        );
+        assert_eq!(read.health(&node), snapshot.health(&node));
     }
 
     #[test]
     fn history_serialises_to_toml_points() {
         let dir = std::env::temp_dir().join("xmip-report-history-test");
         std::fs::remove_dir_all(&dir).ok();
-        let mut schedule =
-            Schedule::new("xmip:///playground", &dir).over(crate::support::three(&dir));
+        let root = cluster_root();
+        let mut schedule = Schedule::new(root.as_str(), &dir).over(crate::support::three(&dir));
         let mut history = History::default();
         // As a roll records a round: the node's rollup beside every scope's own
         // series, since a count sits at the stage that took it (curve.rs).
-        crate::record_round(&mut history, "xmip:///playground", &schedule.tick());
-        crate::record_round(&mut history, "xmip:///playground", &schedule.tick());
+        crate::record_round(&mut history, &root, &schedule.tick());
+        crate::record_round(&mut history, &root, &schedule.tick());
 
-        let text = history_toml("xmip:///playground", &history);
+        let text = history_toml(&root, &history);
         let parsed: toml::Value = text.parse().expect("valid TOML");
 
         let points = parsed["points"].as_array().expect("points");

@@ -355,21 +355,21 @@ mod tests {
         ]
     }
     use crate::storm::violations;
-    use crate::support::scratch;
+    use crate::support::{scope, scratch};
     use observe::Health;
 
     #[test]
     fn a_large_payload_round_trips_over_file_and_tcp() {
         let dir = scratch("carry");
-        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir).over(sample(&dir));
+        let mut hl = HeavyLoad::new(scope("heavy-load"), &dir).over(sample(&dir));
         let snapshot = hl.tick();
         assert_eq!(
-            snapshot.worst("xmip:///playground/heavy-load/file"),
+            snapshot.worst(&scope("heavy-load/file")),
             Some(Health::Fine),
             "file carries a megabyte"
         );
         assert_eq!(
-            snapshot.worst("xmip:///playground/heavy-load/tcp"),
+            snapshot.worst(&scope("heavy-load/tcp")),
             Some(Health::Fine),
             "tcp carries a megabyte"
         );
@@ -379,10 +379,10 @@ mod tests {
     #[test]
     fn udp_cannot_carry_a_megabyte_and_says_so() {
         let dir = scratch("udp");
-        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir).over(sample(&dir));
+        let mut hl = HeavyLoad::new(scope("heavy-load"), &dir).over(sample(&dir));
         let snapshot = hl.tick();
         assert_ne!(
-            snapshot.worst("xmip:///playground/heavy-load/udp"),
+            snapshot.worst(&scope("heavy-load/udp")),
             Some(Health::Fine),
             "a datagram cannot hold a megabyte"
         );
@@ -407,12 +407,12 @@ mod tests {
         // Just over the ceiling: a byte pattern, checked whole, no structural
         // parse. Over file only would be ideal, but a tick runs all transports;
         // the size is kept just past the ceiling so the test stays quick.
-        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir)
+        let mut hl = HeavyLoad::new(scope("heavy-load"), &dir)
             .over(sample(&dir))
             .with_bytes(VALIDATE_CEILING + 1);
         let snapshot = hl.tick();
         let file = snapshot
-            .health("xmip:///playground/heavy-load/file")
+            .health(&scope("heavy-load/file"))
             .into_iter()
             .next()
             .expect("a file record");
@@ -441,11 +441,11 @@ mod tests {
     #[test]
     fn bytes_moved_accumulates() {
         let dir = scratch("bytes");
-        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir).over(sample(&dir));
+        let mut hl = HeavyLoad::new(scope("heavy-load"), &dir).over(sample(&dir));
         hl.tick();
         let snapshot = hl.tick();
         let moved = snapshot
-            .measure("xmip:///playground/heavy-load", Counted::Bytes)
+            .measure(&scope("heavy-load"), Counted::Bytes)
             .map_or(0, |c| c.value);
         assert!(
             moved > 1024 * 1024,
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn at_a_level_the_load_leads_a_cycle_of_the_edge_sizes() {
         let dir = scratch("sizes");
-        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir)
+        let mut hl = HeavyLoad::new(scope("heavy-load"), &dir)
             .at(Stress::Harsh)
             .over(Vec::new());
         // Harsh's zero — the probe — is not a load and is left out.
@@ -489,9 +489,9 @@ mod tests {
             let took = started.elapsed();
             let budget = crate::exchange::TIMEOUT * 3 * 20 * 3;
             assert!(took <= budget, "round {round} took {took:?}");
-            let lying = violations(&snapshot, "xmip:///playground/heavy-load");
+            let lying = violations(&snapshot, &scope("heavy-load"));
             assert!(lying.is_empty(), "round {round}: {}", lying.join("; "));
-            for record in snapshot.health("xmip:///playground/heavy-load/file") {
+            for record in snapshot.health(&scope("heavy-load/file")) {
                 assert_eq!(record.health, Health::Fine, "round {round}: {record:?}");
             }
         }
@@ -506,7 +506,7 @@ mod tests {
     #[test]
     fn harsh_sizes_arrive_whole_over_file_and_tcp() {
         let dir = scratch("heavy-load-harsh");
-        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir)
+        let mut hl = HeavyLoad::new(scope("heavy-load"), &dir)
             .at(Stress::Harsh)
             .over(vec![
                 Box::new(FileRoundTrip::new(&dir)),
@@ -516,7 +516,7 @@ mod tests {
         let snapshot = stress_rounds(&mut hl, cycle);
         // tcp is dropped now and then at three times the rate; every red
         // says so, and nothing is truncated or corrupted.
-        for record in snapshot.health("xmip:///playground/heavy-load/tcp") {
+        for record in snapshot.health(&scope("heavy-load/tcp")) {
             assert!(
                 matches!(record.health, Health::Fine | Health::Stressed)
                     || record.evidence.contains("dropped"),
@@ -529,12 +529,12 @@ mod tests {
     #[test]
     fn harsh_udp_refuses_above_a_datagram_with_a_reason_and_carries_below() {
         let dir = scratch("heavy-load-harsh-udp");
-        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir)
+        let mut hl = HeavyLoad::new(scope("heavy-load"), &dir)
             .at(Stress::Harsh)
             .over(vec![Box::new(UdpRoundTrip)]);
         // The megabyte, then one byte and the MTU minus one.
         let snapshot = stress_rounds(&mut hl, 3);
-        let udp = snapshot.health("xmip:///playground/heavy-load/udp");
+        let udp = snapshot.health(&scope("heavy-load/udp"));
         assert!(udp.iter().all(|r| !r.evidence.is_empty()));
         assert!(
             udp.iter().all(|r| r.health == Health::Stressed),
@@ -547,7 +547,7 @@ mod tests {
     #[ignore = "brutal: every transport at every size, for the runner"]
     fn brutal_sizes_over_every_transport() {
         let dir = scratch("heavy-load-brutal");
-        let mut hl = HeavyLoad::new("xmip:///playground/heavy-load", &dir).at(Stress::Brutal);
+        let mut hl = HeavyLoad::new(scope("heavy-load"), &dir).at(Stress::Brutal);
         stress_rounds(&mut hl, Stress::Brutal.rounds());
         std::fs::remove_dir_all(&dir).ok();
     }

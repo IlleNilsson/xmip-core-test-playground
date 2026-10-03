@@ -15,7 +15,7 @@
 //!
 //! A roster is written as the `--nodes` flag takes it: `name`, or
 //! `name=role`, or `name=role+role`, comma separated —
-//! `alpha=receiving,beta=processing,gamma=sending`, or `node-01,node-02`
+//! `<node>=receiving,<node>=processing,<node>=sending`, or `<node>,<node>`
 //! where neither declares a role.
 
 use node::{Capability, NodeRole, Stage};
@@ -64,35 +64,28 @@ impl Roster {
         Ok(Self { nodes })
     }
 
-    /// The nodes named, each declaring what `declared` gives it — the same
-    /// `name=capability` list, from which a node it does not name declares
-    /// nothing.
+    /// The roster a cluster's `xmip.toml` declares: the nodes under its
+    /// `[nodes]`, in the order of their names, each declaring the roles its
+    /// `roles` says (`configure::cluster::roles`) and nothing where it says
+    /// none. The one place a roll's nodes come from (ADR-0056, amendment
+    /// 2026-10-03: names are configuration).
     ///
     /// # Errors
     ///
-    /// When a word is no capability, or when `declared` names a node that is
-    /// no node of the cluster (ADR-0055: both sides named).
-    pub fn declaring(names: &[String], declared: &str) -> Result<Self, String> {
-        let said = Self::parse(declared)?;
-        let strangers: Vec<&str> = said
-            .names()
+    /// When the text is not a cluster's file, or a word is no role, as
+    /// [`Capability::parse`] refuses it.
+    pub fn of_cluster(cluster: &str) -> Result<Self, String> {
+        let entries: Vec<String> = configure::cluster::roles(cluster)?
             .into_iter()
-            .filter(|one| !names.iter().any(|name| name.eq_ignore_ascii_case(one)))
+            .map(|(name, roles)| {
+                if roles.is_empty() {
+                    name
+                } else {
+                    format!("{name}={}", roles.join("+"))
+                }
+            })
             .collect();
-        if !strangers.is_empty() {
-            return Err(format!(
-                "REFUSED: a capability was given to {}, which is no node of this cluster; \
-                 the nodes are {}.",
-                strangers.join(", "),
-                names.join(", ")
-            ));
-        }
-        Ok(Self {
-            nodes: names
-                .iter()
-                .map(|name| (name.clone(), said.capability(name)))
-                .collect(),
-        })
+        Self::parse(&entries.join(","))
     }
 
     /// The roster as `--nodes` takes it back.
@@ -158,6 +151,39 @@ impl Roster {
         self.nodes
             .iter()
             .any(|(_, capability)| !capability.declares_no_stage())
+    }
+
+    /// Whether these nodes cover the whole message path — every stage
+    /// declared somewhere, so `RoundTrip` runs between the node processes.
+    #[must_use]
+    pub fn covers_the_path(&self) -> bool {
+        Stage::ALL
+            .into_iter()
+            .all(|stage| !self.with(stage).is_empty())
+    }
+
+    /// What the roster is, in one line: how many nodes, and how many of them
+    /// serve each stage — or that none declares a stage and the roll runs
+    /// whole tests itself. The roll's first line, and what a surface says an
+    /// operator got.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let count = self.nodes.len();
+        if count == 0 {
+            return "no nodes".to_string();
+        }
+        let many = if count == 1 { "node" } else { "nodes" };
+        if !self.serves_any_stage() {
+            return format!("{count} {many}, none serving a stage: whole tests in each");
+        }
+        let dealt: Vec<String> = Stage::ALL
+            .into_iter()
+            .map(|stage| {
+                let role = NodeRole::serving(stage);
+                format!("{} {}", self.with(stage).len(), role.name())
+            })
+            .collect();
+        format!("{count} {many}, {}", dealt.join(", "))
     }
 
     /// Why `RoundTrip` cannot run across these nodes, if it cannot: the path
@@ -240,38 +266,63 @@ fn fnv1a(text: &str) -> u64 {
 mod tests {
     use super::*;
     use crate::schedule::CONTRACTS;
+    use crate::support::test_cluster;
 
     fn roster(text: &str) -> Roster {
         Roster::parse(text).expect("a well-formed roster")
     }
 
+    /// `N` names that say nothing: the test cluster's nodes', in the order
+    /// of their names, and past its last each again with a number.
+    fn names<const N: usize>() -> [String; N] {
+        let cluster = test_cluster();
+        let count = cluster.nodes.len();
+        std::array::from_fn(|place| {
+            let name = &cluster.nodes[place % count].name;
+            match place / count {
+                0 => name.clone(),
+                again => format!("{name}-{again}"),
+            }
+        })
+    }
+
     #[test]
     fn a_node_serves_what_it_declared_and_a_name_decides_nothing() {
-        let declared = roster("alpha=receiving,beta=processing,gamma=sending,node-01");
-        assert_eq!(declared.with(Stage::Receive), ["alpha"]);
-        assert_eq!(declared.with(Stage::Send), ["gamma"]);
-        assert!(declared.capability("node-01").declares_no_stage());
-        assert_eq!(declared.names(), ["alpha", "beta", "gamma", "node-01"]);
+        let [a, b, c, bare] = names();
+        let declared = roster(&format!("{a}=receiving,{b}=processing,{c}=sending,{bare}"));
+        assert_eq!(declared.with(Stage::Receive), [a.as_str()]);
+        assert_eq!(declared.with(Stage::Send), [c.as_str()]);
+        assert!(declared.capability(&bare).declares_no_stage());
+        assert_eq!(declared.names(), [&a, &b, &c, &bare].map(String::as_str));
 
         assert_eq!(declared.refusal(), None);
 
-        // And a name that sounds like a stage decides nothing on its own.
-        let misleading = roster("receiver=sending,processor,sender=receiving+processing");
-        assert_eq!(misleading.with(Stage::Receive), ["sender"]);
-        assert_eq!(misleading.with(Stage::Process), ["sender"]);
-        assert_eq!(misleading.with(Stage::Send), ["receiver"]);
-        assert!(misleading.capability("processor").declares_no_stage());
+        // And neither a name nor what its node declares in the cluster's
+        // file decides anything here: each node serves what the roster
+        // starts it with, which is not what the test cluster gives it.
+        let cluster = test_cluster();
+        let receiver = cluster.with_role("receiving").name.as_str();
+        let processor = cluster.with_role("processing").name.as_str();
+        let sender = cluster.with_role("sending").name.as_str();
+        let misleading = roster(&format!(
+            "{receiver}=sending,{processor},{sender}=receiving+processing"
+        ));
+        assert_eq!(misleading.with(Stage::Receive), [sender]);
+        assert_eq!(misleading.with(Stage::Process), [sender]);
+        assert_eq!(misleading.with(Stage::Send), [receiver]);
+        assert!(misleading.capability(processor).declares_no_stage());
         assert_eq!(misleading.refusal(), None);
     }
 
     #[test]
     fn a_missing_capability_is_refused_by_capability_and_no_stage_is_no_refusal() {
-        assert_eq!(Roster::of(&["node-01".to_string()]).refusal(), None);
+        let [a, b, c, bare] = names();
+        assert_eq!(Roster::of(std::slice::from_ref(&bare)).refusal(), None);
         assert_eq!(
-            roster("alpha=receiving,beta=processing,gamma=sending,x").refusal(),
+            roster(&format!("{a}=receiving,{b}=processing,{c}=sending,{bare}")).refusal(),
             None
         );
-        let refusal = roster("alpha=receiving,delta=receiving,gamma=sending")
+        let refusal = roster(&format!("{a}=receiving,{b}=receiving,{c}=sending"))
             .refusal()
             .expect("nobody processes");
         assert!(refusal.starts_with("REFUSED"), "{refusal}");
@@ -279,47 +330,50 @@ mod tests {
             refusal.ends_with("no node declares processing."),
             "{refusal}"
         );
-        let refusal = roster("alpha=receiving").refusal().expect("two missing");
+        let refusal = roster(&format!("{a}=receiving"))
+            .refusal()
+            .expect("two missing");
         assert!(
             refusal.ends_with("declares processing or sending."),
             "{refusal}"
         );
-        assert_eq!(roster("alpha=executing,beta=receiving").refusal(), None);
+        assert_eq!(
+            roster(&format!("{a}=executing,{b}=receiving")).refusal(),
+            None
+        );
     }
 
     #[test]
     fn a_roster_is_written_read_back_and_a_node_has_the_last_word_on_itself() {
-        let text = "alpha=receiving,beta=processing+sending,node-01";
-        assert_eq!(roster(text).text(), text);
-        assert_eq!(Roster::of(&["a".to_string(), "b".into()]).text(), "a,b");
+        let [a, b, c, bare] = names();
+        let text = format!("{a}=receiving,{b}=processing+sending,{bare}");
+        assert_eq!(roster(&text).text(), text);
+        let two = [a.clone(), b.clone()];
+        assert_eq!(Roster::of(&two).text(), format!("{a},{b}"));
 
-        let names = ["alpha".to_string(), "beta".into()];
-        let declaring = Roster::declaring(&names, "alpha=receiving").expect("alpha is a node");
-        assert_eq!(declaring.with(Stage::Receive), ["alpha"]);
-        assert!(declaring.capability("beta").declares_no_stage());
+        assert!(Roster::parse(&format!("{a}=relay")).is_err());
+        assert!(Roster::parse(&format!("{c}=relay")).is_err());
 
-        let stranger = Roster::declaring(&names, "gamma=sending").expect_err("gamma is no node");
-        assert!(
-            stranger.contains("gamma") && stranger.contains("alpha, beta"),
-            "{stranger}"
+        let own = roster(&format!("{a},{b}=sending"))
+            .declared(&a, Capability::parse("receiving").expect("receiving"));
+        assert_eq!(own.with(Stage::Receive), [a.as_str()]);
+        assert_eq!(
+            own.names(),
+            [a.as_str(), b.as_str()],
+            "no node is added twice"
         );
-        assert!(Roster::parse("alpha=relay").is_err());
-
-        let own = roster("alpha,beta=sending")
-            .declared("alpha", Capability::parse("receiving").expect("receiving"));
-        assert_eq!(own.with(Stage::Receive), ["alpha"]);
-        assert_eq!(own.names(), ["alpha", "beta"], "no node is added twice");
         assert!(Roster::default().is_empty());
     }
 
     #[test]
     fn every_pair_has_one_receiver_and_one_stable_target_per_stage() {
-        let roster = roster(concat!(
-            "alpha=receiving,delta=receiving,beta=processing,",
-            "epsilon=processing,gamma=sending,zeta=sending,n1"
+        let [in_a, in_b, process_a, process_b, out_a, out_b, bare] = names();
+        let roster = roster(&format!(
+            "{in_a}=receiving,{in_b}=receiving,{process_a}=processing,\
+             {process_b}=processing,{out_a}=sending,{out_b}=sending,{bare}"
         ));
         for index in 0..40 {
-            let takers = ["alpha", "delta", "beta", "n1"]
+            let takers = [&in_a, &in_b, &process_a, &bare]
                 .into_iter()
                 .filter(|name| roster.receives(name, index))
                 .count();
@@ -327,48 +381,87 @@ mod tests {
         }
         let mut seen = std::collections::BTreeSet::new();
         for contract in CONTRACTS {
-            let first = roster.target("alpha", Stage::Process, "tcp", contract);
-            assert_eq!(
-                first,
-                roster.target("delta", Stage::Process, "tcp", contract)
-            );
+            let first = roster.target(&in_a, Stage::Process, "tcp", contract);
+            assert_eq!(first, roster.target(&in_b, Stage::Process, "tcp", contract));
             assert!(first.is_some_and(|name| roster.capability(name).can(Stage::Process)));
             seen.extend(first);
         }
         assert_eq!(seen.len(), 2, "the pairs spread over both process nodes");
-        let crossed = CONTRACTS.into_iter().any(|contract| {
-            let process = roster.target("alpha", Stage::Process, "tcp", contract);
-            let send = roster.target("beta", Stage::Send, "tcp", contract);
-            process == Some("beta") && send == Some("zeta")
-        });
-        let straight = CONTRACTS.into_iter().any(|contract| {
-            let process = roster.target("alpha", Stage::Process, "tcp", contract);
-            let send = roster.target("beta", Stage::Send, "tcp", contract);
-            process == Some("beta") && send == Some("gamma")
-        });
+        let reaches = |sender: &str| {
+            CONTRACTS.into_iter().any(|contract| {
+                let process = roster.target(&in_a, Stage::Process, "tcp", contract);
+                let send = roster.target(&process_a, Stage::Send, "tcp", contract);
+                process == Some(process_a.as_str()) && send == Some(sender)
+            })
+        };
         assert!(
-            crossed && straight,
+            reaches(&out_a) && reaches(&out_b),
             "a pair's process node does not decide its send node"
         );
         assert_eq!(
-            Roster::default().target("alpha", Stage::Send, "tcp", Contract::Json),
+            Roster::default().target(&in_a, Stage::Send, "tcp", Contract::Json),
             None
         );
     }
 
     #[test]
     fn an_executing_node_keeps_its_journey_and_the_rest_hand_on() {
-        let roster = roster("alpha=executing,beta=receiving,gamma=processing,delta=sending");
+        let [e, r, p, s] = names();
+        let roster = roster(&format!(
+            "{e}=executing,{r}=receiving,{p}=processing,{s}=sending"
+        ));
         for contract in CONTRACTS {
             for stage in [Stage::Process, Stage::Send] {
-                assert_eq!(
-                    roster.target("alpha", stage, "tcp", contract),
-                    Some("alpha")
-                );
+                assert_eq!(roster.target(&e, stage, "tcp", contract), Some(e.as_str()));
             }
-            let next = roster.target("beta", Stage::Process, "tcp", contract);
+            let next = roster.target(&r, Stage::Process, "tcp", contract);
             assert!(next.is_some_and(|name| roster.capability(name).can(Stage::Process)));
         }
-        assert_eq!(roster.with(Stage::Receive), ["alpha", "beta"]);
+        assert_eq!(roster.with(Stage::Receive), [e.as_str(), r.as_str()]);
+    }
+
+    #[test]
+    fn the_roster_is_the_cluster_file_s_nodes_with_the_roles_each_declares() {
+        let cluster = test_cluster();
+        let read = Roster::of_cluster(&cluster.text).expect("the test cluster reads");
+        let every: Vec<&str> = cluster
+            .nodes
+            .iter()
+            .map(|node| node.name.as_str())
+            .collect();
+        assert_eq!(read.names(), every);
+        for node in &cluster.nodes {
+            let declared = node.roles.join(",");
+            let expected = Capability::parse(&declared).expect("the test cluster's roles");
+            assert_eq!(read.capability(&node.name), expected, "{}", node.name);
+        }
+        assert!(read.covers_the_path());
+
+        let [a, b] = names();
+        let bare = Roster::of_cluster(&format!("[nodes.{a}]\n\n[nodes.{b}]\n")).expect("reads");
+        assert!(!bare.serves_any_stage() && !bare.covers_the_path());
+        assert_eq!(bare.refusal(), None);
+        let unknown = format!("[nodes.{a}]\nroles = \"relay\"\n");
+        assert!(Roster::of_cluster(&unknown).is_err(), "no role is no role");
+        assert!(
+            Roster::of_cluster("[service]\n")
+                .expect("no nodes")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_roster_says_how_many_nodes_and_what_each_stage_has() {
+        let [r, p, s, bare] = names();
+        let path = roster(&format!("{r}=receiving,{p}=processing,{s}=sending,{bare}"));
+        assert_eq!(
+            path.describe(),
+            "4 nodes, 1 receiving, 1 processing, 1 sending"
+        );
+        assert_eq!(
+            roster(&r).describe(),
+            "1 node, none serving a stage: whole tests in each"
+        );
+        assert_eq!(Roster::default().describe(), "no nodes");
     }
 }

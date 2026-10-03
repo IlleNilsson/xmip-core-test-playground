@@ -55,28 +55,35 @@ fn test_name(scenario: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::support::{path, test_cluster};
 
     #[test]
     fn a_run_names_its_tests_and_what_each_node_was_started_with() {
-        let roster = Roster::parse("alpha=receiving,beta=processing+sending,n1")
+        let cluster = test_cluster();
+        // The third declares nothing: a bare name in the roster.
+        let [first, second, bare] = path(&cluster);
+        let roles = [
+            format!("{first}=receiving"),
+            format!("{second}=processing+sending"),
+            bare.to_string(),
+        ];
+        let roster = Roster::parse(&roles.join(","))
             .expect("a well-formed roster")
             .declared(
-                "alpha",
+                first,
                 node::Capability::parse("receiving")
                     .expect("receiving")
                     .with_online(true),
             );
-        let run = started("C1", &["round-trip".to_string()], &roster, Stress::Harsh);
+        let c = cluster.name.as_str();
+        let run = started(c, &["round-trip".to_string()], &roster, Stress::Harsh);
         assert_eq!(run.tests, ["RoundTrip"]);
-        assert_eq!(run.nodes, ["alpha", "beta", "n1"]);
-        assert_eq!(
-            run.roles,
-            ["alpha=receiving", "beta=processing+sending", "n1"]
-        );
-        assert_eq!(run.online, ["alpha"]);
-        assert_eq!((run.cluster.as_str(), run.stress.as_str()), ("C1", "harsh"));
+        assert_eq!(run.nodes, [first, second, bare]);
+        assert_eq!(run.roles, roles);
+        assert_eq!(run.online, [first]);
+        assert_eq!((run.cluster.as_str(), run.stress.as_str()), (c, "harsh"));
 
-        let every = started("C1", &[], &Roster::default(), Stress::Calm);
+        let every = started(c, &[], &Roster::default(), Stress::Calm);
         assert_eq!(
             every.tests,
             [

@@ -305,19 +305,19 @@ fn ordered_per_key(processed: &[Processed]) -> bool {
 mod tests {
     use super::*;
     use crate::report::node_from_toml;
-    use crate::support::scratch;
+    use crate::support::{scope, scratch, test_cluster};
     use observe::Health;
 
     #[test]
     fn the_atomic_claim_gives_every_item_one_holder() {
         let dir = scratch("held");
-        let mut claim = ExclusiveClaim::new("xmip:///playground/exclusive-claim", &dir);
+        let mut claim = ExclusiveClaim::new(scope("exclusive-claim"), &dir);
         let mut snapshot = claim.tick();
         for _ in 0..10 {
             snapshot = claim.tick();
         }
         assert_eq!(
-            snapshot.worst("xmip:///playground/exclusive-claim/file"),
+            snapshot.worst(&scope("exclusive-claim/file")),
             Some(Health::Fine),
             "the atomic rename claim holds under contention"
         );
@@ -327,13 +327,12 @@ mod tests {
     #[test]
     fn without_the_claim_a_breach_shows() {
         let dir = scratch("breach");
-        let mut claim =
-            ExclusiveClaim::new("xmip:///playground/exclusive-claim", &dir).under_pressure();
+        let mut claim = ExclusiveClaim::new(scope("exclusive-claim"), &dir).under_pressure();
         let mut saw_red = false;
         for _ in 0..80 {
             let snapshot = claim.tick();
             // A Done leaf rolls up to Holding at the aggregate (ADR-0041).
-            if snapshot.worst("xmip:///playground/exclusive-claim/file") == Some(Health::Holding) {
+            if snapshot.worst(&scope("exclusive-claim/file")) == Some(Health::Holding) {
                 saw_red = true;
                 break;
             }
@@ -348,14 +347,14 @@ mod tests {
     #[test]
     fn every_style_holds_the_claim_when_healthy() {
         let dir = scratch("styles");
-        let mut claim = ExclusiveClaim::new("xmip:///playground/exclusive-claim", &dir);
+        let mut claim = ExclusiveClaim::new(scope("exclusive-claim"), &dir);
         let mut snapshot = claim.tick();
         for _ in 0..5 {
             snapshot = claim.tick();
         }
         for style in ["sequential", "parallel", "concurrent"] {
             assert_eq!(
-                snapshot.worst(&format!("xmip:///playground/exclusive-claim/file/{style}")),
+                snapshot.worst(&scope(&format!("exclusive-claim/file/{style}"))),
                 Some(Health::Fine),
                 "{style} holds the claim"
             );
@@ -365,12 +364,10 @@ mod tests {
 
     #[test]
     fn calm_leaves_the_claim_intact_and_stress_scales_the_breach() {
-        assert_eq!(ExclusiveClaim::new("n", "d").at(Stress::Calm).rate, 0);
-        assert_eq!(
-            ExclusiveClaim::new("n", "d").at(Stress::Realistic).rate,
-            BREACH_RATE
-        );
-        assert!(ExclusiveClaim::new("n", "d").at(Stress::Harsh).rate > BREACH_RATE);
+        let claim = || ExclusiveClaim::new(scope("exclusive-claim"), "d");
+        assert_eq!(claim().at(Stress::Calm).rate, 0);
+        assert_eq!(claim().at(Stress::Realistic).rate, BREACH_RATE);
+        assert!(claim().at(Stress::Harsh).rate > BREACH_RATE);
     }
 
     /// Two real System Processes over one shared directory: the property
@@ -390,11 +387,14 @@ mod tests {
         }
         std::fs::rename(&staging, &contended).expect("the lane into place");
         let node = crate::cluster::built_node_binary();
+        let cluster = test_cluster();
+        let names = [0, 1].map(|place| cluster.node(place).name.as_str());
 
-        let children: Vec<std::process::Child> = ["left", "right"]
+        let children: Vec<std::process::Child> = names
             .iter()
             .map(|name| {
                 std::process::Command::new(&node)
+                    .env("XMIP_PLAYGROUND_CLUSTER", &cluster.name)
                     .args(["--name", name, "--stress", "calm", "--rounds", "4"])
                     .args(["--interval-ms", "0"])
                     .arg("--shared")
@@ -425,10 +425,10 @@ mod tests {
             .collect();
         assert_eq!(owners.len(), 2, "both processes took items from the lane");
 
-        for name in ["left", "right"] {
+        for name in names {
             let text = std::fs::read_to_string(dir.join(format!("{name}.toml"))).expect("snapshot");
             let (snapshot, _) = node_from_toml(&text).expect("a node's snapshot parses");
-            let scope = format!("xmip:///playground/node/{name}/exclusive-claim/file");
+            let scope = scope(&format!("node/{name}/exclusive-claim/file"));
             for record in snapshot.health(&scope) {
                 assert_eq!(
                     record.health,

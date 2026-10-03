@@ -60,16 +60,6 @@ impl Orders {
         self
     }
 
-    /// The same for `count` nodes numbered `node-01` up, none of them
-    /// declaring a stage — a level's own, where nobody named them.
-    #[must_use]
-    pub fn numbered(stress: Stress, count: usize, rounds: u64) -> Self {
-        let names: Vec<String> = (1..=count)
-            .map(|index| format!("node-{index:02}"))
-            .collect();
-        Self::of(stress, Roster::of(&names), rounds)
-    }
-
     /// The same driving only the scenarios named (the owner, 2026-09-19:
     /// nodes run the test that was named). None named is every one.
     #[must_use]
@@ -120,7 +110,7 @@ impl Orders {
         if self.roster.is_empty() {
             return Some(
                 "REFUSED: a cluster supervises nodes and none was named; \
-                 --nodes alpha=receiving,beta=processing,gamma=sending names them."
+                 --nodes <node>=receiving,<node>=processing,<node>=sending names them."
                     .to_string(),
             );
         }
@@ -156,6 +146,7 @@ impl Orders {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::support::{path, path_roster, roster_text, test_cluster};
     use node::Stage;
 
     fn names(list: &[&str]) -> Vec<String> {
@@ -168,27 +159,33 @@ mod tests {
 
     #[test]
     fn the_online_nodes_are_the_ones_named_and_nobody_else() {
-        let orders = Orders::of(
-            Stress::Calm,
-            roster("alpha=receiving,beta=processing,gamma=sending"),
-            0,
-        )
-        .with_online(Some(names(&["ALPHA"])));
-        assert!(orders.is_online("alpha"), "named, whatever the case");
-        assert!(!orders.is_online("beta"));
-        assert_eq!(orders.capability("alpha").word(), "online");
-        assert_eq!(orders.capability("gamma").word(), "offline");
-        assert!(orders.capability("gamma").can(Stage::Send));
+        let cluster = test_cluster();
+        let [receiving, processing, sending] = path(&cluster);
+        // The receiving node's name in another case than its own.
+        let recased = if receiving == receiving.to_uppercase() {
+            receiving.to_lowercase()
+        } else {
+            receiving.to_uppercase()
+        };
+        let orders = Orders::of(Stress::Calm, roster(&path_roster(&cluster)), 0)
+            .with_online(Some(vec![recased]));
+        assert!(orders.is_online(receiving), "named, whatever the case");
+        assert!(!orders.is_online(processing));
+        assert_eq!(orders.capability(receiving).word(), "online");
+        assert_eq!(orders.capability(sending).word(), "offline");
+        assert!(orders.capability(sending).can(Stage::Send));
         assert_eq!(orders.refusal(), None);
     }
 
     #[test]
-    fn numbered_orders_name_the_level_s_own_nodes_declaring_nothing() {
-        let orders = Orders::numbered(Stress::Realistic, 3, 5);
-        assert_eq!(orders.names(), ["node-01", "node-02", "node-03"]);
+    fn orders_of_nodes_declaring_nothing_refuse_nothing() {
+        let cluster = test_cluster();
+        let names: Vec<String> = cluster.nodes.iter().map(|node| node.name.clone()).collect();
+        let orders = Orders::of(Stress::Realistic, Roster::of(&names), 5);
+        assert_eq!(orders.names(), names);
         assert_eq!(orders.rounds, 5);
         assert!(orders.scenarios.is_empty());
-        assert!(orders.capability("node-01").declares_no_stage());
+        assert!(orders.capability(&names[0]).declares_no_stage());
         assert_eq!(
             orders.refusal(),
             None,
@@ -206,20 +203,21 @@ mod tests {
             "{none}"
         );
 
-        let stranger = Orders::of(
-            Stress::Calm,
-            roster("alpha=receiving,beta=processing,gamma=sending"),
-            0,
-        )
-        .with_online(Some(names(&["Q9"])))
-        .refusal()
-        .expect("Q9 is no node");
+        let cluster = test_cluster();
+        let [receiving, processing, sending] = path(&cluster);
+        let absent = cluster.absent();
+        let stranger = Orders::of(Stress::Calm, roster(&path_roster(&cluster)), 0)
+            .with_online(Some(vec![absent.clone()]))
+            .refusal()
+            .expect("the absent name is no node");
+        let nodes = format!("{receiving}, {processing}, {sending}");
         assert!(
-            stranger.contains("Q9") && stranger.contains("alpha, beta, gamma"),
+            stranger.contains(&absent) && stranger.contains(&nodes),
             "{stranger}"
         );
 
-        let missing = Orders::of(Stress::Calm, roster("alpha=receiving,gamma=sending"), 0)
+        let ends = roster_text(&[(receiving, "receiving"), (sending, "sending")]);
+        let missing = Orders::of(Stress::Calm, roster(&ends), 0)
             .refusal()
             .expect("nobody processes");
         assert!(
@@ -229,7 +227,7 @@ mod tests {
 
         // Not RoundTrip: the roster is nobody's business.
         assert_eq!(
-            Orders::of(Stress::Calm, roster("alpha=receiving,gamma=sending"), 0)
+            Orders::of(Stress::Calm, roster(&ends), 0)
                 .driving(&names(&["filing"]))
                 .refusal(),
             None
@@ -242,7 +240,10 @@ mod tests {
     /// carries a node marker (the owner, 2026-09-20).
     #[test]
     fn a_node_whose_name_cannot_be_an_image_is_refused_before_anything_spawns() {
-        let wrong = Orders::of(Stress::Calm, roster("alpha=receiving,9lives=processing"), 0)
+        let cluster = test_cluster();
+        let [receiving, _, sending] = path(&cluster);
+        let unfit = roster_text(&[(receiving, "receiving"), ("9lives", "processing")]);
+        let wrong = Orders::of(Stress::Calm, roster(&unfit), 0)
             .refusal()
             .expect("no file is called 9lives here");
         assert!(
@@ -250,13 +251,14 @@ mod tests {
             "{wrong}"
         );
 
+        // The tree's own words, `roll` and `cluster`, as nodes' names.
+        let words = roster_text(&[
+            ("roll", "receiving"),
+            ("cluster", "processing"),
+            (sending, "sending"),
+        ]);
         assert_eq!(
-            Orders::of(
-                Stress::Calm,
-                roster("roll=receiving,cluster=processing,gamma=sending"),
-                0
-            )
-            .refusal(),
+            Orders::of(Stress::Calm, roster(&words), 0).refusal(),
             None,
             "a node is a node, whatever it is called"
         );

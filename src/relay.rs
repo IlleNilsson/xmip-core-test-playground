@@ -210,17 +210,22 @@ impl Relay {
 
         let mut snapshot = Snapshot::new();
         for mut one in judged {
-            let picked = |handoff: &Handoff| {
-                self.subscribing
+            if let (Some(handoff), Some(verdict)) = (one.forward.take(), one.verdicts.first_mut()) {
+                // A pair whose Publication was not taken is neither held nor
+                // handed on: it fails here, in words, and is not lost silently.
+                let picked = self
+                    .subscribing
                     .as_ref()
-                    .is_none_or(|subscribing| subscribing.route(handoff))
-            };
-            if let (Some(handoff), Some(verdict)) = (one.forward.take(), one.verdicts.first_mut())
-                && picked(&handoff)
-                && let Err(why) = self.hand_on(&handoff, now)
-            {
-                verdict.outcome = Outcome::Failed(why);
-                verdict.bytes = 0;
+                    .map_or(Ok(true), |subscribing| subscribing.route(&handoff));
+                let handed = match picked {
+                    Ok(true) => self.hand_on(&handoff, now),
+                    Ok(false) => Ok(()),
+                    Err(why) => Err(why),
+                };
+                if let Err(why) = handed {
+                    verdict.outcome = Outcome::Failed(why);
+                    verdict.bytes = 0;
+                }
             }
             for verdict in &one.verdicts {
                 self.ledger.fold(verdict, &mut snapshot, now);
@@ -355,15 +360,14 @@ impl Relay {
     }
 
     /// Hand on what a resume let go of, oldest first; what could not be
-    /// handed on stays held until the node starts again.
+    /// handed on stays held, Failed, until a resume tries it again.
     fn hand_on_released(&mut self, now: i64) {
         let Some(subscribing) = self.subscribing.clone() else {
             return;
         };
-        for (handoff, released) in subscribing.released() {
-            if self.hand_on(&handoff, now).is_ok() {
-                subscribing.picked_up(&released);
-            }
+        for picked in subscribing.released() {
+            let handed = self.hand_on(&picked.handoff, now);
+            subscribing.done(picked, &handed);
         }
     }
 
@@ -390,10 +394,10 @@ mod tests {
     use super::*;
     use crate::exchange::{FileRoundTrip, TcpRoundTrip, UdpRoundTrip};
     use crate::schedule::CONTRACTS;
-    use crate::support::scratch;
+    use crate::support::{
+        cluster_root, declaring, path, path_roster, roster_text, scratch, test_cluster,
+    };
     use observe::Health;
-
-    const ROOT: &str = "xmip:///playground";
 
     /// The roster `text` declares, and the relay of `name` at the one stage
     /// it declared there.
@@ -403,7 +407,7 @@ mod tests {
         let work = dir.join(name);
         Relay::new(
             name,
-            format!("{ROOT}/node/{name}"),
+            format!("{}/node/{name}", cluster_root()),
             stage,
             &roster,
             &dir.join("shared"),
@@ -421,22 +425,25 @@ mod tests {
     fn a_pair_goes_receive_to_process_to_send_and_each_publishes_under_its_node() {
         let dir = scratch("relay");
         // Names that say nothing: the stages come from the declarations.
-        let roster = "alpha=receiving,beta=processing,gamma=sending";
-        let mut alpha = relay("alpha", roster, &dir);
-        let mut beta = relay("beta", roster, &dir);
-        let mut gamma = relay("gamma", roster, &dir);
+        let cluster = test_cluster();
+        let [receiving, processing, sending] = path(&cluster);
+        let roster = path_roster(&cluster);
+        let root = cluster_root();
+        let mut receive_relay = relay(receiving, &roster, &dir);
+        let mut process_relay = relay(processing, &roster, &dir);
+        let mut sender = relay(sending, &roster, &dir);
         let pairs = 2 * CONTRACTS.len();
 
-        let received = alpha.tick();
-        let processed = beta.tick();
-        let sent = gamma.tick();
+        let received = receive_relay.tick();
+        let processed = process_relay.tick();
+        let sent = sender.tick();
 
         for (snapshot, node, stage) in [
-            (&received, "alpha", "receive"),
-            (&processed, "beta", "process"),
-            (&sent, "gamma", "send"),
+            (&received, receiving, "receive"),
+            (&processed, processing, "process"),
+            (&sent, sending, "send"),
         ] {
-            let scope = format!("{ROOT}/node/{node}/{stage}");
+            let scope = format!("{root}/node/{node}/{stage}");
             let leaves: Vec<_> = snapshot
                 .health(&scope)
                 .into_iter()
@@ -453,11 +460,15 @@ mod tests {
                 );
             }
         }
-        let hops: Vec<_> = alpha.hops().links().chain(beta.hops().links()).collect();
+        let hops: Vec<_> = receive_relay
+            .hops()
+            .links()
+            .chain(process_relay.hops().links())
+            .collect();
         assert_eq!(hops.len(), 2);
         assert_eq!(
             (hops[0].from.as_str(), hops[0].to.as_str()),
-            ("alpha", "beta")
+            (receiving, processing)
         );
         assert_eq!(
             (hops[0].from_stage.as_str(), hops[0].to_stage.as_str()),
@@ -465,16 +476,19 @@ mod tests {
         );
         assert_eq!(
             (hops[1].from.as_str(), hops[1].to.as_str()),
-            ("beta", "gamma")
+            (processing, sending)
         );
         assert!(hops.iter().all(|hop| hop.count == pairs as u64));
         assert!(
-            gamma.hops().links().next().is_none(),
+            sender.hops().links().next().is_none(),
             "send closes the verdict"
         );
         assert_eq!(
-            sent.measure(&format!("{ROOT}/node/gamma"), observe::Counted::Messages)
-                .map(|count| count.value),
+            sent.measure(
+                &format!("{root}/node/{sending}"),
+                observe::Counted::Messages
+            )
+            .map(|count| count.value),
             Some(pairs as u64)
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -483,16 +497,29 @@ mod tests {
     #[test]
     fn two_receivers_share_the_matrix_and_a_bounded_round_rotates_through_it() {
         let dir = scratch("relay-share");
-        let roster = "alpha=receiving,delta=receiving,beta=processing,gamma=sending";
+        // The test cluster declares one receiving node and two sending ones:
+        // the second sending node's name is taken here for a second receiver.
+        let cluster = test_cluster();
+        let [receiving, processing, _] = path(&cluster);
+        let [sending, second] = declaring(&cluster, "sending")[..] else {
+            panic!("the test cluster has two sending nodes");
+        };
+        let roster = roster_text(&[
+            (receiving, "receiving"),
+            (second, "receiving"),
+            (processing, "processing"),
+            (sending, "sending"),
+        ]);
+        let root = cluster_root();
         let mut scopes = std::collections::BTreeSet::new();
-        for name in ["alpha", "delta"] {
-            let mut receive = relay(name, roster, &dir).bounded(7, 1);
+        for name in [receiving, second] {
+            let mut receive = relay(name, &roster, &dir).bounded(7, 1);
             let mut last = receive.tick();
             for _ in 0..2 {
                 last = receive.tick();
             }
             let mine: Vec<String> = last
-                .health(&format!("{ROOT}/node/{name}/receive"))
+                .health(&format!("{root}/node/{name}/receive"))
                 .into_iter()
                 .filter(|record| record.scope.split('/').count() == 9)
                 .map(|record| record.scope.replace(&format!("/node/{name}/"), "/"))
@@ -515,20 +542,26 @@ mod tests {
     #[test]
     fn a_faulted_stage_hands_nothing_on_and_an_uncovered_path_has_no_relay() {
         let dir = scratch("relay-fault");
-        let names = "alpha=receiving,beta=processing,gamma=sending";
-        let mut receive = relay("alpha", names, &dir)
+        let cluster = test_cluster();
+        let [receiving, _, sending] = path(&cluster);
+        let names = path_roster(&cluster);
+        let root = cluster_root();
+        let mut receive = relay(receiving, &names, &dir)
             .over(vec![Box::new(UdpRoundTrip)])
             .with_faults(FaultPlan::realistic());
         let mut failed = 0;
         for _ in 0..12 {
             let snapshot = receive.tick();
             failed += snapshot
-                .health(&format!("{ROOT}/node/alpha/receive/udp"))
+                .health(&format!("{root}/node/{receiving}/receive/udp"))
                 .iter()
                 .filter(|record| record.health == Health::Done)
                 .count();
         }
-        assert!(failed > 0, "realistic faults reach an R node's receive");
+        assert!(
+            failed > 0,
+            "realistic faults reach a receiving node's receive"
+        );
         let rounds = 12 * CONTRACTS.len() as u64;
         let handed: u64 = receive.hops().links().map(|hop| hop.count).sum();
         assert!(
@@ -536,15 +569,17 @@ mod tests {
             "{handed} of {rounds}: a failed arrival is not handed on"
         );
 
-        let short =
-            Roster::parse("alpha=receiving,gamma=sending").expect("a roster with no process");
-        assert!(Relay::new("alpha", ROOT, Stage::Receive, &short, &dir, &dir).is_none());
-        let whole = Roster::of(&["node-01".to_string()]);
-        assert!(Relay::new("node-01", ROOT, Stage::Receive, &whole, &dir, &dir).is_none());
-        let full =
-            Roster::parse("alpha=receiving,beta=processing,gamma=sending").expect("a whole path");
+        let short = Roster::parse(&roster_text(&[
+            (receiving, "receiving"),
+            (sending, "sending"),
+        ]))
+        .expect("a roster with no process");
+        assert!(Relay::new(receiving, &root, Stage::Receive, &short, &dir, &dir).is_none());
+        let whole = Roster::of(&[receiving.to_string()]);
+        assert!(Relay::new(receiving, &root, Stage::Receive, &whole, &dir, &dir).is_none());
+        let full = Roster::parse(&names).expect("a whole path");
         assert!(
-            Relay::new("alpha", ROOT, Stage::Send, &full, &dir, &dir).is_none(),
+            Relay::new(receiving, &root, Stage::Send, &full, &dir, &dir).is_none(),
             "a node runs only the stages it declared"
         );
         std::fs::remove_dir_all(&dir).ok();

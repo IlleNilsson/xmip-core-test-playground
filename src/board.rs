@@ -88,6 +88,7 @@ pub const fn word(health: Health) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::support::test_cluster;
 
     fn recorded(scope: &str, health: Health) -> HealthRecord {
         HealthRecord {
@@ -101,27 +102,31 @@ mod tests {
 
     #[test]
     fn a_healthy_node_keeps_its_leaves_off_the_board() {
+        let cluster = test_cluster();
         let mut snapshot = Snapshot::new();
-        let leaf = "xmip:///C1/round-trip/tcp/json";
-        snapshot.record_health(recorded(leaf, Health::Fine));
-        snapshot.record_health(recorded("xmip:///C1/node/node-02/leaf", Health::Fine));
+        let leaf = format!("{}/round-trip/tcp/json", cluster.scope());
+        let node_leaf = format!("{}/leaf", cluster.node_scope(1));
+        snapshot.record_health(recorded(&leaf, Health::Fine));
+        snapshot.record_health(recorded(&node_leaf, Health::Fine));
 
-        let shown = pairs("xmip:///C1", &snapshot);
+        let shown = pairs(&cluster.scope(), &snapshot);
         let scopes: Vec<&str> = shown.iter().map(|record| record.scope.as_str()).collect();
 
-        assert!(scopes.contains(&leaf));
+        assert!(scopes.contains(&leaf.as_str()));
         assert!(
-            !scopes.contains(&"xmip:///C1/node/node-02/leaf"),
+            !scopes.contains(&node_leaf.as_str()),
             "a fine node's leaves stay off the board: {scopes:?}"
         );
     }
 
     #[test]
     fn a_node_that_is_not_fine_appears_in_full() {
+        let cluster = test_cluster();
         let mut snapshot = Snapshot::new();
-        snapshot.record_health(recorded("xmip:///C1/node/node-02/leaf", Health::Stressed));
+        let node_leaf = format!("{}/leaf", cluster.node_scope(1));
+        snapshot.record_health(recorded(&node_leaf, Health::Stressed));
 
-        let shown = pairs("xmip:///C1", &snapshot);
+        let shown = pairs(&cluster.scope(), &snapshot);
 
         assert_eq!(shown.len(), 1, "the leaf that is not fine is shown");
         assert_eq!(word(Health::Stressed), "STRESSED");
