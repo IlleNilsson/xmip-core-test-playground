@@ -44,6 +44,8 @@ use runtime::configured_subscription::ConfiguredSubscription;
 use runtime::dead_message::Unmatched;
 use runtime::ledger::{CHUNK, Chunks, Publisher, write_stream};
 use runtime::pickup::{Pickup, Released};
+use runtime::send_step::SendStep;
+use runtime::sending::Sends;
 use secret::{Held, KekName};
 use stream::Content;
 use xaudit::origin::Origin;
@@ -69,6 +71,9 @@ pub struct Subscribing {
     storage: Arc<dyn XmipStorage>,
     origin: Origin,
     subscriptions: Vec<route::Subscription>,
+    /// It sends nothing itself: the send stage is a node of its own.
+    send: SendStep,
+    sends: Sends,
 }
 
 /// A held pair let go of to hand on, and the Journey it is.
@@ -106,11 +111,15 @@ impl Subscribing {
         let configured = ConfiguredSubscription::of(&applications, &files);
         let storage = storage(shared, name)?;
         let pickup = Pickup::open(node, configured, Arc::clone(&storage), Some(audit.clone()))?;
+        let cluster = runtime::running::publication::cluster_location(&tree.service.cluster_name);
+        let send = SendStep::new((&cluster, node), Arc::clone(&storage), &tree.tuning, None);
         Ok(Self {
             pickup,
             storage,
             origin: runtime::running::origin(Some(audit), node),
             subscriptions: tree.subscriptions,
+            send,
+            sends: Sends::default(),
         })
     }
 
@@ -147,6 +156,8 @@ impl Subscribing {
             ids: &ids,
             clock: &SystemClock,
             origin: &self.origin,
+            send: &self.send,
+            sends: &self.sends,
         };
         let published = runtime::ledger::publish(
             &through,
@@ -160,7 +171,8 @@ impl Subscribing {
             },
             || said(handoff),
         )?;
-        Ok(!published.holding.picked(&routing).destinations().is_empty())
+        let departing = published.holding.departing(&routing, &published.journeys);
+        Ok(!departing.is_empty())
     }
 
     /// What a resume let go of, oldest first, as the pairs to hand on. One
@@ -243,8 +255,8 @@ impl Subscribing {
     }
 
     /// The pair `released` is and its Journey, read back from the Ledger;
-    /// none where it is not to be handed on now — a Failed one no resume
-    /// tries again, or one that is not a pair — which is passed over.
+    /// none where it is not a pair, which is passed over. A Failed one is
+    /// let go of again only by a resume: the operator's retry.
     fn read_back(&self, released: &Released) -> Result<Option<(Handoff, Journey)>, String> {
         let id = released.held.hold.journey;
         let record = self.storage.read_journey(id).map_err(|e| e.to_string())?;
@@ -254,10 +266,6 @@ impl Subscribing {
                 .unreadable(released, "its Journey does not read");
             return Ok(None);
         };
-        if journey.state == JourneyState::Failed && !released.retry {
-            self.pickup.passed(released);
-            return Ok(None);
-        }
         let Some(held) = journey.messages().last().copied() else {
             self.pickup
                 .unreadable(released, "its Journey holds no Message");
