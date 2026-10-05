@@ -171,8 +171,9 @@ impl Subscribing {
             },
             || said(handoff),
         )?;
-        let departing = published.holding.departing(&routing, &published.journeys);
-        Ok(!departing.is_empty())
+        // Some Journey no paused Subscription holds goes on to be sent.
+        let departing = published.journeys.len() > published.holding.holds().len();
+        Ok(departing)
     }
 
     /// What a resume let go of, oldest first, as the pairs to hand on. One
