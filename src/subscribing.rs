@@ -26,7 +26,6 @@
 //! a resume tries it again. Nothing here is a Subscription of its own: the
 //! rows an operator sees are the runtime's, of the configuration's.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,17 +41,17 @@ use persist::storage::{Embedded, XmipStorage};
 use route::{Promoted, publish};
 use runtime::configured_subscription::ConfiguredSubscription;
 use runtime::dead_message::Unmatched;
-use runtime::ledger::{CHUNK, Chunks, Publisher, write_stream};
+use runtime::ledger::{CHUNK, Publisher, write_stream};
 use runtime::pickup::{Pickup, Released};
 use runtime::send_step::SendStep;
 use runtime::sending::Sends;
 use secret::{Held, KekName};
-use stream::Content;
 use xaudit::origin::Origin;
 use xaudit::program_audit::ProgramAudit;
 use xcore::{IdGenerator, MessageId, SectionId, StreamId, SystemClock, UuidV7Generator};
 
 use crate::handoff::Handoff;
+use crate::ledger_stream::read_whole;
 use crate::roster::Roster;
 use crate::schedule::CONTRACTS;
 
@@ -272,11 +271,7 @@ impl Subscribing {
                 .unreadable(released, "its Journey holds no Message");
             return Ok(None);
         };
-        let mut bytes = Vec::new();
-        Chunks::of(Arc::clone(&self.storage), held.stream_id)
-            .reader()
-            .and_then(|mut reader| reader.read_to_end(&mut bytes))
-            .map_err(|error| error.to_string())?;
+        let bytes = read_whole(&self.storage, held.stream_id)?;
         let Some(handoff) = pair(&released.held.hold.body, bytes) else {
             self.pickup
                 .unreadable(released, "it is not a pair this node held");

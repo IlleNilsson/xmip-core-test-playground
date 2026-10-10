@@ -69,6 +69,7 @@ pub mod heavy_load;
 pub mod identity;
 pub mod image;
 pub mod in_process;
+pub mod ledger_stream;
 pub mod low_latency;
 pub mod operator_orders;
 pub mod process_audit;
