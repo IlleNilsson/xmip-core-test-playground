@@ -347,8 +347,8 @@ name = "xmip-playground-{name}"
 }
 
 /// The node's own embedded Storage node: `RocksDB` for the Ledger and
-/// `SQLite` for the administration database, sealed under the machine's key
-/// store — DPAPI on Windows, a private file elsewhere.
+/// `SQLite` for the administration and the audit databases, sealed under
+/// the machine's key store — DPAPI on Windows, a private file elsewhere.
 fn storage(shared: &Path, name: &str) -> Result<Arc<dyn XmipStorage>, String> {
     let keys = shared.join("keys").join(name);
     #[cfg(windows)]
@@ -361,10 +361,10 @@ fn storage(shared: &Path, name: &str) -> Result<Arc<dyn XmipStorage>, String> {
     let opened = || -> Result<_, persist::PersistError> {
         let ledger = rocksdb::RocksDb::open(&directory.join("runtime"))?;
         let administration = sqlite::Sqlite::open(&directory.join("administration.sqlite"))?;
-        Embedded::open(ledger, administration, &keys, &kek)
+        let audit = sqlite::Sqlite::open(&directory.join(runtime::storage::AUDIT))?;
+        Embedded::open(ledger, administration, audit, &keys, &kek)
     };
-    let node = opened().map_err(|error| error.to_string())?;
-    Ok(Arc::new(node))
+    Ok(Arc::new(opened().map_err(|error| error.to_string())?))
 }
 
 /// What the node keeps beside a held pair to hand it on once it is
