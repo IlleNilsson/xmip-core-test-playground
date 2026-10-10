@@ -355,8 +355,9 @@ fn storage(shared: &Path, name: &str) -> Result<Arc<dyn XmipStorage>, String> {
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let opened = || -> Result<_, persist::PersistError> {
         let ledger = rocksdb::RocksDb::open(&directory.join("runtime"))?;
-        let administration = sqlite::Sqlite::open(&directory.join("administration.sqlite"))?;
-        let audit = sqlite::Sqlite::open(&directory.join(runtime::storage::AUDIT))?;
+        let [_, administration, audit] = runtime::storage::FILES;
+        let administration = sqlite::Sqlite::open(&directory.join(administration))?;
+        let audit = sqlite::Sqlite::open(&directory.join(audit))?;
         Embedded::open(ledger, administration, audit, &keys, &kek)
     };
     Ok(Arc::new(opened().map_err(|error| error.to_string())?))
