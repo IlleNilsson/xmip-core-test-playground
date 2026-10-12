@@ -1,4 +1,4 @@
-//! The database cabinets: mssql and mysql, each behind the same [`Cabinet`]
+//! The database cabinets: mssql and mariadb, each behind the same [`Cabinet`]
 //! the filing scenario drives, on the shape `remote.rs` gives `PostgreSQL`.
 //!
 //! Both put a database server at the far end in production; the build box
@@ -7,7 +7,7 @@
 //! `INSERT` is answered with a row id and whose literals are kept as the
 //! row; then the restore's, whose `SELECT` is answered with that row. What
 //! comes back is what went over the wire, not a canned copy. Each dialect
-//! carries the bytes differently — SQL Server as an unquoted `0x…`, `MySQL` as
+//! carries the bytes differently — SQL Server as an unquoted `0x…`, `MariaDB` as
 //! `X'…'` — and the far end keeps that literal in the form the archive
 //! decodes on the way back.
 
@@ -16,8 +16,8 @@ use std::sync::{Arc, Mutex};
 
 use archive::ArchiveItem;
 use archive::sql::SqlArchive;
+use archive_mariadb::MariaDb;
 use archive_mssql::SqlServer;
-use archive_mysql::MySql;
 use transport::error::protocol_error;
 use transport::socket;
 
@@ -108,15 +108,15 @@ impl Cabinet for MssqlCabinet {
     }
 }
 
-/// `MySQL`: the `INSERT` completes, `SELECT LAST_INSERT_ID()` names the row,
+/// `MariaDB`: the `INSERT` completes, `SELECT LAST_INSERT_ID()` names the row,
 /// and the `SELECT` on the next connection answers with the kept literals —
 /// the bytes in the `0x…` form the archive's `HEX()` select would produce.
-pub struct MysqlCabinet;
+pub struct MariaDbCabinet;
 
-impl MysqlCabinet {
+impl MariaDbCabinet {
     fn serve(listener: &TcpListener) -> transport::Result<()> {
         use transport::Login;
-        use transport_mysql::{Answer, Session};
+        use transport_mariadb::{Answer, Session};
         let login = Login::new("xmip", "");
         let held: Held = Arc::default();
         let keep = Arc::clone(&held);
@@ -154,9 +154,9 @@ impl MysqlCabinet {
     }
 }
 
-impl Cabinet for MysqlCabinet {
+impl Cabinet for MariaDbCabinet {
     fn technology(&self) -> &'static str {
-        "mysql"
+        "mariadb"
     }
 
     fn file(&self, item: ArchiveItem) -> Filed {
@@ -166,7 +166,7 @@ impl Cabinet for MysqlCabinet {
         };
         serve_filing(listener, &address, Self::serve, |address| {
             let store =
-                SqlArchive::<MySql>::new(address, "playground", "xmip").timing_out_after(TIMEOUT);
+                SqlArchive::<MariaDb>::new(address, "playground", "xmip").timing_out_after(TIMEOUT);
             file_through(&store, item)
         })
     }
@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn mysql_files_and_returns_whole() {
-        files_whole(&MysqlCabinet);
+    fn mariadb_files_and_returns_whole() {
+        files_whole(&MariaDbCabinet);
     }
 }

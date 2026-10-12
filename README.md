@@ -45,7 +45,7 @@ names everywhere; the scope segment is the name in kebab case (`round-trip`,
   act — Xmip retains and archives, it does not delete (ADR-0040).
 - **Filing** — *added 2026-09-09.* Does the archive hold what it was handed:
   one probe item per contract filed through every archive technology on main
-  — parquet, sqlite, file, sql, postgresql, mssql, mysql, s3, azure-blob, gcs —
+  — parquet, sqlite, file, sql, postgresql, mssql, mariadb, s3, azure-blob, gcs —
   archived and restored, judged equal or not, under
   `xmip:///playground/filing/<technology>/<contract>`. Retention proves the
   lifecycle over one store; Filing proves every store. Each technology gets a

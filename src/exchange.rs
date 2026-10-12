@@ -235,8 +235,7 @@ fn databases() -> Vec<Box<dyn RoundTrip>> {
     vec![
         Box::new(Looped(transport_postgresql::PostgresTransport::loopback())),
         Box::new(Looped(transport_mssql::MssqlTransport::loopback())),
-        Box::new(Looped(transport_mysql::MysqlTransport::loopback())),
-        Box::new(Looped(transport_oracle::OracleTransport::loopback())),
+        Box::new(Looped(transport_mariadb::MariaDbTransport::loopback())),
     ]
 }
 

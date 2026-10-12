@@ -59,10 +59,16 @@ fn found(variable: &str, stem: &str) -> io::Result<PathBuf> {
 /// Cargo sets `CARGO_BIN_EXE_<name>` for integration tests only, never for a
 /// library's unit tests, so a unit test builds the binary itself: a no-op when
 /// it is fresh, and cargo has released the build lock by the time tests run.
+/// Under a landing it builds through the landing's patch, which
+/// `XMIP_CARGO_CONFIG` names, as the test itself was built.
 #[cfg(test)]
 fn build(stem: &str) {
-    let status = std::process::Command::new(env!("CARGO"))
-        .args(["build", "-q", "--bin", stem])
+    let mut cargo = std::process::Command::new(env!("CARGO"));
+    cargo.args(["build", "-q", "--bin", stem]);
+    if let Some(config) = std::env::var_os("XMIP_CARGO_CONFIG").filter(|it| !it.is_empty()) {
+        cargo.arg("--config").arg(config);
+    }
+    let status = cargo
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .status()
         .expect("cargo runs");

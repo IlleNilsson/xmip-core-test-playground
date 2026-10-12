@@ -122,7 +122,7 @@ transport_s3 = { package = "xmip-core-transport-s3", git = "https://github.com/I
 transport_azure_blob = { package = "xmip-core-transport-azure-blob", git = "https://github.com/IlleNilsson/xmip-core-transport-azure-blob", branch = "main" }
 transport_google_cloud_storage = { package = "xmip-core-transport-google-cloud-storage", git = "https://github.com/IlleNilsson/xmip-core-transport-google-cloud-storage", branch = "main" }
 transport_mssql = { package = "xmip-core-transport-mssql", git = "https://github.com/IlleNilsson/xmip-core-transport-mssql", branch = "main" }
-transport_mysql = { package = "xmip-core-transport-mysql", git = "https://github.com/IlleNilsson/xmip-core-transport-mysql", branch = "main" }
+transport_mariadb = { package = "xmip-core-transport-mariadb", git = "https://github.com/IlleNilsson/xmip-core-transport-mariadb", branch = "main" }
 # The built that gained their loopback on 2026-09-11 (ADR-0051).
 transport_azure_service_bus = { package = "xmip-core-transport-azure-service-bus", git = "https://github.com/IlleNilsson/xmip-core-transport-azure-service-bus", branch = "main" }
 transport_azure_event_hubs = { package = "xmip-core-transport-azure-event-hubs", git = "https://github.com/IlleNilsson/xmip-core-transport-azure-event-hubs", branch = "main" }
@@ -149,7 +149,6 @@ transport_io_link = { package = "xmip-core-transport-io-link", git = "https://gi
 transport_iec_61850 = { package = "xmip-core-transport-iec-61850", git = "https://github.com/IlleNilsson/xmip-core-transport-iec-61850", branch = "main" }
 transport_nfs = { package = "xmip-core-transport-nfs", git = "https://github.com/IlleNilsson/xmip-core-transport-nfs", branch = "main" }
 transport_smb = { package = "xmip-core-transport-smb", git = "https://github.com/IlleNilsson/xmip-core-transport-smb", branch = "main" }
-transport_oracle = { package = "xmip-core-transport-oracle", git = "https://github.com/IlleNilsson/xmip-core-transport-oracle", branch = "main" }
 transport_opc_ua = { package = "xmip-core-transport-opc-ua", git = "https://github.com/IlleNilsson/xmip-core-transport-opc-ua", branch = "main" }
 transport_as2 = { package = "xmip-core-transport-as2", git = "https://github.com/IlleNilsson/xmip-core-transport-as2", branch = "main" }
 transport_aws_sqs = { package = "xmip-core-transport-aws-sqs", git = "https://github.com/IlleNilsson/xmip-core-transport-aws-sqs", branch = "main" }
@@ -172,10 +171,11 @@ transport_unix_socket = { package = "xmip-core-transport-unix-socket", git = "ht
 stream = { package = "xmip-core-stream", git = "https://github.com/IlleNilsson/xmip-core-stream", branch = "main" }
 xcore = { package = "xmip-core", git = "https://github.com/IlleNilsson/xmip-core", branch = "main" }
 contract = { package = "xmip-core-contract", git = "https://github.com/IlleNilsson/xmip-core-contract", branch = "main" }
-# SQL's string literal, read back once for every far end that answers an
-# archive's INSERT with the row it carried; and the varint a protobuf probe
-# is written with.
+# The varint a protobuf probe is written with.
 codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNilsson/xmip-core-library-codec", branch = "main" }
+# SQL's string literal, read back once for every far end that answers an
+# archive's INSERT with the row it carried.
+sql = { package = "xmip-core-library-sql", git = "https://github.com/IlleNilsson/xmip-core-library-sql", branch = "main" }
 
 # The identity axis: a Receive Location identifies, authenticates and authorizes;
 # a Send Location presents identity (ADR-0019, ADR-0033). The playground drives
@@ -208,7 +208,7 @@ archive_s3 = { package = "xmip-core-archive-s3", git = "https://github.com/IlleN
 archive_azure_blob = { package = "xmip-core-archive-azure-blob", git = "https://github.com/IlleNilsson/xmip-core-archive-azure-blob", branch = "main" }
 archive_gcs = { package = "xmip-core-archive-gcs", git = "https://github.com/IlleNilsson/xmip-core-archive-gcs", branch = "main" }
 archive_mssql = { package = "xmip-core-archive-mssql", git = "https://github.com/IlleNilsson/xmip-core-archive-mssql", branch = "main" }
-archive_mysql = { package = "xmip-core-archive-mysql", git = "https://github.com/IlleNilsson/xmip-core-archive-mysql", branch = "main" }
+archive_mariadb = { package = "xmip-core-archive-mariadb", git = "https://github.com/IlleNilsson/xmip-core-archive-mariadb", branch = "main" }
 
 # The content technologies the probes validate through, so a pair is delivered
 # only if the estate's own contract held — not a stand-in parser in the

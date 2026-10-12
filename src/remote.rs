@@ -19,7 +19,7 @@ use archive_azure_blob::AzureBlobArchive;
 use archive_gcs::GcsArchive;
 use archive_postgresql::PostgreSql;
 use archive_s3::S3Archive;
-use codec::sql::Delimiter;
+use sql::Delimiter;
 use transport::error::protocol_error;
 use transport::loopback::{both_ends, poke};
 use transport::socket;

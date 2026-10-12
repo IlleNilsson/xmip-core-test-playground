@@ -58,7 +58,7 @@ pub fn all_cabinets(dir: impl Into<PathBuf>) -> Vec<Box<dyn Cabinet>> {
         Box::new(SqlScriptCabinet::new(dir.join("sql"))),
         Box::new(crate::remote::PostgresqlCabinet),
         Box::new(crate::database::MssqlCabinet),
-        Box::new(crate::database::MysqlCabinet),
+        Box::new(crate::database::MariaDbCabinet),
         Box::new(crate::remote::S3Cabinet),
         Box::new(crate::remote::AzureBlobCabinet),
         Box::new(crate::remote::GcsCabinet),
