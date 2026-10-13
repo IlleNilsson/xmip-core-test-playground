@@ -67,7 +67,8 @@ names everywhere; the scope segment is the name in kebab case (`round-trip`,
   dropped and a second reader takes the same item — a `Contended` red, the
   duplicate-pickup bug. It runs over the file substrate; **no protocol is named
   in the code** (the owner's rule) — any other pollable transport joins by adding
-  a `RoundTrip` adapter, which is when SFTP, FTPS and FTP get this exercise.
+  a `RoundTrip` adapter. FTP, FTPS and SFTP race for one server's files in the
+  drop box instead (below).
 - **DailyBacklog** — a day's backlog drained as fast as possible: many files arrive at
   once and a node clears what its capacity allows. When arrivals outpace it the
   backlog climbs and the scenario escalates as an operator would — first a
@@ -512,17 +513,25 @@ turn's alone, so a test asserts it. `file` carries no fault at any level.
 
 **The drop box** (`src/drop_box.rs`). The owner, 2026-10-13: *induce
 multiple files for FILE and (S)FTP(S) so I can see that it holds up*, and
-*only one Rn should win.* Every round the roll drops a burst of eight files
-for each Party into the Party's own file Receive Location,
-`<shared>/drop-box/in/<party>`; every node that declared receive reads them
-all through the file transport's receive, whose claim is the rename, so one
-node's rename wins each file. The winner signs it, each node counts what it
-took at `<node>/drop-box/<party>`, and the roll judges every file ten seconds
-after its drop: `<root>/drop-box` and the roll's `stop` record say *every
-file taken by exactly one receiving node* with the split between the nodes,
-or name each file taken twice and by whom and each never taken. FTP, SFTP
-and FTPS are not in it yet: they have no claim of their own, the Playground
-has no server both receivers reach, and FTPS waits for the estate's TLS.
+*only one Rn should win.* Each Party has one directory per protocol that
+every receiving node shares: its own file Receive Location,
+`<shared>/drop-box/in/file/<party>`, and an FTP, an FTPS and an SFTP server
+of its own, which the roll stands up for the whole roll
+(`src/drop_box/far_ends.rs`) — the transports' own server sides, serving
+every node at once, FTPS over Xmip's TLS with a certificate from the
+estate's own self-signed source — writing where each listens under
+`<shared>/drop-box/servers`. The roll drops a burst of eight files for each
+Party over each protocol through that transport's send — every round over
+file, every fifth over the servers, since each FTP transfer and listing
+spends a local port — and every node that declared receive reads every
+Party's directories through the same transports' receive, FTP and FTPS every
+second round. Their claim is the file family's turn and rename (ADR-0024,
+amendment 2026-10-13), so one node's rename wins each file. The winner signs
+it, each node counts what it took at `<node>/drop-box/<protocol>/<party>`,
+and the roll judges every file ten seconds after its drop:
+`<root>/drop-box/<protocol>` and the roll's `stop` record say, per protocol,
+*every file taken by exactly one receiving node* with the split between the
+nodes, or name each file taken twice and by whom and each never taken.
 
 
 **The run says what it was started with** (`run.rs` fills `observe::Run`): the snapshot carries a

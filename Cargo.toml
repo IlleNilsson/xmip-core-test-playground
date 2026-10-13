@@ -76,6 +76,13 @@ secret_dpapi = { package = "xmip-core-secret-dpapi", git = "https://github.com/I
 secret_file = { package = "xmip-core-secret-file", git = "https://github.com/IlleNilsson/xmip-core-secret-file", branch = "main" }
 # The one refusal of a size over a ceiling (`net::ceiling`).
 net = { package = "xmip-core-library-net", git = "https://github.com/IlleNilsson/xmip-core-library-net", branch = "main" }
+# The drop box's far ends (`drop_box/far_ends.rs`): the FTPS servers'
+# certificate from the estate's own self-signed source, served and trusted
+# through the estate's TLS, and the SFTP servers' host key.
+tls = { package = "xmip-core-library-tls", git = "https://github.com/IlleNilsson/xmip-core-library-tls", branch = "main" }
+provision = { package = "xmip-core-provision", git = "https://github.com/IlleNilsson/xmip-core-provision", branch = "main" }
+provision_self_signed = { package = "xmip-core-provision-self-signed", git = "https://github.com/IlleNilsson/xmip-core-provision-self-signed", branch = "main" }
+ed25519-dalek = "2"
 
 # One technology repository per protocol (ADR-0010), each mounted under the
 # transport capability. The RoundTrip adapters drive these.
@@ -102,7 +109,8 @@ transport_iec_60870_5_104 = { package = "xmip-core-transport-iec-60870-5-104", g
 transport_imap = { package = "xmip-core-transport-imap", git = "https://github.com/IlleNilsson/xmip-core-transport-imap", branch = "main" }
 transport_redis_streams = { package = "xmip-core-transport-redis-streams", git = "https://github.com/IlleNilsson/xmip-core-transport-redis-streams", branch = "main" }
 transport_pop3 = { package = "xmip-core-transport-pop3", git = "https://github.com/IlleNilsson/xmip-core-transport-pop3", branch = "main" }
-transport_ftp = { package = "xmip-core-transport-ftp", git = "https://github.com/IlleNilsson/xmip-core-transport-ftp", branch = "main" }
+# With its tls feature: the drop box's FTPS (ADR-0028, amendment 2026-10-13).
+transport_ftp = { package = "xmip-core-transport-ftp", git = "https://github.com/IlleNilsson/xmip-core-transport-ftp", branch = "main", features = ["tls"] }
 transport_sftp = { package = "xmip-core-transport-sftp", git = "https://github.com/IlleNilsson/xmip-core-transport-sftp", branch = "main" }
 transport_peppol = { package = "xmip-core-transport-peppol", git = "https://github.com/IlleNilsson/xmip-core-transport-peppol", branch = "main" }
 transport_cotp = { package = "xmip-core-transport-cotp", git = "https://github.com/IlleNilsson/xmip-core-transport-cotp", branch = "main" }

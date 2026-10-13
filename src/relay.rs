@@ -109,6 +109,9 @@ impl Relay {
             all_transports(file_dir)
         };
         let spread = spread_over(&transports);
+        let node = node.into();
+        let taker = (stage == Stage::Receive)
+            .then(|| Taker::new(name, &node, DropBox::at(shared), Parties::configured()));
         Some(Self {
             name: name.to_string(),
             stage,
@@ -120,8 +123,7 @@ impl Relay {
             identity_faults: IdentityFaults::none(),
             spread,
             rotation: None,
-            taker: (stage == Stage::Receive)
-                .then(|| Taker::new(name, DropBox::at(shared), Parties::configured())),
+            taker,
             ledger: Ledger::new(node),
             hops: Hops::default(),
             round: 0,
