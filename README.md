@@ -582,10 +582,22 @@ until asked (ADR-0028, amendment 2026-09-30). A roll started by hand —
 `cargo run --bin xmip-playground-roll [rounds]` with those variables set — is the same roll,
 and `Get-XmipTestStatus` lists it too.
 
+`Start-XmipTest` returns at once, before the build: the roll, cluster and node
+binaries are built in a pwsh of its own, detached, which then spawns the roll
+(ADR-0028, amendment 2026-10-13: the owner, of `Start-XmipTest` holding his
+console during the first build). Until the roll's nodes start,
+`Get-XmipTestStatus` lists the run as kind `build`, state `building`, with how
+many crates cargo has compiled and the last of them; a build that fails is
+listed `FAILED` with cargo's first error as the reason, until that cluster is
+started again. `Stop-XmipTest` stops a build — its pwsh, cargo and the
+compilers beneath it — as it stops a roll, and a cluster still building is
+refused a second start as a rolling one is.
+
 Everything a run writes on this machine goes under `.local-work/playground`
 at the repository root: `<cluster>-snapshot.toml`, `<cluster>-history.toml`
 and `<cluster>-activity.toml` for the monitors (their shapes are `observe::Publication`'s, `observe::Curve`'s and `observe::Recent`'s), named for the cluster the roll
 was started as (`-Cluster`, required: the owner names the cluster), `roll-<pid>.toml` saying what
-each roll was started with, the roll's own lines in `roll-<start time>.log`,
+each roll was started with, `build-<start time>.toml` and `.log` for a roll
+still building or whose build failed, the roll's own lines in `roll-<start time>.log`,
 and under `node/` each hand-started node's snapshot and log. The folder is
 device-local and ignored by git.
