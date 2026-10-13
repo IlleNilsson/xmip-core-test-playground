@@ -26,23 +26,26 @@
 //! An offline node takes handoffs like any other — online capability gates
 //! only what is outside the cluster (ADR-0045).
 
+mod judging;
+
 use std::path::Path;
 use std::sync::Arc;
 
 use node::Stage;
 use observe::Snapshot;
 
+use crate::drop_box::{DropBox, Taker};
 use crate::exchange::{RoundTrip, all_transports};
 use crate::fault::FaultPlan;
 use crate::handoff::{Handoff, Hops, Inbox};
 use crate::identity::IdentityFaults;
-use crate::identity::verdicts::{receive_verdicts, send_verdict};
+use crate::parties::{Parties, Spread, spread_over};
 use crate::roster::Roster;
-use crate::round_trip::{carried, held};
-use crate::schedule::{Ledger, all_pairs, drive_each, slice};
+use crate::rotation::{Rotation, leveled};
+use crate::schedule::Ledger;
 use crate::stress::Stress;
 use crate::subscribing::Subscribing;
-use crate::verdict::{Contract, Outcome, Verdict};
+use crate::verdict::{Outcome, Verdict};
 use observe::now_unix_nanos;
 
 /// What one pair came to at this node's stage: the stage's verdict first,
@@ -62,6 +65,12 @@ pub struct Relay {
     transports: Vec<Box<dyn RoundTrip>>,
     faults: FaultPlan,
     identity_faults: IdentityFaults,
+    /// Which Party sends over, and is delivered to over, each transport.
+    spread: Spread,
+    /// The fault every fifty seconds, at a level above calm.
+    rotation: Option<Rotation>,
+    /// A receive stage's reading of the Parties' drop box (`drop_box.rs`).
+    taker: Option<Taker>,
     ledger: Ledger,
     hops: Hops,
     round: u64,
@@ -99,6 +108,7 @@ impl Relay {
         } else {
             all_transports(file_dir)
         };
+        let spread = spread_over(&transports);
         Some(Self {
             name: name.to_string(),
             stage,
@@ -108,6 +118,10 @@ impl Relay {
             transports,
             faults: FaultPlan::none(),
             identity_faults: IdentityFaults::none(),
+            spread,
+            rotation: None,
+            taker: (stage == Stage::Receive)
+                .then(|| Taker::new(name, DropBox::at(shared), Parties::configured())),
             ledger: Ledger::new(node),
             hops: Hops::default(),
             round: 0,
@@ -134,26 +148,24 @@ impl Relay {
     }
 
     /// The same relay at a [`Stress`] level, as
-    /// [`Schedule::at`](crate::Schedule::at) sets one: the realistic faults
-    /// scaled to it, none at `Calm`, and a round bounded to four pairs per
-    /// worker — a receive stage's from its share; a process or send stage's
-    /// times the count of receiving nodes, so an inbox drains as fast as it
-    /// can fill.
+    /// [`Schedule::at`](crate::Schedule::at) sets one: the level's faults
+    /// ([`leveled`]), and a round bounded to four pairs per worker — a
+    /// receive stage's from its share; a process or send stage's times the
+    /// count of receiving nodes, so an inbox drains as fast as it can fill.
     #[must_use]
     pub fn at(self, stress: Stress) -> Self {
-        let faults = if stress == Stress::Calm {
-            FaultPlan::none()
-        } else {
-            FaultPlan::realistic().at(stress)
-        };
+        let (faults, rotating) = leveled(stress);
         let senders = if self.stage == Stage::Receive {
             1
         } else {
             self.roster.with(Stage::Receive).len().max(1)
         };
         let workers = stress.workers();
-        self.with_faults(faults)
-            .bounded(workers * 4 * senders, workers)
+        let mut leveled = self
+            .with_faults(faults)
+            .bounded(workers * 4 * senders, workers);
+        leveled.rotation = rotating.then(|| Rotation::new(leveled.spread.clone()));
+        leveled
     }
 
     /// Drive at most `pairs` pairs a round — a receive stage from its share of
@@ -181,7 +193,11 @@ impl Relay {
     #[must_use]
     pub fn over(mut self, transports: Vec<Box<dyn RoundTrip>>) -> Self {
         if self.stage != Stage::Process {
+            self.spread = spread_over(&transports);
             self.transports = transports;
+            if self.rotation.is_some() {
+                self.rotation = Some(Rotation::new(self.spread.clone()));
+            }
         }
         self
     }
@@ -233,130 +249,14 @@ impl Relay {
         }
         self.hand_on_released(now);
         self.ledger.close(&mut snapshot, now);
+        if let Some(taker) = self.taker.as_mut() {
+            taker.take(self.ledger.node(), &mut snapshot, now);
+        }
         let inbox = (self.stage != Stage::Receive).then(|| (self.inbox.waiting(), self.unreadable));
         for record in self.hops.records(self.ledger.node(), inbox, now) {
             snapshot.record_health(record);
         }
         snapshot
-    }
-
-    /// This round's slice of this node's share of the matrix, each pair
-    /// arriving through its transport.
-    fn receive(&mut self, now: i64) -> Vec<Judged> {
-        let share: Vec<(usize, Contract)> = all_pairs(&self.transports)
-            .into_iter()
-            .enumerate()
-            .filter(|(index, _)| self.roster.receives(&self.name, *index))
-            .map(|(_, pair)| pair)
-            .collect();
-        let pairs = slice(&share, self.cursor, Some(self.per_round));
-        self.cursor = (self.cursor + pairs.len()) % share.len().max(1);
-
-        drive_each(&pairs, self.workers, |&(at, contract)| {
-            let transport = self.transports[at].as_ref();
-            let name = transport.transport();
-            let arrival = match self.fault(name, contract, self.round) {
-                Some(outcome) => Err(outcome),
-                None => carried(transport, &contract.payload()),
-            };
-            let (outcome, forward) = match arrival {
-                Ok(bytes) => (
-                    Outcome::Delivered,
-                    Some(self.handoff(name, contract, self.round, bytes)),
-                ),
-                Err(outcome) => (outcome, None),
-            };
-            let mut verdicts = vec![self.verdict(name, contract, outcome, 0, now)];
-            let identity = &self.identity_faults;
-            verdicts.extend(receive_verdicts(identity, name, contract, self.round, now));
-            Judged { verdicts, forward }
-        })
-    }
-
-    /// What is in the inbox, up to the round's bound: a process stage holds
-    /// the contract over each and hands it on, a send stage sends each out.
-    fn drain_inbox(&mut self, now: i64) -> Vec<Judged> {
-        let (claimed, unreadable) = self.inbox.claim(self.per_round);
-        self.unreadable += unreadable as u64;
-        drive_each(&claimed, self.workers, |handoff| {
-            let name = handoff.transport.as_str();
-            let contract = handoff.contract;
-            if let Some(outcome) = self.fault(name, contract, handoff.round) {
-                let verdicts = vec![self.verdict(name, contract, outcome, 0, now)];
-                return Judged {
-                    verdicts,
-                    forward: None,
-                };
-            }
-            if self.stage == Stage::Process {
-                let outcome = held(contract, handoff.bytes.clone());
-                let forward = matches!(outcome, Outcome::Delivered)
-                    .then(|| self.handoff(name, contract, handoff.round, handoff.bytes.clone()));
-                let verdicts = vec![self.verdict(name, contract, outcome, 0, now)];
-                return Judged { verdicts, forward };
-            }
-            let (outcome, bytes) = match self.sent(name, &handoff.bytes) {
-                Ok(bytes) => (Outcome::Delivered, bytes),
-                Err(outcome) => (outcome, 0),
-            };
-            let identity = &self.identity_faults;
-            let verdicts = vec![
-                self.verdict(name, contract, outcome, bytes, now),
-                send_verdict(identity, name, contract, handoff.round, now),
-            ];
-            Judged {
-                verdicts,
-                forward: None,
-            }
-        })
-    }
-
-    /// `bytes` out through the transport called `name`: how many went, or the
-    /// outcome when they did not.
-    fn sent(&self, name: &str, bytes: &[u8]) -> Result<u64, Outcome> {
-        let transport = self
-            .transports
-            .iter()
-            .find(|transport| transport.transport() == name)
-            .ok_or_else(|| Outcome::Failed(format!("no transport named {name} on this node")))?;
-        carried(transport.as_ref(), bytes).map(|back| back.len() as u64)
-    }
-
-    /// The injected fault for this stage of the pair in `round`, as the
-    /// outcome to publish.
-    fn fault(&self, transport: &str, contract: Contract, round: u64) -> Option<Outcome> {
-        self.faults
-            .fault_for(self.stage, transport, contract, round)
-            .map(|fault| Outcome::Failed(fault.evidence()))
-    }
-
-    fn verdict(
-        &self,
-        transport: &str,
-        contract: Contract,
-        outcome: Outcome,
-        bytes: u64,
-        now: i64,
-    ) -> Verdict {
-        Verdict {
-            stage: self.stage,
-            transport: transport.to_string(),
-            contract,
-            outcome,
-            bytes,
-            point: None,
-            observed_unix_nanos: now,
-        }
-    }
-
-    fn handoff(&self, transport: &str, contract: Contract, round: u64, bytes: Vec<u8>) -> Handoff {
-        Handoff {
-            transport: transport.to_string(),
-            contract,
-            round,
-            from: self.name.clone(),
-            bytes,
-        }
     }
 
     /// Hand on what a resume let go of, oldest first; what could not be

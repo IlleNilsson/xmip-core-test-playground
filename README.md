@@ -109,8 +109,9 @@ the run. Rate- and latency-based scenarios ignore it; they answer in real time.
 Loopback never fails, one payload never surprises, one round at a time never
 contends. A **stress level** — `calm`, `realistic`, `harsh`, `brutal` — turns
 each of those up together, and every scenario takes the level rather than its
-own idea of hard: the fault rates (none, as written, tripled, at the ceiling of
-nine rounds in ten), the payload sizes (a few bytes; then the sizes protocols
+own idea of hard: the faults (none; the fault every fifty seconds alone; that
+and the realistic table tripled; that and the table at the ceiling of nine
+rounds in ten — see *Parties* below), the payload sizes (a few bytes; then the sizes protocols
 break on — a datagram's MTU either side, the UDP maximum, sixty-four kibibytes
 plus one, a mebibyte), how many pairs run at once (one, one, four, every core),
 how many rounds a test drives, and how many node processes a roll spawns (one,
@@ -302,13 +303,22 @@ applies it to its hub and publishes what came of it.
 
 ### A node that processes routes by real Subscriptions, 2026-09-30
 
-The RoundTrip test is an Xmip Application, a section of the Playground's
-cluster configuration, [`configuration/xmip.toml`](configuration/xmip.toml)
-(ADR-0064 and ADR-0031, amendments 2026-10-03): four Subscriptions, one per
-family of content contracts — structured, edi, flat and schema — each to
-the Send Port the send stage serves. A node that declared process writes
-the cluster's file with the run's names and the bindings that place the
-Application on the run's nodes, slices its own configuration from it as
+The RoundTrip test runs the Xmip Applications held as sections of the
+Playground's cluster configuration,
+[`configuration/xmip.toml`](configuration/xmip.toml) (ADR-0064 and ADR-0031,
+amendments 2026-10-03): since 2026-10-13 two business flows an ERP runs with
+its Parties, order to cash and procure to pay, their Receive Locations,
+Send Ports and Subscriptions named by the documents they move and the Party
+they move them with — sales orders, purchase order responses, goods
+receipts, inventory reports and remittance advices in; order responses,
+despatch advices, invoices (a second Send Location for failover), purchase
+orders, item master and payments out — and never by the protocol: that is
+each Location's transport, which the operation tools show (the owner,
+2026-10-13; ADR-0028, amendment 2026-10-13). Each Subscription picks up a
+family of content contracts, and together they pick up every one once. A
+node that declared process writes the cluster's file with the run's names
+and the bindings that place every Application on the run's nodes — read
+from the sections, never named in the code — slices its own configuration from it as
 deployment does, writes that into `<shared>/configuration` and reads it
 back as a real node reads its configuration, through the runtime
 (`src/subscribing.rs`; ADR-0013, amendment 2026-09-30). Every pair its process stage hands on is published
@@ -419,10 +429,11 @@ The node a pair goes to next is a stable hash of the stage and the pair over
 the nodes that declared it, so every sender agrees without asking. A node that
 declared two stages runs one relay per stage, each with its own inbox. Each
 stage takes the same injected faults the schedule does, scaled to the level,
-decided by the round the receiving node took the pair in; a stage that fails
+the table's decided by the round the receiving node took the pair in and the
+rotation's by the second the stage judges it; a stage that fails
 hands nothing on. The tally, the standing between a pair's turns and the counts
 are the schedule's own (`schedule/ledger.rs`), not a copy; each count sits at
-the stage that took it, `<node>/<stage>` — Streams at receive, Journeys at
+the stage and transport that took it, `<node>/<stage>/<transport>` — Streams at receive, Journeys at
 process, Messages and Bytes at send, Failed at each — and the roll publishes
 every count where it was recorded, so a surface sums a node, a stage or the
 cluster from one file (until 2026-09-26 the roll wrote only its sums and
@@ -460,13 +471,59 @@ zero, and its evidence says so), `both` once it has carried a hop and
 rise per second since the roll's last publication (`Topology::rate_since`),
 mood the worst leaf at either end — and the shared store with its
 ExclusiveClaim and DailyBacklog links only when those tests ran on a node.
-Outside the nodes are the Parties (`party`; ADR-0052, amendment 2026-09-29):
-the Playground's one Party, `party-x` (`identity::PARTY`), drawn once as the
-sender linked to every receive stage and once as the receiver linked from
-every send stage — never a box per transport far end. Each link's volume is
-what its stage counted (Streams at receive, Messages at send), its mood the
-worst leaf beneath the stage's endpoints, and its evidence names that
-leaf's transport.
+Outside the nodes are the Parties (`party`; ADR-0052, amendment 2026-09-29;
+ADR-0028, amendment 2026-10-13): every Party of the configuration's
+`[[parties]]`, each drawn once as a sender linked to every receive stage it
+sends into and once as a receiver linked from every send stage that
+delivers to it — never a box per transport far end. Each link's volume is
+what its stage counted over the Party's own transports (Streams at receive,
+Messages at send; the ledger counts per transport, `<node>/<stage>/<transport>`,
+and a stage's figure is their sum), its mood the worst leaf beneath the
+Party's endpoints, and its evidence names that leaf's transport.
+
+### Parties, 2026-10-13
+
+The owner, watching a run: *You have not Implementet more Parties than
+Party-X. It is better, but not good enough.* The Parties are
+`configuration/xmip.toml`'s `[[parties]]` — `Party-A` to `Party-E` as
+shipped, each with the certificate subject it presents — read by
+`configure`'s one reading of them; nothing in the code names one, so a
+Party is renamed there. `src/parties.rs` spreads them over the transports in
+both directions: the Party at a transport's place in the list sends into its
+Receive Locations, the next Party is delivered to over its Send Locations, so
+every Party sends and receives, over different transports, every stream of a
+transport its. The identity pipeline runs per Party: an arrival claims its
+Party's subject, the Receive Location accepts that Party alone and resolves
+the claim through every Party's identities, and a Send Location presents the
+same (`src/identity.rs`, `src/identity/gates.rs`). The roll's first lines
+and its `start` record name the Parties and how many transports each
+sends in and is delivered to over.
+
+**The fault every fifty seconds** (`src/rotation.rs`; ADR-0028, amendment
+2026-10-06): above `calm` each turn of fifty wall-clock seconds strikes one
+target for its first ten — one Party's transport, every stream over it, on
+one turn, one stream of the next Party's on the next — going round the
+Parties in order and alternating the side they send into with the side
+delivered to, with a transport, addressing or contract fault. At
+`realistic` nothing else is injected, so between faults the board is green;
+`harsh` and `brutal` add the realistic table scaled to the level. The
+turn is the clock's, so every node agrees on it, and the target is the
+turn's alone, so a test asserts it. `file` carries no fault at any level.
+
+**The drop box** (`src/drop_box.rs`). The owner, 2026-10-13: *induce
+multiple files for FILE and (S)FTP(S) so I can see that it holds up*, and
+*only one Rn should win.* Every round the roll drops a burst of eight files
+for each Party into the Party's own file Receive Location,
+`<shared>/drop-box/in/<party>`; every node that declared receive reads them
+all through the file transport's receive, whose claim is the rename, so one
+node's rename wins each file. The winner signs it, each node counts what it
+took at `<node>/drop-box/<party>`, and the roll judges every file ten seconds
+after its drop: `<root>/drop-box` and the roll's `stop` record say *every
+file taken by exactly one receiving node* with the split between the nodes,
+or name each file taken twice and by whom and each never taken. FTP, SFTP
+and FTPS are not in it yet: they have no claim of their own, the Playground
+has no server both receivers reach, and FTPS waits for the estate's TLS.
+
 
 **The run says what it was started with** (`run.rs` fills `observe::Run`): the snapshot carries a
 `[run]` table — `cluster`, `tests`, `nodes`, `roles`, `online`, `stress` —

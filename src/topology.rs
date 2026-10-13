@@ -10,7 +10,9 @@
 //! outside them are drawn by `observe::topology::draw` and
 //! `observe::topology::party`, the one drawing every publisher calls — a
 //! running node draws itself through it too (ADR-0018, amendment
-//! 2026-09-30). The Playground's Party is its own, `identity::PARTY`. What
+//! 2026-09-30). The Playground's Parties are its configuration's, each on
+//! its share of the transports on each side (`parties::Spread`; ADR-0028,
+//! amendment 2026-10-13). What
 //! only a roll has is drawn here: between the stages run the handoffs,
 //! receive to process to send, one link per pair of stages configured to
 //! exchange them or that exchanged any, its volume the hops and its rate
@@ -27,7 +29,7 @@ use observe::Topology;
 use observe::topology::{draw, party};
 
 use crate::handoff::Hop;
-use crate::identity::PARTY;
+use crate::parties::Spread;
 use crate::roster::Roster;
 use crate::support::cluster_root;
 
@@ -36,14 +38,16 @@ use crate::support::cluster_root;
 /// node per name on the roster, each node's stages and their endpoints, the
 /// handoff links — configured where `relayed` says the run hands `RoundTrip`
 /// along the stages the roster declares, observed where a hop was
-/// delivered — the Parties outside them, and the shared store with its links
-/// when a node ran a test over it.
+/// delivered — the Parties outside them, each over its own transports as
+/// `spread` says, and the shared store with its links when a node ran a
+/// test over it.
 #[must_use]
 pub fn cluster_topology(
     snapshot: &observe::Snapshot,
     roster: &Roster,
     relayed: bool,
     hops: &[Hop],
+    spread: &Spread,
     now: i64,
 ) -> Topology {
     let names: Vec<&str> = roster.names();
@@ -58,7 +62,28 @@ pub fn cluster_topology(
     topology
         .links
         .extend(handoff::handoff_links(snapshot, configured, hops));
-    party::draw(snapshot, &root, &names, PARTY, &mut topology);
+    let sides: Vec<(&str, Vec<String>, Vec<String>)> = spread
+        .parties()
+        .all()
+        .iter()
+        .enumerate()
+        .map(|(place, one)| {
+            (
+                one.name.as_str(),
+                spread.sends(place),
+                spread.receives(place),
+            )
+        })
+        .collect();
+    let parties: Vec<party::Party<'_>> = sides
+        .iter()
+        .map(|(name, sends, receives)| party::Party {
+            name,
+            sends: Some(sends),
+            receives: Some(receives),
+        })
+        .collect();
+    party::draw(snapshot, &root, &names, &parties, &mut topology);
     shared::draw(snapshot, &names, &mut topology);
     topology
 }
@@ -66,6 +91,7 @@ pub fn cluster_topology(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parties::Parties;
     use crate::report::roll_toml;
     use crate::support::{declaring, path, test_cluster};
     use node::Capability;
@@ -84,11 +110,25 @@ mod tests {
         [receiving, processing, sending, idle].map(ToString::to_string)
     }
 
+    /// The configuration's Parties over the two transports the snapshot
+    /// reports, `file` then `tcp`.
+    fn spread() -> Spread {
+        Parties::configured().spread(&["file", "tcp"])
+    }
+
     /// `text` with `<r>`, `<p>`, `<s>` and `<z>` the names of [`nodes`], in
-    /// that order, and `<root>` the cluster's scope.
+    /// that order, `<root>` the cluster's scope, and `<in-file>`,
+    /// `<in-tcp>`, `<out-file>` and `<out-tcp>` the Parties [`spread`] says
+    /// send in over and are delivered to over each transport.
     fn named(text: &str) -> String {
         let [receiving, processing, sending, idle] = nodes();
-        text.replace("<root>", &cluster_root())
+        let spread = spread();
+        let name = |place: usize| spread.parties().at(place).name.clone();
+        text.replace("<in-file>", &name(spread.sender("file")))
+            .replace("<in-tcp>", &name(spread.sender("tcp")))
+            .replace("<out-file>", &name(spread.receiver("file")))
+            .replace("<out-tcp>", &name(spread.receiver("tcp")))
+            .replace("<root>", &cluster_root())
             .replace("<r>", &receiving)
             .replace("<p>", &processing)
             .replace("<s>", &sending)
@@ -184,7 +224,7 @@ mod tests {
             hop(&receiving, "receive", &processing, "process", 3),
             hop(&processing, "process", &sending, "send", 2),
         ];
-        cluster_topology(&published(), &roster(), true, &hops, 9)
+        cluster_topology(&published(), &roster(), true, &hops, &spread(), 9)
     }
 
     fn find<'a>(topology: &'a Topology, id: &str) -> &'a TopologyNode {
@@ -198,9 +238,12 @@ mod tests {
     #[test]
     fn the_cluster_holds_nodes_that_hold_stages_that_hold_endpoints() {
         let topology = drawn();
+        // The Parties are the drawing's last but the store, and are held by
+        // their own test below.
         let shape: Vec<(String, &str, String)> = topology
             .nodes
             .iter()
+            .filter(|node| node.kind != NodeKind::Party)
             .map(|node| (node.id.clone(), node.kind.word(), node.parent.clone()))
             .collect();
         let expected: Vec<(String, &str, String)> = [
@@ -216,8 +259,6 @@ mod tests {
             ("node/<s>/send/tcp", "endpoint", "node/<s>/send"),
             ("node/<z>", "node", "cluster"),
             ("node/<z>/send", "stage", "node/<z>"),
-            ("party/sending/party-x", "party", "cluster"),
-            ("party/receiving/party-x", "party", "cluster"),
             ("shared", "location", "cluster"),
         ]
         .into_iter()
@@ -261,6 +302,7 @@ mod tests {
         let links: Vec<(String, String, &str, &str, u64)> = topology
             .links
             .iter()
+            .filter(|link| !link.id.starts_with("party/"))
             .map(|link| {
                 (
                     link.from.clone(),
@@ -293,27 +335,6 @@ mod tests {
                 "handoff",
                 0,
             ),
-            (
-                "party/sending/party-x",
-                "node/<r>/receive",
-                "send-receive",
-                "2 transports",
-                0,
-            ),
-            (
-                "node/<s>/send",
-                "party/receiving/party-x",
-                "send-receive",
-                "tcp",
-                0,
-            ),
-            (
-                "node/<z>/send",
-                "party/receiving/party-x",
-                "send-receive",
-                "no transport reported",
-                0,
-            ),
             ("node/<s>", "shared", "publish-consume", "file", 0),
             ("node/<s>", "shared", "publish-consume", "file", 6),
         ]
@@ -330,10 +351,21 @@ mod tests {
             "the worst leaf involved"
         );
         assert_eq!(topology.links[1].origin, Origin::Both);
-        assert!((topology.links[7].progress - 0.75).abs() < f64::EPSILON);
+        let store = topology
+            .links
+            .last()
+            .expect("the store's links are drawn last");
+        assert!((store.progress - 0.75).abs() < f64::EPSILON);
 
         let [only, ..] = nodes();
-        let bare = cluster_topology(&Snapshot::new(), &Roster::of(&[only]), false, &[], 9);
+        let bare = cluster_topology(
+            &Snapshot::new(),
+            &Roster::of(&[only]),
+            false,
+            &[],
+            &spread(),
+            9,
+        );
         let ids: Vec<&str> = bare.nodes.iter().map(|node| node.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -365,7 +397,7 @@ mod tests {
         );
 
         let stray = [hop(&sending, "process", &receiving, "send", 1)];
-        let observed = cluster_topology(&published(), &roster(), true, &stray, 9);
+        let observed = cluster_topology(&published(), &roster(), true, &stray, &spread(), 9);
         let link = observed
             .links
             .iter()
@@ -375,7 +407,7 @@ mod tests {
 
         // Not relaying RoundTrip over stages: nothing is configured between
         // the nodes, and only what was delivered is drawn.
-        let unrelayed = cluster_topology(&published(), &roster(), false, &[], 9);
+        let unrelayed = cluster_topology(&published(), &roster(), false, &[], &spread(), 9);
         assert!(
             unrelayed
                 .links
@@ -388,6 +420,7 @@ mod tests {
             &roster(),
             true,
             &[hop(&receiving, "receive", &processing, "process", 1)],
+            &spread(),
             1_000_000_009,
         );
         let mut later = cluster_topology(
@@ -395,31 +428,30 @@ mod tests {
             &roster(),
             true,
             &[hop(&receiving, "receive", &processing, "process", 5)],
+            &spread(),
             3_000_000_009,
         );
         later.rate_since(&earlier);
         assert!((later.links[0].rate - 2.0).abs() < f64::EPSILON);
     }
 
-    /// The owner, 2026-09-29: *Something is sending streams to a Xmip Node.
-    /// A Xmip Node sends streams to somethings.* One box per Party and side,
-    /// a link per stage facing it, carrying what the stage counted and the
-    /// worst leaf beneath its endpoints, named by transport.
-    #[test]
-    fn a_party_sends_into_the_receive_stages_and_the_send_stages_deliver_to_one() {
+    /// The test's snapshot with a Party's receive leaf stressed and counts
+    /// at each endpoint, drawn.
+    fn faced() -> Topology {
         let mut snapshot = published();
         snapshot.record_health(record(
             &named("<root>/node/<r>/receive/file/text/authorization"),
             Health::Stressed,
             "the party is not permitted on this Receive Location",
         ));
-        for (stage, counted, value) in [
-            ("<r>/receive", Counted::Streams, 40),
-            ("<s>/send", Counted::Messages, 31),
-            ("<s>/send", Counted::Bytes, 9000),
+        for (endpoint, counted, value) in [
+            ("<r>/receive/file", Counted::Streams, 40),
+            ("<r>/receive/tcp", Counted::Streams, 2),
+            ("<s>/send/tcp", Counted::Messages, 31),
+            ("<s>/send/tcp", Counted::Bytes, 9000),
         ] {
             snapshot.record_count(Count {
-                scope: named(&format!("<root>/node/{stage}")),
+                scope: named(&format!("<root>/node/{endpoint}")),
                 counted,
                 value,
                 window_start_unix_nanos: 7,
@@ -427,54 +459,60 @@ mod tests {
                 observed_unix_nanos: 7,
             });
         }
-        let topology = cluster_topology(&snapshot, &roster(), true, &[], 9);
-        let link = |id: &str| {
-            topology
-                .links
-                .iter()
-                .find(|link| link.id == id)
-                .unwrap_or_else(|| panic!("{id} is drawn"))
-        };
+        cluster_topology(&snapshot, &roster(), true, &[], &spread(), 9)
+    }
 
-        let sends = link(&named("party/sending/party-x/<r>"));
+    fn link_in<'t>(topology: &'t Topology, id: &str) -> &'t observe::TopologyLink {
+        topology
+            .links
+            .iter()
+            .find(|link| link.id == id)
+            .unwrap_or_else(|| panic!("{id} is drawn"))
+    }
+
+    /// The owner, 2026-09-29: *Something is sending streams to a Xmip Node.
+    /// A Xmip Node sends streams to somethings.* And 2026-10-13: *You have
+    /// not Implementet more Parties than Party-X.* One box per Party and
+    /// side, a link per stage facing it over the Party's own transports,
+    /// carrying what the stage counted over them and the worst leaf beneath
+    /// them, named by transport.
+    #[test]
+    fn each_party_sends_into_the_receive_stages_over_its_own_transports() {
+        let topology = faced();
+        let link = |id: &str| link_in(&topology, id);
+
+        let sends = link(&named("party/sending/<in-file>/<r>"));
         assert_eq!(
-            (sends.from.as_str(), sends.to.as_str()),
-            ("party/sending/party-x", named("node/<r>/receive").as_str())
+            (sends.from.clone(), sends.to.clone()),
+            (named("party/sending/<in-file>"), named("node/<r>/receive"))
         );
         assert_eq!((sends.volume, sends.state), (40, Health::Stressed));
-        assert_eq!(sends.origin, Origin::Both);
+        assert_eq!(
+            (sends.origin, sends.protocol.as_str()),
+            (Origin::Both, "file")
+        );
         assert_eq!(
             sends.evidence,
             named(
-                "party-x sends into <r> over 2 transports; worst over file: \
+                "<in-file> sends into <r> over file; worst over file: \
                  the party is not permitted on this Receive Location"
             )
         );
-
-        let delivers = link(&named("party/receiving/party-x/<s>"));
+        // Another Party on the same stage is not judged by what it does not
+        // send over.
+        let other = link(&named("party/sending/<in-tcp>/<r>"));
         assert_eq!(
-            (delivers.from.as_str(), delivers.to.as_str()),
-            (named("node/<s>/send").as_str(), "party/receiving/party-x")
-        );
-        assert_eq!(
-            (delivers.volume, delivers.state, delivers.protocol.as_str()),
-            (31, Health::Stressed, "tcp"),
-            "Messages at Send, not its bytes"
-        );
-        let idle = link(&named("party/receiving/party-x/<z>"));
-        assert_eq!((idle.origin, idle.volume), (Origin::Configured, 0));
-        assert_eq!(
-            idle.evidence,
-            named("<z> delivers to party-x; no transport reported yet")
+            (other.volume, other.state, other.protocol.as_str()),
+            (2, Health::Fine, "tcp")
         );
 
         // A Party is Fine or Holding over the worst it faces (ADR-0041).
-        let sender = find(&topology, "party/sending/party-x");
+        let sender = find(&topology, &named("party/sending/<in-file>"));
         assert_eq!(
-            (sender.label.as_str(), sender.scope.as_str(), sender.state),
+            (sender.label.clone(), sender.scope.clone(), sender.state),
             (
-                "party-x",
-                named("<root>/party/party-x").as_str(),
+                named("<in-file>"),
+                named("<root>/party/<in-file>"),
                 Health::Holding
             )
         );
@@ -485,7 +523,38 @@ mod tests {
             "{}",
             sender.evidence
         );
-        let receiver = find(&topology, "party/receiving/party-x");
+    }
+
+    #[test]
+    fn each_party_is_delivered_to_over_its_own_transports() {
+        let topology = faced();
+        let link = |id: &str| link_in(&topology, id);
+
+        let delivers = link(&named("party/receiving/<out-tcp>/<s>"));
+        assert_eq!(
+            (delivers.from.clone(), delivers.to.clone()),
+            (named("node/<s>/send"), named("party/receiving/<out-tcp>"))
+        );
+        assert_eq!(
+            (delivers.volume, delivers.state, delivers.protocol.as_str()),
+            (31, Health::Stressed, "tcp"),
+            "Messages at Send, not its bytes"
+        );
+        let idle = link(&named("party/receiving/<out-tcp>/<z>"));
+        assert_eq!((idle.origin, idle.volume), (Origin::Configured, 0));
+        assert_eq!(
+            idle.evidence,
+            named("<z> delivers to <out-tcp>; no transport reported yet")
+        );
+        assert!(
+            topology
+                .links
+                .iter()
+                .all(|link| link.id != named("party/receiving/<out-file>/<s>")),
+            "a send stage holding none of a Party's transports does not face it"
+        );
+
+        let receiver = find(&topology, &named("party/receiving/<out-tcp>"));
         assert_eq!(receiver.state, Health::Holding);
         assert!(
             receiver
@@ -495,7 +564,14 @@ mod tests {
 
         // No stage, no Party.
         let [only, ..] = nodes();
-        let bare = cluster_topology(&Snapshot::new(), &Roster::of(&[only]), false, &[], 9);
+        let bare = cluster_topology(
+            &Snapshot::new(),
+            &Roster::of(&[only]),
+            false,
+            &[],
+            &spread(),
+            9,
+        );
         assert!(bare.nodes.iter().all(|node| node.kind != NodeKind::Party));
     }
 

@@ -1,12 +1,14 @@
 //! A node's Subscriptions (ADR-0013, amendments 2026-09-30 and 2026-10-03),
 //! taken up from the TOML configuration it binds, as a real node takes them.
 //!
-//! The Playground's `RoundTrip` test is an Xmip Application, a section of
-//! the Playground's cluster configuration, `configuration/xmip.toml`: four
-//! Subscriptions, one per family of content contracts, each routing to the
-//! Send Port the send stage serves. A node that declared process writes the
-//! cluster's file with the run's names and the bindings that place the
-//! Application on the run's nodes, slices its own configuration from it as
+//! The Playground's `RoundTrip` test runs the Xmip Applications held as
+//! sections of the Playground's cluster configuration,
+//! `configuration/xmip.toml` — business flows an ERP runs with its Parties —
+//! each Subscription picking up a family of content contracts and routing it
+//! to a Send Port the send stage serves (ADR-0028, amendment 2026-10-13).
+//! A node that declared process writes the cluster's file with the run's
+//! names and the bindings that place every Application on the run's nodes,
+//! read from the sections, never named here; it slices its own configuration from it as
 //! deployment does (`configure::slice`), writes that into
 //! `<shared>/configuration`, reads it back through the runtime's own reading
 //! (`runtime::start::read`, the execution tree), and
@@ -26,7 +28,9 @@
 //! a resume tries it again. Nothing here is a Subscription of its own: the
 //! rows an operator sees are the runtime's, of the configuration's.
 
-use std::path::{Path, PathBuf};
+mod configured;
+
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,7 +39,6 @@ use codec::field::{read_text, text};
 use context::MessageContext;
 use journey::{Journey, JourneyState};
 use message::{Message, MessageSection, MessageTreatment};
-use node::Stage;
 use observe::{Act, Snapshot};
 use persist::storage::{Embedded, XmipStorage};
 use route::{Promoted, publish};
@@ -59,13 +62,12 @@ use crate::schedule::CONTRACTS;
 /// `RoundTrip` Application's section.
 pub const CLUSTER: &str = include_str!("../configuration/xmip.toml");
 
-/// The Receive Location the Application binds, which a pair's Publication
-/// is audited as published at.
-const LOCATION: &str = "RoundTripIn";
-
 /// A node's Subscriptions, the runtime's pickup that holds them, and the
 /// node's own Storage node.
 pub struct Subscribing {
+    /// Each Subscription's id and the Receive Location a pair it picks up
+    /// is audited as published at: the first of its Application's.
+    published_at: Vec<(String, String)>,
     pickup: Arc<Pickup>,
     storage: Arc<dyn XmipStorage>,
     origin: Origin,
@@ -99,7 +101,8 @@ impl Subscribing {
         shared: &Path,
         audit: &ProgramAudit,
     ) -> Result<Self, String> {
-        let path = configured(node, name, roster, shared)?;
+        let designed = configure::applications(CLUSTER)?;
+        let path = configured::configured(node, name, roster, shared, &designed)?;
         let text = path.display().to_string();
         let (document, applications, files) =
             runtime::start::read(&text).map_err(|unread| unread.reason)?;
@@ -112,7 +115,21 @@ impl Subscribing {
         let pickup = Pickup::open(node, configured, Arc::clone(&storage), Some(audit.clone()))?;
         let cluster = runtime::running::publication::cluster_location(&tree.service.cluster_name);
         let send = SendStep::new((&cluster, node), Arc::clone(&storage), &tree.tuning, None);
+        let published_at = designed
+            .iter()
+            .filter_map(|application| {
+                let first = application.receive_locations.first()?;
+                Some(
+                    application
+                        .subscriptions
+                        .iter()
+                        .map(|subscription| (subscription.id.clone(), first.name.clone())),
+                )
+            })
+            .flatten()
+            .collect();
         Ok(Self {
+            published_at,
             pickup,
             storage,
             origin: runtime::running::origin(Some(audit), node),
@@ -134,6 +151,15 @@ impl Subscribing {
             .set("MessageType", handoff.contract.name())
             .set("Transport", handoff.transport.as_str());
         let routing = publish(&promoted, &self.subscriptions);
+        let picked = routing.evaluations.iter().find(|one| one.matched());
+        let location = picked
+            .and_then(|one| {
+                self.published_at
+                    .iter()
+                    .find(|(id, _)| *id == one.subscription_id)
+            })
+            .or_else(|| self.published_at.first())
+            .map_or("", |(_, location)| location.as_str());
         let ids = UuidV7Generator;
         let stream = StreamId::new(ids.next_u128());
         let mut bytes = handoff.bytes.as_slice();
@@ -161,7 +187,7 @@ impl Subscribing {
         let published = runtime::ledger::publish(
             &through,
             &self.pickup,
-            LOCATION,
+            location,
             &message,
             &routing,
             &Unmatched {
@@ -281,66 +307,6 @@ impl Subscribing {
     }
 }
 
-/// Write this node's configuration, sliced from the Playground's cluster
-/// configuration with the run's names and the bindings that place the
-/// Application on the run's nodes, into `<shared>/configuration`, and say
-/// where it is.
-fn configured(node: &str, name: &str, roster: &Roster, shared: &Path) -> Result<PathBuf, String> {
-    let cluster = observe::Scope::new(node)
-        .segments()
-        .next()
-        .unwrap_or_default();
-    let at = |stage: Stage| roster.with(stage).first().map(ToString::to_string);
-    let receives = at(Stage::Receive).ok_or("no node declares receive")?;
-    let sends = at(Stage::Send).ok_or("no node declares send")?;
-    let inbox = |to: &str, stage: Stage| {
-        shared
-            .join("handoff")
-            .join(to)
-            .join(stage.name())
-            .display()
-            .to_string()
-    };
-    let directory = shared.join("configuration");
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let written = |file: &Path, text: &str| {
-        std::fs::write(file, text).map_err(|error| format!("{}: {error}", file.display()))
-    };
-    let file = format!(
-        r#"[service]
-name = "xmip-playground"
-cluster_name = "{cluster}"
-
-[[applications]]
-name = "RoundTrip"
-
-[[applications.receive_locations]]
-name = "RoundTripIn"
-node = "{receives}"
-start = true
-transport = "xmip-core-transport-file"
-address = '{inbox}'
-
-[[applications.send_ports]]
-name = "RoundTripOut"
-node = "{sends}"
-start = true
-transport = "xmip-core-transport-file"
-address = '{outbox}'
-
-{CLUSTER}
-[nodes.{name}.service]
-name = "xmip-playground-{name}"
-"#,
-        inbox = inbox(&receives, Stage::Process),
-        outbox = inbox(&sends, Stage::Send),
-    );
-    let text = configure::slice(&file, name)?;
-    let path = directory.join(format!("{name}.node.toml"));
-    written(&path, &text)?;
-    Ok(path)
-}
-
 /// The node's own embedded Storage node: `RocksDB` for the Ledger and
 /// `SQLite` for the administration and the audit databases, sealed under
 /// the machine's key store — DPAPI on Windows, a private file elsewhere.
@@ -409,6 +375,46 @@ mod tests {
         Subscribing::start(&node, processing, &roster, shared, audit).expect("started")
     }
 
+    /// The Applications the shipped configuration holds.
+    fn designed() -> Vec<configure::XmipApplication> {
+        configure::applications(CLUSTER).expect("the shipped configuration reads")
+    }
+
+    /// The id of the Subscription the shipped configuration picks up
+    /// `contract` by, and the Send Port it routes to.
+    fn routing(contract: Contract) -> (String, String) {
+        let promoted = Promoted::new().set("MessageType", contract.name());
+        designed()
+            .into_iter()
+            .flat_map(|application| application.subscriptions)
+            .find(|subscription| subscription.filter.evaluate(&promoted).holds())
+            .map(|subscription| (subscription.id, subscription.destination.name().to_string()))
+            .expect("every contract is picked up")
+    }
+
+    #[test]
+    fn every_contract_is_picked_up_by_one_subscription_of_the_configuration() {
+        let subscriptions: Vec<_> = designed()
+            .into_iter()
+            .flat_map(|application| application.subscriptions)
+            .collect();
+        for contract in CONTRACTS {
+            let promoted = Promoted::new().set("MessageType", contract.name());
+            let picking = subscriptions
+                .iter()
+                .filter(|subscription| subscription.filter.evaluate(&promoted).holds())
+                .count();
+            assert_eq!(picking, 1, "{}", contract.name());
+        }
+        for application in designed() {
+            assert!(
+                application.problems().is_empty(),
+                "{:?}",
+                application.problems()
+            );
+        }
+    }
+
     fn pair(contract: Contract, round: u64) -> Handoff {
         Handoff {
             transport: "tcp".to_string(),
@@ -428,10 +434,21 @@ mod tests {
         let mut snapshot = Snapshot::new();
         subscribing.round(&mut snapshot);
         let names: Vec<String> = snapshot.subscriptions().map(|s| s.name.clone()).collect();
-        assert_eq!(names, ["edi", "flat", "schema", "structured"]);
+        let mut configured: Vec<String> = designed()
+            .iter()
+            .flat_map(|application| &application.subscriptions)
+            .map(|subscription| subscription.id.clone())
+            .collect();
+        configured.sort();
+        assert_eq!(names, configured, "every Application's, by id");
+        // The Subscription that picks up JSON, which picks up XML too, and
+        // the Send Port it routes to: read from the configuration.
+        let (id, port) = routing(Contract::Json);
+        assert_eq!(routing(Contract::Xml).0, id);
+        assert_ne!(routing(Contract::Csv).0, id);
         let structured = snapshot
             .subscriptions()
-            .find(|s| s.name == "structured")
+            .find(|s| s.name == id)
             .expect("configured");
         assert!(
             structured.file.ends_with(".node.toml"),
@@ -442,13 +459,12 @@ mod tests {
             structured
                 .configuration
                 .starts_with("[[xmip_applications.subscriptions]]\n")
-                && structured.configuration.contains("id = \"structured\""),
+                && structured.configuration.contains(&format!("id = \"{id}\"")),
             "{}",
             structured.configuration
         );
         assert!(
-            structured.configuration.contains("RoundTripOut")
-                && structured.configuration.contains("'schematron'"),
+            structured.configuration.contains(&port) && structured.configuration.contains("'json'"),
             "{}",
             structured.configuration
         );
@@ -459,9 +475,7 @@ mod tests {
                 .expect("published")
         };
         assert!(routed(&subscribing, Contract::Json, 1), "picked up");
-        subscribing
-            .act("structured", Act::Pause, "ilian")
-            .expect("paused");
+        subscribing.act(&id, Act::Pause, "ilian").expect("paused");
         assert!(!routed(&subscribing, Contract::Json, 2), "held");
         assert!(!routed(&subscribing, Contract::Xml, 3), "held");
         assert!(
@@ -475,13 +489,11 @@ mod tests {
         again.round(&mut snapshot);
         let held = snapshot
             .subscriptions()
-            .find(|s| s.name == "structured")
+            .find(|s| s.name == id)
             .expect("configured");
         assert_eq!((held.state, held.held), (observe::PauseState::Paused, 2));
 
-        again
-            .act("structured", Act::Resume, "ilian")
-            .expect("resumed");
+        again.act(&id, Act::Resume, "ilian").expect("resumed");
         let released = again.released();
         let rounds: Vec<u64> = released.iter().map(|one| one.handoff.round).collect();
         assert_eq!(rounds, [2, 3], "oldest first, nothing lost");
@@ -496,11 +508,11 @@ mod tests {
         again.round(&mut snapshot);
         let held = snapshot
             .subscriptions()
-            .find(|s| s.name == "structured")
+            .find(|s| s.name == id)
             .expect("configured");
         assert_eq!(held.held, 1, "what was not handed on stays held");
         assert!(again.released().is_empty(), "Failed: not tried by itself");
-        assert!(again.act("structured", Act::Remove, "ilian").is_err());
+        assert!(again.act(&id, Act::Remove, "ilian").is_err());
         drop(again);
         let _ = std::fs::remove_dir_all(&shared);
     }

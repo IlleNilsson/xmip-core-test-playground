@@ -24,7 +24,9 @@ pub struct Ledger {
     tallies: BTreeMap<String, Tally>,
     activity: Activity,
     item_seq: u64,
-    stages: BTreeMap<Stage, Throughput>,
+    /// Per stage and transport, so a Party's link counts its own transports
+    /// (ADR-0028, amendment 2026-10-13); a stage's figure is their sum.
+    stages: BTreeMap<(Stage, String), Throughput>,
 }
 
 /// What one stage of the message path has moved: the items it delivered —
@@ -66,7 +68,10 @@ impl Ledger {
         let is_transport = verdict.point.is_none();
 
         if is_transport {
-            let moved = self.stages.entry(verdict.stage).or_default();
+            let moved = self
+                .stages
+                .entry((verdict.stage, verdict.transport.clone()))
+                .or_default();
             match verdict.outcome {
                 Outcome::Delivered => {
                     moved.delivered += 1;
@@ -104,8 +109,9 @@ impl Ledger {
     }
 
     /// Close a round: the pairs that waited keep their standing on the board,
-    /// and the cumulative throughput is published at each stage's own scope,
-    /// `<node>/<stage>` — Streams in at Receive, Journeys through Process,
+    /// and the cumulative throughput is published beneath each stage's own
+    /// scope, per transport, `<node>/<stage>/<transport>`, which a stage's
+    /// figure sums (`Snapshot::measure`) — Streams in at Receive, Journeys through Process,
     /// Messages out at Send with the Bytes that moved, and the rounds that
     /// Failed at each. These are what the operator's stage cards count and
     /// what the prompt's letters read. Until 2026-09-26 all five were counted
@@ -131,8 +137,9 @@ impl Ledger {
         // publisher does not carry is a dash on every surface, which is what
         // this is. The owner, 2026-09-20, looked for T and F in a run that had
         // faults; F was never published and T has nothing behind it yet.
-        for (&stage, moved) in &self.stages {
-            let scope = format!("{}/{}", self.node, stage.name());
+        for ((stage, transport), moved) in &self.stages {
+            let stage = *stage;
+            let scope = format!("{}/{}/{transport}", self.node, stage.name());
             let mut counts = vec![
                 (Counted::at(stage), moved.delivered),
                 (Counted::Failed, moved.failed),

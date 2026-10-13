@@ -14,28 +14,44 @@
 //! feeds the gate the input that makes it truly refuse: an arrival with no
 //! certificate, an authenticator that will not prove, a policy that denies.
 
+mod gates;
 pub mod verdicts;
 
-use authenticate::{
-    Acceptance, AuthenticateError, Authenticator, PartyRegistry, Refusal, authenticate,
-};
-use authorize::{Action, Attempt, Authorizer, Decision, authorize};
-use context::{Alignment, AuthenticatedIdentity, IdentityFacts, OnMisalignment, Verified};
-use identify::{IdentifyError, Presented, StreamArrival, TransportIdentifier, identify_transport};
-use xcore::{Arriving, Layer, Mechanism, PartyId, Purpose, mechanism};
+use authorize::Action;
+use identify::Presented;
+use xcore::mechanism;
 
-use crate::fault::fires_keyed;
+use crate::fault::{STEADY, fires_keyed};
+use crate::parties::Parties;
 use crate::verdict::{Contract, Outcome};
 
-/// The one Party the Playground stands up (ADR-0019): its test peers send
-/// as it into every Receive Location, and every Send Location delivers to
-/// it. What the topology calls the far end on either side.
-pub const PARTY: &str = "party-x";
+/// The Party a Location faces: the one that sends into a Receive Location,
+/// or the one a Send Location delivers to, by its place among the
+/// configuration's Parties (`parties.rs`). A well-formed arrival claims its
+/// first identity as its certificate's subject, the Receive Location
+/// accepts that Party alone and resolves the claim through every Party's
+/// identities; a Send Location presents the same.
+#[derive(Clone, Copy, Debug)]
+pub struct Facing<'a> {
+    pub parties: &'a Parties,
+    pub party: usize,
+}
 
-/// The subject a well-formed arrival claims, and the Party it resolves to.
-const SUBJECT: &str = "CN=party-x.example";
-fn party_x() -> PartyId {
-    PartyId::new(1)
+impl Facing<'_> {
+    /// The Party's name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.parties.at(self.party).name
+    }
+
+    /// The subject it presents: its first identity.
+    fn subject(&self) -> &str {
+        self.parties
+            .at(self.party)
+            .identities
+            .first()
+            .map_or("", String::as_str)
+    }
 }
 
 /// The steps a Receive Location runs, in order. Each is its own scope so an
@@ -63,83 +79,6 @@ impl Step {
             Step::Authentication => "authentication",
             Step::Authorization => "authorization",
         }
-    }
-}
-
-/// Reads a mutual-TLS subject out of the arrival. A well-formed arrival carries
-/// a `peer.subject`; an identification fault carries none, and `None` is the
-/// honest answer — nothing was presented to identify.
-struct SubjectIdentifier;
-
-impl TransportIdentifier for SubjectIdentifier {
-    fn mechanism(&self) -> Mechanism {
-        mechanism::mutual_tls()
-    }
-
-    fn identify(&self, arrival: &StreamArrival<'_>) -> Result<Option<Presented>, IdentifyError> {
-        Ok(arrival
-            .property("peer.subject")
-            .map(|subject| Presented::passed(mechanism::mutual_tls(), subject)))
-    }
-}
-
-/// Proves a mutual-TLS subject. `honest` proves it; otherwise it refuses, which
-/// is what a rejected or expired certificate does at the handshake.
-struct TlsAuthenticator {
-    honest: bool,
-}
-
-impl Authenticator for TlsAuthenticator {
-    fn mechanism(&self) -> Mechanism {
-        mechanism::mutual_tls()
-    }
-
-    fn verify(&self, _presented: &Presented) -> Result<Verified, AuthenticateError> {
-        Ok(if self.honest {
-            Verified::Proven
-        } else {
-            Verified::Refused
-        })
-    }
-}
-
-/// Resolves the subject to the Playground's Party. The Receive Location knows
-/// this Party.
-struct KnownParty;
-
-impl PartyRegistry for KnownParty {
-    fn resolve(&self, _mechanism: &str, _purpose: Purpose, _value: &str) -> Option<PartyId> {
-        Some(party_x())
-    }
-}
-
-/// Allows the action on this location. `permits` allows; otherwise it denies —
-/// the Party is proven but not permitted here.
-struct LocationPolicy {
-    permits: bool,
-}
-
-impl Authorizer for LocationPolicy {
-    // The trait fixes the signature to `-> &str`; the name is a literal, and an
-    // impl cannot widen the lifetime the trait elided.
-    #[allow(clippy::unnecessary_literal_bound)]
-    fn name(&self) -> &str {
-        "playground-location"
-    }
-
-    fn layer(&self) -> Layer {
-        Layer::Transport
-    }
-
-    fn decide(&self, _identity: &IdentityFacts, attempt: &Attempt) -> Option<Decision> {
-        Some(if self.permits {
-            Decision::Allowed
-        } else {
-            Decision::denied(
-                "playground-location",
-                format!("the party is not permitted to {} here", attempt.action),
-            )
-        })
     }
 }
 
@@ -205,7 +144,7 @@ impl IdentityFaults {
             ),
         ];
 
-        if !self.enabled || transport == "file" {
+        if !self.enabled || transport == STEADY {
             return None;
         }
 
@@ -230,7 +169,7 @@ impl IdentityFaults {
             ),
         ];
 
-        if !self.enabled || transport == "file" {
+        if !self.enabled || transport == STEADY {
             return None;
         }
 
@@ -250,12 +189,14 @@ fn key(step: &str, transport: &str, contract: Contract) -> String {
 }
 
 /// Run the Receive Location's identity pipeline for one (transport, contract)
-/// this round. Returns an outcome per step in order. The pipeline stops at the
-/// first failure: earlier steps ran for real and passed, the failing step
-/// carries the reason, and the rest report "not reached".
+/// this round, the Party `facing` sending. Returns an outcome per step in
+/// order. The pipeline stops at the first failure: earlier steps ran for
+/// real and passed, the failing step carries the reason, and the rest report
+/// "not reached".
 #[must_use]
 pub fn receive(
     faults: &IdentityFaults,
+    facing: &Facing<'_>,
     transport: &str,
     contract: Contract,
     round: u64,
@@ -265,7 +206,7 @@ pub fn receive(
 
     // Identification.
     let subject_present = faulted.is_none_or(|(step, _)| step != Step::Identification);
-    let claims = run_identification(subject_present);
+    let claims = gates::identification(subject_present.then(|| facing.subject()));
     let Some(presented) = claims.first() else {
         let reason = faulted.map_or("no identity was presented", |(_, reason)| reason);
         out.push((Step::Identification, Outcome::Failed(reason.to_string())));
@@ -277,7 +218,7 @@ pub fn receive(
 
     // Authentication.
     let honest = faulted.is_none_or(|(step, _)| step != Step::Authentication);
-    let identity = match run_authentication(presented, honest) {
+    let identity = match gates::authentication(facing, presented, honest) {
         Ok(identity) => {
             out.push((Step::Authentication, Outcome::Delivered));
             identity
@@ -294,7 +235,7 @@ pub fn receive(
 
     // Authorization.
     let permits = faulted.is_none_or(|(step, _)| step != Step::Authorization);
-    let decision = run_authorization(identity, Action::Receive, permits);
+    let decision = gates::authorization(facing, identity, Action::Receive, permits);
     if decision.allowed() {
         out.push((Step::Authorization, Outcome::Delivered));
     } else {
@@ -306,20 +247,26 @@ pub fn receive(
     out
 }
 
-/// The Send Location presents an identity to the far end (ADR-0033: a Send
-/// Location presents a client certificate). Delivered when Xmip holds a
-/// credential and is authorized to present it here; Failed when it has none, the
-/// one it has is unusable, or presenting it is not permitted.
+/// The Send Location presents an identity to the Party `facing` (ADR-0033:
+/// a Send Location presents a client certificate). Delivered when Xmip holds
+/// a credential and is authorized to present it here; Failed when it has
+/// none, the one it has is unusable, or presenting it is not permitted.
 #[must_use]
-pub fn send(faults: &IdentityFaults, transport: &str, contract: Contract, round: u64) -> Outcome {
+pub fn send(
+    faults: &IdentityFaults,
+    facing: &Facing<'_>,
+    transport: &str,
+    contract: Contract,
+    round: u64,
+) -> Outcome {
     if let Some(reason) = faults.send_fault(transport, contract, round) {
         return Outcome::Failed(reason.to_string());
     }
 
-    let presented = Presented::passed(mechanism::mutual_tls(), SUBJECT);
-    match run_authentication(&presented, true) {
+    let presented = Presented::passed(mechanism::mutual_tls(), facing.subject());
+    match gates::authentication(facing, &presented, true) {
         Ok(identity) => {
-            let decision = run_authorization(identity, Action::Send, true);
+            let decision = gates::authorization(facing, identity, Action::Send, true);
             if decision.allowed() {
                 Outcome::Delivered
             } else {
@@ -347,47 +294,50 @@ fn not_reached(after: Step) -> Outcome {
     Outcome::OneSided(format!("not reached — {} did not pass", after.name()))
 }
 
-fn run_identification(subject_present: bool) -> Vec<Presented> {
-    let properties: Vec<(String, String)> = if subject_present {
-        vec![("peer.subject".to_string(), SUBJECT.to_string())]
-    } else {
-        Vec::new()
-    };
-    let location = crate::support::cluster_root();
-    let arrival = StreamArrival::new(Arriving::Pushed, &location, &properties);
-    let identifier = SubjectIdentifier;
-    let identifiers: [&dyn TransportIdentifier; 1] = [&identifier];
-    identify_transport(&identifiers, &arrival).unwrap_or_default()
-}
-
-fn run_authentication(
-    presented: &Presented,
-    honest: bool,
-) -> Result<AuthenticatedIdentity, Refusal> {
-    let acceptance = Acceptance::closed()
-        .accepting(&mechanism::mutual_tls())
-        .from_party(party_x());
-    let authenticator = TlsAuthenticator { honest };
-    let authenticators: [&dyn Authenticator; 1] = [&authenticator];
-    let registry = KnownParty;
-    authenticate(&acceptance, &authenticators, &registry, presented)
-}
-
-fn run_authorization(identity: AuthenticatedIdentity, action: Action, permits: bool) -> Decision {
-    let facts = IdentityFacts::evaluate(Alignment::None, identity, None);
-    let policy = LocationPolicy { permits };
-    let policies: [&dyn Authorizer; 1] = [&policy];
-    let attempt = Attempt::new(action, PARTY);
-    authorize(&policies, &facts, &attempt, OnMisalignment::Accept)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The configuration's Party at `place`.
+    fn facing(place: usize) -> Facing<'static> {
+        Facing {
+            parties: Parties::configured(),
+            party: place,
+        }
+    }
+
+    #[test]
+    fn each_party_is_proven_by_its_own_identity_and_no_other() {
+        let parties = Parties::configured();
+        let none = IdentityFaults::none();
+        for place in 0..parties.all().len() {
+            let steps = receive(&none, &facing(place), "http", Contract::Json, 1);
+            assert!(
+                steps.iter().all(|(_, o)| *o == Outcome::Delivered),
+                "{place}"
+            );
+            assert_eq!(
+                send(&none, &facing(place), "http", Contract::Json, 1),
+                Outcome::Delivered
+            );
+        }
+        // Another Party's certificate at this Party's Location is refused at
+        // authentication: the Location accepts its own Party alone.
+        let other = facing(1);
+        let claims = gates::identification(Some(facing(0).subject()));
+        let refused = gates::authentication(&other, &claims[0], true);
+        assert!(refused.is_err(), "{refused:?}");
+    }
+
     #[test]
     fn a_clean_receive_passes_all_three_steps() {
-        let steps = receive(&IdentityFaults::none(), "http", Contract::Json, 1);
+        let steps = receive(
+            &IdentityFaults::none(),
+            &facing(0),
+            "http",
+            Contract::Json,
+            1,
+        );
         assert_eq!(steps.len(), 3);
         assert!(
             steps
@@ -400,7 +350,13 @@ mod tests {
     #[test]
     fn a_clean_send_presents_identity() {
         assert_eq!(
-            send(&IdentityFaults::none(), "http", Contract::Json, 1),
+            send(
+                &IdentityFaults::none(),
+                &facing(1),
+                "http",
+                Contract::Json,
+                1
+            ),
             Outcome::Delivered
         );
     }
@@ -412,7 +368,7 @@ mod tests {
         let faults = IdentityFaults::realistic();
         let mut seen_stop = false;
         for round in 0..500 {
-            let steps = receive(&faults, "http", Contract::Json, round);
+            let steps = receive(&faults, &facing(2), "http", Contract::Json, round);
             if let Some(index) = steps
                 .iter()
                 .position(|(_, o)| matches!(o, Outcome::Failed(_)))
@@ -437,9 +393,12 @@ mod tests {
         let faults = IdentityFaults::realistic();
         for round in 0..2000 {
             for contract in [Contract::Bytes, Contract::Json, Contract::Xml] {
-                let steps = receive(&faults, "file", contract, round);
+                let steps = receive(&faults, &facing(2), "file", contract, round);
                 assert!(steps.iter().all(|(_, o)| *o == Outcome::Delivered));
-                assert_eq!(send(&faults, "file", contract, round), Outcome::Delivered);
+                assert_eq!(
+                    send(&faults, &facing(3), "file", contract, round),
+                    Outcome::Delivered
+                );
             }
         }
     }
@@ -449,8 +408,8 @@ mod tests {
         let faults = IdentityFaults::realistic();
         for round in 0..500 {
             assert_eq!(
-                receive(&faults, "smtp", Contract::Json, round),
-                receive(&faults, "smtp", Contract::Json, round)
+                receive(&faults, &facing(2), "smtp", Contract::Json, round),
+                receive(&faults, &facing(2), "smtp", Contract::Json, round)
             );
         }
     }

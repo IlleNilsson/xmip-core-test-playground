@@ -4,6 +4,7 @@
 
 use observe::Run;
 
+use crate::parties::Spread;
 use crate::roster::Roster;
 use crate::scenario::SCENARIOS;
 use crate::stress::Stress;
@@ -36,6 +37,40 @@ pub fn started(cluster: &str, chosen: &[String], roster: &Roster, stress: Stress
         stress: stress.name().to_string(),
         hidden: crate::environment::hidden(),
     }
+}
+
+/// The first lines of a run: the level, the cluster and the roster its
+/// cluster file declares, and the Parties it trades with, each with how
+/// many transports it sends in over and is delivered to over (ADR-0028,
+/// amendment 2026-10-13). Where the nodes declare no stage, that is said
+/// here rather than left to be noticed. The board clears a live terminal
+/// every round; a redirected log keeps these lines, and the `[run]` table of
+/// every snapshot carries the same answer of the nodes.
+#[must_use]
+pub fn announced(cluster: &str, stress: Stress, roster: &Roster, spread: &Spread) -> Vec<String> {
+    let mut lines = vec![format!(
+        "roll at {} as cluster {cluster}: {}",
+        stress.name(),
+        roster.describe()
+    )];
+    if !roster.is_empty() {
+        lines.push(format!("  roster: {}", roster.text()));
+    }
+    let parties: Vec<String> = spread
+        .parties()
+        .all()
+        .iter()
+        .enumerate()
+        .map(|(place, party)| {
+            let (sends, receives) = (spread.sends(place).len(), spread.receives(place).len());
+            format!("{} ({sends} in, {receives} out)", party.name)
+        })
+        .collect();
+    lines.push(format!(
+        "  parties, by the transports each sends in and is delivered to over: {}",
+        parties.join(", ")
+    ));
+    lines
 }
 
 /// The test a person knows for a scenario: `round-trip` is `RoundTrip`, the

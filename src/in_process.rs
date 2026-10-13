@@ -17,8 +17,7 @@ use crate::cluster::merge;
 use crate::environment::load_bytes;
 use crate::scenario::{DAILY_BACKLOG, EXCLUSIVE_CLAIM, ROUND_TRIP, drives};
 use crate::{
-    DailyBacklog, ExclusiveClaim, FaultPlan, Filing, HeavyLoad, LowLatency, Retention, Schedule,
-    Stress,
+    DailyBacklog, ExclusiveClaim, Filing, HeavyLoad, LowLatency, Retention, Schedule, Stress,
 };
 
 /// Every scenario a roll may run itself, and which of them it was told to.
@@ -52,7 +51,7 @@ impl InProcess {
             chosen,
             relayed,
             round_trip: Schedule::new(scope(ROUND_TRIP), base.join(ROUND_TRIP))
-                .with_faults(FaultPlan::realistic())
+                .rotating()
                 .pairs_per_round(slice),
             low_latency: LowLatency::new(scope("low-latency"), base.join("low-latency"))
                 .under_pressure()

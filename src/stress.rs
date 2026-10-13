@@ -24,8 +24,9 @@ pub enum Stress {
     /// No injected faults, small payloads, one pair at a time. What a test
     /// that proves a mechanism runs at.
     Calm,
-    /// The rates and sizes the runner used before the axis existed: mostly
-    /// green, faults surfacing over time.
+    /// The sizes the runner used before the axis existed, and one fault
+    /// every fifty seconds moving across the Parties (`rotation.rs`):
+    /// mostly green, trouble somewhere within any minute.
     Realistic,
     /// Fault rates tripled, payloads at the sizes protocols break on, four
     /// pairs at once, ten node processes.

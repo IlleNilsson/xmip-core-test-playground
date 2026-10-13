@@ -77,14 +77,16 @@ use observe::now_unix_nanos;
 use observe::{History, Run};
 use xaudit::program_audit::ProgramAudit;
 use xmip_core_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
+use xmip_core_test_playground::drop_box::Dropping;
 use xmip_core_test_playground::environment::{self, max_seconds, time_factor};
 use xmip_core_test_playground::in_process::InProcess;
 use xmip_core_test_playground::operator_orders;
 use xmip_core_test_playground::publication::Publication;
+use xmip_core_test_playground::run::announced;
 use xmip_core_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_core_test_playground::{
-    Budget, Headroom, Roster, Stress, cluster_name, cluster_root, cluster_topology, record_round,
-    redraw, started, summarise,
+    Budget, Headroom, Parties, Roster, Spread, Stress, cluster_name, cluster_root,
+    cluster_topology, record_round, redraw, started, summarise,
 };
 use xmip_core_test_playground::{image, process_audit};
 
@@ -131,10 +133,15 @@ fn main() {
     let relayed = or_refuse(&audit, relayed(&chosen, &roster));
     let run = started(&cluster, &chosen, &roster, stress);
 
-    announce(&cluster, stress, &roster);
+    let spread = Parties::configured().over_every_transport();
+    for line in announced(&cluster, stress, &roster, &spread) {
+        println!("{line}");
+    }
 
     // Every scenario this process runs itself (`in_process.rs`).
     let mut in_process = InProcess::new(root, &base, stress, chosen.clone(), relayed);
+    // The Parties' bursts into the drop box the receiving nodes share.
+    let mut dropping = relayed.then(|| Dropping::new(&shared(&base)));
 
     // An hour of history at one point a second: enough to watch a shift, bounded
     // so a week-long run does not grow. ADR-0029.
@@ -146,7 +153,7 @@ fn main() {
     // amendment 2026-09-30).
     let publication = Publication::of(&cluster, run.clone(), audit.clone())
         .taking_orders(&operator_orders::orders(&shared(&base)));
-    say_started(&audit, &run, limit, &publication.snapshot);
+    say_started(&audit, (&run, &spread), limit, &publication.snapshot);
 
     // One cluster per roll (ADR-0028), and since 2026-09-19 a process of its
     // own: it spawns and supervises the nodes and publishes beside this
@@ -180,7 +187,8 @@ fn main() {
         let topology = spawned.as_mut().map(|spawned| {
             merge(&mut snapshot, spawned.tick());
             let hops = spawned.hops();
-            let mut drawn = cluster_topology(&snapshot, &roster, relayed, hops, now_unix_nanos());
+            let now = now_unix_nanos();
+            let mut drawn = cluster_topology(&snapshot, &roster, relayed, hops, &spread, now);
             if let Some(before) = &drawn_before {
                 drawn.rate_since(before);
             }
@@ -192,6 +200,9 @@ fn main() {
         // file is written from: a scenario counts beneath the node, so a roll
         // that recorded only the snapshot published `points = []` for as long
         // as the Playground has had a history (curve.rs, 2026-09-19).
+        if let Some(dropping) = dropping.as_mut() {
+            dropping.round(root, &mut snapshot, now_unix_nanos());
+        }
         record_round(&mut history, root, &snapshot);
         publication.round(root, &snapshot, topology, &history, in_process.activity());
 
@@ -221,12 +232,24 @@ fn main() {
     // next roll on this cluster clears the directory before it starts.
     image::clear();
     let rounds = round.to_string();
-    process_audit::stop(&audit, &[("cluster", &cluster), ("rounds", &rounds)]);
+    let taken = dropping
+        .map(|dropping| dropping.words())
+        .unwrap_or_default();
+    process_audit::stop(
+        &audit,
+        &[
+            ("cluster", &cluster),
+            ("rounds", &rounds),
+            ("drop-box", &taken),
+        ],
+    );
 }
 
 /// The roll's `start` record: what the run was started with, as its `[run]`
-/// header says it, how many rounds, and where it publishes.
-fn say_started(audit: &ProgramAudit, run: &Run, limit: Option<u64>, snapshot: &Path) {
+/// header says it, the Parties it trades with, how many rounds, and where it
+/// publishes.
+fn say_started(audit: &ProgramAudit, ran: (&Run, &Spread), limit: Option<u64>, snapshot: &Path) {
+    let (run, spread) = ran;
     let rounds = limit.map_or_else(|| "until stopped".to_string(), |limit| limit.to_string());
     process_audit::start(
         audit,
@@ -236,6 +259,7 @@ fn say_started(audit: &ProgramAudit, run: &Run, limit: Option<u64>, snapshot: &P
             ("tests", &run.tests.join(",")),
             ("nodes", &run.roles.join(",")),
             ("online", &run.online.join(",")),
+            ("parties", &spread.parties().names().join(",")),
             ("rounds", &rounds),
             ("snapshot", &snapshot.display().to_string()),
         ],
@@ -252,22 +276,6 @@ fn or_refuse<T>(audit: &ProgramAudit, told: Result<T, String>) -> T {
         process_audit::fail(audit, "start", &refusal);
         std::process::exit(2);
     })
-}
-
-/// The first lines of a run: the level, the cluster and the roster its
-/// cluster file declares. Where the nodes declare no stage, that is said
-/// here rather than left to be noticed. The board clears a live terminal
-/// every round; a redirected log keeps these lines, and the `[run]` table of
-/// every snapshot carries the same answer.
-fn announce(cluster: &str, stress: Stress, roster: &Roster) {
-    println!(
-        "roll at {} as cluster {cluster}: {}",
-        stress.name(),
-        roster.describe()
-    );
-    if !roster.is_empty() {
-        println!("  roster: {}", roster.text());
-    }
 }
 
 /// Where the roll of a cluster publishes in an area, one `name=path` line

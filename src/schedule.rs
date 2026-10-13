@@ -25,8 +25,10 @@ use observe::{Activity, Snapshot};
 
 use crate::exchange::{RoundTrip, all_transports};
 use crate::fault::FaultPlan;
-use crate::identity::IdentityFaults;
 use crate::identity::verdicts::{receive_verdicts, send_verdict};
+use crate::identity::{Facing, IdentityFaults};
+use crate::parties::{Spread, spread_over};
+use crate::rotation::{Rotation, leveled};
 use crate::round_trip::{round_trip, round_trip_with};
 use crate::stress::{self, Stress};
 use crate::verdict::{Contract, Outcome, Verdict};
@@ -71,6 +73,10 @@ pub struct Schedule {
     transports: Vec<Box<dyn RoundTrip>>,
     faults: FaultPlan,
     identity_faults: IdentityFaults,
+    /// Which Party sends over, and is delivered to over, each transport.
+    spread: Spread,
+    /// The fault every fifty seconds, at a level above calm.
+    rotation: Option<Rotation>,
     /// The level, when one was set: its payload sizes and its workers.
     /// `None` is the schedule as it ran before the axis existed.
     stress: Option<Stress>,
@@ -94,6 +100,8 @@ impl Schedule {
         let transports = all_transports(file_dir);
 
         Self {
+            spread: spread_over(&transports),
+            rotation: None,
             ledger: Ledger::new(node),
             transports,
             faults: FaultPlan::none(),
@@ -122,26 +130,37 @@ impl Schedule {
         self
     }
 
-    /// The same schedule at a [`Stress`] level: the realistic faults scaled
-    /// to it (none at `Calm`, identity faults included above it), the level's
+    /// The same schedule at a [`Stress`] level: the level's faults
+    /// ([`leveled`]: the rotation above `Calm`, the realistic table scaled
+    /// to the level above `Realistic`, identity faults with it), the level's
     /// payload for each round — validation still runs over what arrived — and
     /// its pairs driven from the level's workers at once.
     #[must_use]
     pub fn at(self, stress: Stress) -> Self {
-        let faults = if stress == Stress::Calm {
-            FaultPlan::none()
-        } else {
-            FaultPlan::realistic().at(stress)
-        };
+        let (faults, rotating) = leveled(stress);
         let mut leveled = self.with_faults(faults);
         leveled.stress = Some(stress);
+        leveled.rotation = rotating.then(|| Rotation::new(leveled.spread.clone()));
         leveled
+    }
+
+    /// The same schedule struck by the fault every fifty seconds, moving
+    /// across the Parties (`rotation.rs`), and by nothing else it was not
+    /// already given.
+    #[must_use]
+    pub fn rotating(mut self) -> Self {
+        self.rotation = Some(Rotation::new(self.spread.clone()));
+        self
     }
 
     /// Drive these transports rather than every one. A test that judges the
     /// rollup over forty rounds needs three; the runner drives all.
     #[must_use]
     pub fn over(mut self, transports: Vec<Box<dyn RoundTrip>>) -> Self {
+        self.spread = spread_over(&transports);
+        if self.rotation.is_some() {
+            self.rotation = Some(Rotation::new(self.spread.clone()));
+        }
         self.transports = transports;
         self
     }
@@ -225,8 +244,12 @@ impl Schedule {
 
         let mut verdicts = Vec::with_capacity(Stage::ALL.len() + 4);
         for stage in Stage::ALL {
+            let struck = self
+                .rotation
+                .as_ref()
+                .and_then(|rotation| rotation.fault_for(stage, name, contract, seconds(now)));
             let (outcome, stage_bytes) =
-                match self.faults.fault_for(stage, name, contract, self.round) {
+                match struck.or_else(|| self.faults.fault_for(stage, name, contract, self.round)) {
                     Some(fault) => (Outcome::Failed(fault.evidence()), 0),
                     None => stage_outcome(stage, &base, bytes),
                 };
@@ -243,8 +266,23 @@ impl Schedule {
         }
 
         let identity = &self.identity_faults;
-        verdicts.extend(receive_verdicts(identity, name, contract, self.round, now));
-        verdicts.push(send_verdict(identity, name, contract, self.round, now));
+        let parties = self.spread.parties();
+        let (sender, receiver) = (self.spread.sender(name), self.spread.receiver(name));
+        let sending = Facing {
+            parties,
+            party: sender,
+        };
+        let receiving = Facing {
+            parties,
+            party: receiver,
+        };
+        let round = self.round;
+        verdicts.extend(receive_verdicts(
+            identity, &sending, name, contract, round, now,
+        ));
+        verdicts.push(send_verdict(
+            identity, &receiving, name, contract, round, now,
+        ));
         verdicts
     }
 
@@ -254,6 +292,12 @@ impl Schedule {
     pub fn tally(&self, scope: &str) -> Option<&Tally> {
         self.ledger.tally(scope)
     }
+}
+
+/// The whole seconds of `now`, in nanoseconds since the epoch: what the
+/// rotation's turns are counted in.
+pub(crate) fn seconds(now: i64) -> u64 {
+    u64::try_from(now / 1_000_000_000).unwrap_or_default()
 }
 
 /// One stage's outcome from the base result of the real exchange. Loopback

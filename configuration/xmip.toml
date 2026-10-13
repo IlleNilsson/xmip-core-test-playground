@@ -5,49 +5,153 @@
 # own directories, are written by the node that declared process as it
 # starts (src/subscribing.rs), and its slice is what it reads.
 #
-# The RoundTrip test is an Xmip Application (ADR-0064): a pair arrives at a
-# node that declared receive, is published at a node that declared process,
-# and each of these Subscriptions picks up the pairs of its family of content
-# contracts and routes them to the send stage. An operator pauses and resumes
-# these Subscriptions in the Subscriptions view (ADR-0013, amendment
-# 2026-09-30). They are added and removed here, in this file, and nowhere
-# else.
+# The Parties the cluster trades with (ADR-0019; ADR-0028, amendment
+# 2026-10-13). Each sends into the Playground over its share of the
+# transports and is delivered to over another share, presenting the
+# identity written here; the 50-second fault moves across them. Rename them
+# here: nothing in the Playground's code names a Party.
+
+[[parties]]
+name = "Party-A"
+identities = ["CN=party-a.example"]
+
+[[parties]]
+name = "Party-B"
+identities = ["CN=party-b.example"]
+
+[[parties]]
+name = "Party-C"
+identities = ["CN=party-c.example"]
+
+[[parties]]
+name = "Party-D"
+identities = ["CN=party-d.example"]
+
+[[parties]]
+name = "Party-E"
+identities = ["CN=party-e.example"]
+
+# Two Xmip Applications (ADR-0064), each a business flow an ERP runs with
+# its Parties: order to cash and procure to pay. A Stream arrives at a node
+# that declared receive, is published at a node that declared process, and
+# each Subscription picks up the Streams of its family of content contracts
+# and routes them to its Send Port. The names say what moves and with whom;
+# what it moves over is each Location's transport, which the operation tools
+# show from the configuration (the owner, 2026-10-13). An operator pauses
+# and resumes these Subscriptions in the Subscriptions view (ADR-0013,
+# amendment 2026-09-30); they are added and removed here, and nowhere else.
 
 [[xmip_applications]]
-name = "RoundTrip"
+name = "Order to cash"
 
 [[xmip_applications.receive_ports]]
-name = "RoundTrip"
+name = "Sales orders"
+
+[[xmip_applications.receive_ports]]
+name = "Remittance advices"
 
 [[xmip_applications.receive_locations]]
-name = "RoundTripIn"
-receive_port = "RoundTrip"
+name = "Sales orders from Party-A"
+receive_port = "Sales orders"
+interaction = "data-transfer"
+depth = "light"
+
+[[xmip_applications.receive_locations]]
+name = "Sales orders from Party-C"
+receive_port = "Sales orders"
+interaction = "data-transfer"
+depth = "light"
+
+[[xmip_applications.receive_locations]]
+name = "Remittance advices from Party-E"
+receive_port = "Remittance advices"
 interaction = "data-transfer"
 depth = "light"
 
 [[xmip_applications.send_ports]]
-name = "RoundTripOut"
+name = "Order responses to Party-A"
 
-# Structured documents: JSON, XML and what is written in either.
-[[xmip_applications.subscriptions]]
-id = "structured"
-destination = { send-port = "RoundTripOut" }
-filter = "MessageType in ('json', 'xml', 'html', 'fhir', 'schematron')"
+[[xmip_applications.send_ports]]
+name = "Despatch advices to Party-A"
+
+# A second Location for failover: the next is tried when the first has
+# failed its retries.
+[[xmip_applications.send_ports]]
+name = "Invoices to Party-A"
+send_locations = ["Invoices to Party-A", "Invoices to Party-A, failover"]
+failover = "next"
 
 # Interchanges between trading Parties and in care.
 [[xmip_applications.subscriptions]]
-id = "edi"
-destination = { send-port = "RoundTripOut" }
+id = "order-responses"
+destination = { send-port = "Order responses to Party-A" }
 filter = "MessageType in ('edi-edifact', 'edi-x12', 'hl7-v2')"
 
 # Records and lines: text a reader splits.
 [[xmip_applications.subscriptions]]
-id = "flat"
-destination = { send-port = "RoundTripOut" }
-filter = "MessageType in ('bytes', 'text', 'csv', 'fixed-width', 'regex', 'sql')"
+id = "despatch-advices"
+destination = { send-port = "Despatch advices to Party-A" }
+filter = "MessageType in ('bytes', 'text', 'csv')"
+
+# Structured documents: JSON, XML and what is written in either.
+[[xmip_applications.subscriptions]]
+id = "invoices"
+destination = { send-port = "Invoices to Party-A" }
+filter = "MessageType in ('json', 'xml', 'html', 'fhir', 'schematron')"
+
+[[xmip_applications]]
+name = "Procure to pay"
+
+[[xmip_applications.receive_ports]]
+name = "Purchase order responses"
+
+[[xmip_applications.receive_ports]]
+name = "Goods receipts"
+
+[[xmip_applications.receive_ports]]
+name = "Inventory"
+
+[[xmip_applications.receive_locations]]
+name = "Purchase order responses from Party-B"
+receive_port = "Purchase order responses"
+interaction = "data-transfer"
+depth = "light"
+
+[[xmip_applications.receive_locations]]
+name = "Goods receipts from Party-C"
+receive_port = "Goods receipts"
+interaction = "data-transfer"
+depth = "light"
+
+[[xmip_applications.receive_locations]]
+name = "Inventory reports from Party-D"
+receive_port = "Inventory"
+interaction = "batch-load"
+depth = "light"
+
+[[xmip_applications.send_ports]]
+name = "Purchase orders to Party-B"
+
+[[xmip_applications.send_ports]]
+name = "Item master to Party-D"
+
+[[xmip_applications.send_ports]]
+name = "Payments to Party-E"
+
+# Interface descriptions: what a Party's system offers.
+[[xmip_applications.subscriptions]]
+id = "purchase-orders"
+destination = { send-port = "Purchase orders to Party-B" }
+filter = "MessageType in ('wsdl', 'openapi', 'asyncapi')"
 
 # Schemas and the formats they describe.
 [[xmip_applications.subscriptions]]
-id = "schema"
-destination = { send-port = "RoundTripOut" }
-filter = "MessageType in ('avro', 'protobuf', 'graphql-schema', 'wsdl', 'openapi', 'asyncapi')"
+id = "item-master"
+destination = { send-port = "Item master to Party-D" }
+filter = "MessageType in ('avro', 'protobuf', 'graphql-schema')"
+
+# Fixed records, as a bank's payment files are.
+[[xmip_applications.subscriptions]]
+id = "payments"
+destination = { send-port = "Payments to Party-E" }
+filter = "MessageType in ('fixed-width', 'regex', 'sql')"

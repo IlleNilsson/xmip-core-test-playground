@@ -24,6 +24,10 @@ use node::Stage;
 
 use crate::verdict::Contract;
 
+/// The transport whose Receive and Send carry no injected fault at any
+/// level, so one transport's path stays green: the reliable local one.
+pub const STEADY: &str = "file";
+
 /// The kind of transport-and-content fault an operator triages by. Identity
 /// faults are not here: they belong to the identity pipeline (`identity.rs`),
 /// which surfaces Identification, Authentication and Authorization as their own
