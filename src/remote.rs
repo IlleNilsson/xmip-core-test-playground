@@ -290,6 +290,6 @@ mod tests {
     fn the_literals_of_an_insert_come_out_in_order_with_quotes_undoubled() {
         let sql = "INSERT INTO \"archive\" (a, b, c) VALUES ('json', 'it''s #1', '') RETURNING id";
         assert_eq!(literals(sql), ["json", "it's #1", ""]);
-        assert!(literals("SELECT 1").is_empty());
+        assert_eq!(literals("SELECT 1"), [] as [String; 0]);
     }
 }

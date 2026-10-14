@@ -118,8 +118,14 @@ mod tests {
         let parsed: toml::Value = text.parse().expect("valid TOML");
 
         assert_eq!(parsed["node"].as_str(), Some(root.as_str()));
-        assert!(!parsed["records"].as_array().expect("records").is_empty());
-        assert!(!parsed["counts"].as_array().expect("counts").is_empty());
+        assert_ne!(
+            parsed["records"].as_array().expect("records").as_slice(),
+            [] as [toml::Value; 0]
+        );
+        assert_ne!(
+            parsed["counts"].as_array().expect("counts").as_slice(),
+            [] as [toml::Value; 0]
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -204,7 +210,7 @@ mod tests {
         let parsed: toml::Value = text.parse().expect("valid TOML");
 
         let points = parsed["points"].as_array().expect("points");
-        assert!(!points.is_empty());
+        assert_ne!(points.as_slice(), [] as [toml::Value; 0]);
         assert!(
             points
                 .iter()

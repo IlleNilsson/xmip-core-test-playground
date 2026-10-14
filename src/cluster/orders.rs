@@ -184,7 +184,7 @@ mod tests {
         let orders = Orders::of(Stress::Realistic, Roster::of(&names), 5);
         assert_eq!(orders.names(), names);
         assert_eq!(orders.rounds, 5);
-        assert!(orders.scenarios.is_empty());
+        assert_eq!(orders.scenarios, [] as [String; 0]);
         assert!(orders.capability(&names[0]).declares_no_stage());
         assert_eq!(
             orders.refusal(),

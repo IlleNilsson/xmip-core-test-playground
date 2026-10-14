@@ -96,7 +96,10 @@ mod tests {
         history.record(&schedule.tick());
 
         let parsed: toml::Value = history_toml(node, &history).parse().expect("valid TOML");
-        assert!(parsed["points"].as_array().expect("points").is_empty());
+        assert_eq!(
+            parsed["points"].as_array().expect("points").as_slice(),
+            [] as [toml::Value; 0]
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

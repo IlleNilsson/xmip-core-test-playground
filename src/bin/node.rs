@@ -502,11 +502,11 @@ mod tests {
         assert_eq!(told.scenarios, ["round-trip"]);
         assert_eq!(told.roster.names(), [receiving, processing, sending]);
         assert_eq!(told.capability.words(), "receiving");
-        assert!(
+        assert_eq!(
             arguments(&["--scenarios", ""])
                 .expect("empty is every one")
-                .scenarios
-                .is_empty()
+                .scenarios,
+            [] as [String; 0]
         );
     }
 

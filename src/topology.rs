@@ -95,6 +95,7 @@ mod tests {
     use crate::report::roll_toml;
     use crate::support::{declaring, path, test_cluster};
     use node::Capability;
+    use observe::TopologyLink;
     use observe::{
         Count, Counted, Health, HealthRecord, NodeKind, Origin, Publication, Snapshot, TopologyNode,
     };
@@ -372,7 +373,7 @@ mod tests {
             ["cluster", named("node/<r>").as_str()],
             "no store until a test runs over it"
         );
-        assert!(bare.links.is_empty());
+        assert_eq!(bare.links, [] as [TopologyLink; 0]);
     }
 
     /// The owner, 2026-09-25: *even when testing, the topology does not show
