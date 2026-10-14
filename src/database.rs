@@ -115,40 +115,41 @@ pub struct MariaDbCabinet;
 
 impl MariaDbCabinet {
     fn serve(listener: &TcpListener) -> transport::Result<()> {
-        use transport::Login;
-        use transport_mariadb::{Answer, Session};
-        let login = Login::new("xmip", "");
+        use library_mariadb::{Answer, Expecting, NativePassword, Session};
+        let expecting = Expecting::new("xmip", "", &NativePassword);
+        let accept = || -> transport::Result<Session> {
+            let (stream, _) = transport::socket::accept_tcp(listener, Some(TIMEOUT))?;
+            Ok(Session::accept(stream, &expecting)?)
+        };
         let held: Held = Arc::default();
         let keep = Arc::clone(&held);
-        let mut inserting =
-            Session::accept(listener, &login, Some(TIMEOUT))?.answering(move |sql| {
-                if sql.starts_with("INSERT") {
-                    if let Ok(mut row) = keep.lock() {
-                        let text = literals(sql);
-                        *row = vec![
-                            text.first().cloned(),
-                            text.get(1).cloned(),
-                            text.get(2).map(|hex| format!("0x{hex}")),
-                            text.get(3).cloned(),
-                        ];
-                    }
-                    Some(Answer::Complete(1))
-                } else if sql.contains("LAST_INSERT_ID") {
-                    Some(Answer::Rows {
-                        columns: vec!["LAST_INSERT_ID()".to_string()],
-                        rows: vec![vec![Some(ROW_ID.to_string())]],
-                    })
-                } else {
-                    None
+        let mut inserting = accept()?.answering(move |sql| {
+            if sql.starts_with("INSERT") {
+                if let Ok(mut row) = keep.lock() {
+                    let text = literals(sql);
+                    *row = vec![
+                        text.first().cloned(),
+                        text.get(1).cloned(),
+                        text.get(2).map(|hex| format!("0x{hex}")),
+                        text.get(3).cloned(),
+                    ];
                 }
-            });
+                Some(Answer::Complete(1))
+            } else if sql.contains("LAST_INSERT_ID") {
+                Some(Answer::Rows {
+                    columns: vec!["LAST_INSERT_ID()".to_string()],
+                    rows: vec![vec![Some(ROW_ID.to_string())]],
+                })
+            } else {
+                None
+            }
+        });
         while inserting.next_event()?.is_some() {}
 
         let row = held_row(&held)?;
         let cells: Vec<Option<&str>> = row.iter().map(Option::as_deref).collect();
         let rows: [&[Option<&str>]; 1] = [&cells];
-        let mut selecting =
-            Session::accept(listener, &login, Some(TIMEOUT))?.with_table(&COLUMNS, &rows);
+        let mut selecting = accept()?.with_table(&COLUMNS, &rows);
         while selecting.next_event()?.is_some() {}
         Ok(())
     }

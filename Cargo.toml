@@ -131,6 +131,9 @@ transport_azure_blob = { package = "xmip-core-transport-azure-blob", git = "http
 transport_google_cloud_storage = { package = "xmip-core-transport-google-cloud-storage", git = "https://github.com/IlleNilsson/xmip-core-transport-google-cloud-storage", branch = "main" }
 transport_mssql = { package = "xmip-core-transport-mssql", git = "https://github.com/IlleNilsson/xmip-core-transport-mssql", branch = "main" }
 transport_mariadb = { package = "xmip-core-transport-mariadb", git = "https://github.com/IlleNilsson/xmip-core-transport-mariadb", branch = "main" }
+transport_mysql = { package = "xmip-core-transport-mysql", git = "https://github.com/IlleNilsson/xmip-core-transport-mysql", branch = "main" }
+transport_oracle = { package = "xmip-core-transport-oracle", git = "https://github.com/IlleNilsson/xmip-core-transport-oracle", branch = "main" }
+transport_db2 = { package = "xmip-core-transport-db2", git = "https://github.com/IlleNilsson/xmip-core-transport-db2", branch = "main" }
 # The built that gained their loopback on 2026-09-11 (ADR-0051).
 transport_azure_service_bus = { package = "xmip-core-transport-azure-service-bus", git = "https://github.com/IlleNilsson/xmip-core-transport-azure-service-bus", branch = "main" }
 transport_azure_event_hubs = { package = "xmip-core-transport-azure-event-hubs", git = "https://github.com/IlleNilsson/xmip-core-transport-azure-event-hubs", branch = "main" }
@@ -184,6 +187,8 @@ codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNil
 # SQL's string literal, read back once for every far end that answers an
 # archive's INSERT with the row it carried.
 sql = { package = "xmip-core-library-sql", git = "https://github.com/IlleNilsson/xmip-core-library-sql", branch = "main" }
+# The MariaDB far end the archive cabinet serves its target from.
+library_mariadb = { package = "xmip-core-library-mariadb", git = "https://github.com/IlleNilsson/xmip-core-library-mariadb", branch = "main" }
 
 # The identity axis: a Receive Location identifies, authenticates and authorizes;
 # a Send Location presents identity (ADR-0019, ADR-0033). The playground drives
