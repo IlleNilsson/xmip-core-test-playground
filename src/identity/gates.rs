@@ -14,9 +14,10 @@ use xcore::{Arriving, Layer, Mechanism, PartyId, Purpose, mechanism};
 use super::Facing;
 use crate::parties::Parties;
 
-/// The id a Party is resolved to: its place, counted from one.
+/// The id a Party is resolved to: its place, counted from one, as a node
+/// gives it (`configure::party::id`).
 fn id(place: usize) -> PartyId {
-    PartyId::new(place as u128 + 1)
+    configure::party::id(place)
 }
 
 /// Reads a mutual-TLS subject out of the arrival. A well-formed arrival carries

@@ -73,9 +73,7 @@ impl Parties {
     /// does: what a Receive Location resolves a proven claim to.
     #[must_use]
     pub fn holding(&self, presented: &str) -> Option<usize> {
-        self.parties
-            .iter()
-            .position(|party| party.identities.iter().any(|one| one == presented))
+        configure::party::place_holding(&self.parties, presented)
     }
 
     /// The Party at `place`.
