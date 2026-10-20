@@ -95,7 +95,7 @@ pub mod switch;
 pub mod topology;
 pub mod verdict;
 
-pub use board::{redraw, summarise};
+pub use board::{redraw, summarize};
 pub use budget::Budget;
 pub use cabinet::{Cabinet, Filed, all_cabinets};
 pub use cluster::Cluster;

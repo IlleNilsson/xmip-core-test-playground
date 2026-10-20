@@ -1,4 +1,4 @@
-//! Two time limits every roll of the playground honours (ADR-0028): a **maximum
+//! Two time limits every roll of the playground honors (ADR-0028): a **maximum
 //! time** to run, and a **factor on time**.
 //!
 //! The maximum is a wall-clock ceiling: when it is reached the roll stops,

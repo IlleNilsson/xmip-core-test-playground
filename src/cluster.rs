@@ -495,7 +495,7 @@ mod tests {
                     unix_nanos: now_unix_nanos(),
                     rounds: 0,
                 };
-                let text = toml::to_string(&beat).expect("a beat serialises");
+                let text = toml::to_string(&beat).expect("a beat serializes");
                 std::fs::write(heartbeat::beside(&beating), text).ok();
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -573,7 +573,7 @@ mod tests {
             unix_nanos: 7,
             rounds: 1,
         })
-        .expect("a beat serialises");
+        .expect("a beat serializes");
         for (index, node) in cluster.nodes.iter_mut().enumerate() {
             node.path = dir.join(format!("idle-{index}.toml"));
             std::fs::write(&node.path, &text).expect("a publication");

@@ -44,7 +44,7 @@ pub fn redraw(node: &str, round: u64, snapshot: &Snapshot) {
 
 /// One line per round, for a piped run: the rollup, and the worst leaf when it
 /// is not green.
-pub fn summarise(node: &str, round: u64, snapshot: &Snapshot) {
+pub fn summarize(node: &str, round: u64, snapshot: &Snapshot) {
     let worst = snapshot.worst(node).map_or("NONE", word);
     let count = pairs(node, snapshot).len();
 
@@ -71,7 +71,7 @@ pub fn pairs(node: &str, snapshot: &Snapshot) -> Vec<HealthRecord> {
 }
 
 /// The word a health carries on the board. The estate says its outcomes in
-/// words and never in colour alone.
+/// words and never in color alone.
 #[must_use]
 pub const fn word(health: Health) -> &'static str {
     match health {

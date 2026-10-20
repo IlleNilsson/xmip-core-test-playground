@@ -35,7 +35,7 @@ use crate::stress::{Stress, scaled_rate};
 use crate::verdict::Contract;
 use observe::now_unix_nanos;
 
-/// Seconds in a day — the unit the simulated clock is quantised to for creation.
+/// Seconds in a day — the unit the simulated clock is quantized to for creation.
 const SECONDS_PER_DAY: u64 = 86_400;
 
 /// How often, in percent of rounds at `Realistic`, a pressured Retention test

@@ -11,7 +11,7 @@ use observe::{Health, HealthRecord};
 use super::{DropBox, GRACE};
 use crate::parties::Parties;
 
-/// How many files a judgement names before it counts the rest.
+/// How many files a judgment names before it counts the rest.
 const NAMED: usize = 8;
 
 /// What the roll has judged of every file dropped so far over one protocol.
@@ -77,7 +77,7 @@ impl Judged {
         self.twice.is_empty() && self.never.is_empty()
     }
 
-    /// The judgement in words.
+    /// The judgment in words.
     #[must_use]
     pub fn words(&self) -> String {
         let split: Vec<String> = self
@@ -123,7 +123,7 @@ impl Judged {
         )
     }
 
-    /// The judgement as the record at `<root>/drop-box/<protocol>`: Fine
+    /// The judgment as the record at `<root>/drop-box/<protocol>`: Fine
     /// while every file was taken once, Done where one was not.
     #[must_use]
     pub fn record(&self, root: &str, protocol: &str, now: i64) -> HealthRecord {

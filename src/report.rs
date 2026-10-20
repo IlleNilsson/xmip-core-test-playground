@@ -107,7 +107,7 @@ mod tests {
     use observe::Counted;
 
     #[test]
-    fn a_ticked_schedule_serialises_to_toml_with_records_and_counts() {
+    fn a_ticked_schedule_serializes_to_toml_with_records_and_counts() {
         let dir = std::env::temp_dir().join("xmip-report-test");
         std::fs::remove_dir_all(&dir).ok();
         let root = cluster_root();
@@ -195,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn history_serialises_to_toml_points() {
+    fn history_serializes_to_toml_points() {
         let dir = std::env::temp_dir().join("xmip-report-history-test");
         std::fs::remove_dir_all(&dir).ok();
         let root = cluster_root();

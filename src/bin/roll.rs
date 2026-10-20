@@ -86,7 +86,7 @@ use xmip_core_test_playground::run::announced;
 use xmip_core_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_core_test_playground::{
     Budget, Headroom, Parties, Roster, Spread, Stress, cluster_name, cluster_root,
-    cluster_topology, record_round, redraw, started, summarise,
+    cluster_topology, record_round, redraw, started, summarize,
 };
 use xmip_core_test_playground::{image, process_audit};
 
@@ -210,7 +210,7 @@ fn main() {
             redraw(root, round, &snapshot);
             println!("  publishing to {}", publication.snapshot.display());
         } else {
-            summarise(root, round, &snapshot);
+            summarize(root, round, &snapshot);
         }
         println!("  headroom: {}", headroom.describe());
 

@@ -369,7 +369,7 @@ and sending one each, executing all three in one process, the low-latency
 choice, which keeps each pair it received to the end with no process hop. A
 node serving no stage behaves as every node did before: it runs the
 shared-directory tests whole and no part of RoundTrip. Two of ADR-0056's four
-kinds are modelled here, the roles and online capability (`--online`,
+kinds are modeled here, the roles and online capability (`--online`,
 ADR-0045); authentication and runtime capability are not, and the node's own
 capability record says so rather than leaving it to be guessed.
 

@@ -91,7 +91,7 @@ impl DropBox {
 
 /// The roll's side: the far ends, every so many rounds a burst dropped for
 /// every Party over every protocol, every file past its grace judged, and
-/// the judgement recorded.
+/// the judgment recorded.
 pub struct Dropping {
     drop_box: DropBox,
     far_ends: Result<FarEnds, String>,
@@ -155,7 +155,7 @@ impl Dropping {
     }
 
     /// Drop this round's bursts, judge what is due, and record each
-    /// protocol's judgement at `<root>/drop-box/<protocol>` — a drop that
+    /// protocol's judgment at `<root>/drop-box/<protocol>` — a drop that
     /// failed, in its words.
     pub fn round(&mut self, root: &str, snapshot: &mut Snapshot, now: i64) {
         self.round += 1;
@@ -175,7 +175,7 @@ impl Dropping {
         }
     }
 
-    /// The judgement so far, protocol by protocol, in words.
+    /// The judgment so far, protocol by protocol, in words.
     #[must_use]
     pub fn words(&self) -> String {
         self.judged

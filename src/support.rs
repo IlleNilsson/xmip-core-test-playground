@@ -1,5 +1,5 @@
 //! Small helpers shared across the scenarios: the cluster a roll is, and —
-//! for tests — a scratch directory and the one judgement every cabinet is
+//! for tests — a scratch directory and the one judgment every cabinet is
 //! held to. The wall clock every scenario stamps its records with is
 //! observe's, `observe::now_unix_nanos`.
 

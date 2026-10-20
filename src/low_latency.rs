@@ -78,8 +78,8 @@ fn budget_micros(transport: &str) -> u64 {
     // an injected spike, three times the budget, crosses the line. Raised
     // fourfold on 2026-09-10 when the harsh tests began sharing the box:
     // with four pairs in flight and mebibytes on the wire, a 25 ms budget
-    // on file was blown by contention alone, and a judgement that fails when
-    // the machine is merely busy is not a latency judgement.
+    // on file was blown by contention alone, and a judgment that fails when
+    // the machine is merely busy is not a latency judgment.
     match transport {
         "file" | "udp" | "tcp" => 100_000,
         "websocket" | "http" => 120_000,

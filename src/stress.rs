@@ -42,7 +42,7 @@ impl Stress {
     pub const NAMES: [&'static str; 4] = ["calm", "realistic", "harsh", "brutal"];
 
     /// The level a roll runs at: `XMIP_PLAYGROUND_STRESS` as one of the four
-    /// names, `realistic` when unset or unrecognised.
+    /// names, `realistic` when unset or unrecognized.
     #[must_use]
     pub fn from_env() -> Self {
         std::env::var("XMIP_PLAYGROUND_STRESS")
@@ -189,7 +189,7 @@ pub fn edge_payloads(ceiling: Option<usize>) -> Vec<(&'static str, Vec<u8>)> {
 }
 
 /// `len` bytes that a truncation, a reorder or a duplicate would change:
-/// each byte is its offset folded, so no two neighbouring runs repeat.
+/// each byte is its offset folded, so no two neighboring runs repeat.
 #[must_use]
 pub fn patterned(len: usize) -> Vec<u8> {
     (0..len)

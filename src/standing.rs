@@ -3,7 +3,7 @@
 //! Three tests — `HeavyLoad`, Retention, `ExclusiveClaim` — judge a scope the same way: each
 //! round passes, warns or fails; the scope reads `Fine` while it is passing with
 //! a clean history, `Stressed` while it passes now but has failed before (or
-//! warned this round), `Done` the round it fails. This is that one judgement, so each
+//! warned this round), `Done` the round it fails. This is that one judgment, so each
 //! scenario keeps only what is unique to it. `RoundTrip` keeps its own, richer,
 //! Outcome-based tally in `schedule.rs` (it scales severity with the failure
 //! rate); the rest share this.
