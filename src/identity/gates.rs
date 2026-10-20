@@ -14,12 +14,6 @@ use xcore::{Arriving, Layer, Mechanism, PartyId, Purpose, mechanism};
 use super::Facing;
 use crate::parties::Parties;
 
-/// The id a Party is resolved to: its place, counted from one, as a node
-/// gives it (`configure::party::id`).
-fn id(place: usize) -> PartyId {
-    configure::party::id(place)
-}
-
 /// Reads a mutual-TLS subject out of the arrival. A well-formed arrival carries
 /// a `peer.subject`; an identification fault carries none, and `None` is the
 /// honest answer — nothing was presented to identify.
@@ -58,12 +52,16 @@ impl Authenticator for TlsAuthenticator {
 }
 
 /// Resolves a subject to the Party that holds it among the configuration's
-/// Parties; a subject none holds resolves to nobody.
+/// Parties, under the mechanism that verified it and for the purpose
+/// asked, by the identifier written with it; a subject none holds resolves
+/// to nobody.
 struct Configured<'a>(&'a Parties);
 
 impl PartyRegistry for Configured<'_> {
-    fn resolve(&self, _mechanism: &str, _purpose: Purpose, value: &str) -> Option<PartyId> {
-        self.0.holding(value).map(id)
+    fn resolve(&self, mechanism: &str, purpose: Purpose, value: &str) -> Option<PartyId> {
+        self.0
+            .holding(mechanism, purpose, value)
+            .map(|place| self.0.id(place))
     }
 }
 
@@ -119,7 +117,7 @@ pub(super) fn authentication(
 ) -> Result<AuthenticatedIdentity, Refusal> {
     let acceptance = Acceptance::closed()
         .accepting(&mechanism::mutual_tls())
-        .from_party(id(facing.party));
+        .from_party(facing.parties.id(facing.party));
     let authenticator = TlsAuthenticator { honest };
     let authenticators: [&dyn Authenticator; 1] = [&authenticator];
     let registry = Configured(facing.parties);

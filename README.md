@@ -487,9 +487,12 @@ Party's endpoints, and its evidence names that leaf's transport.
 The owner, watching a run: *You have not Implementet more Parties than
 Party-X. It is better, but not good enough.* The Parties are
 `configuration/xmip.toml`'s `[[parties]]` — `Party-A` to `Party-E` as
-shipped, each with the certificate subject it presents — read by
-`configure`'s one reading of them; nothing in the code names one, so a
-Party is renamed there. `src/parties.rs` spreads them over the transports in
+shipped, each with its id, a UUIDv7 written once with it, and the
+certificate subject it presents as a `mutual-tls` identity for `receive`
+(the owner, 2026-10-19) — read by `configure`'s one reading of them;
+nothing in the code names one, so a Party is renamed there, and a verified
+subject resolves to the Party whose identity holds it under the mechanism
+that verified it, by that id. `src/parties.rs` spreads them over the transports in
 both directions: the Party at a transport's place in the list sends into its
 Receive Locations, the next Party is delivered to over its Send Locations, so
 every Party sends and receives, over different transports, every stream of a

@@ -15,6 +15,7 @@
 use std::sync::OnceLock;
 
 use configure::PartyConfiguration;
+use xcore::{PartyId, Purpose};
 
 use crate::exchange::{RoundTrip, all_transports};
 use crate::subscribing::CLUSTER;
@@ -69,11 +70,21 @@ impl Parties {
             .collect()
     }
 
-    /// The place of the Party that holds the identity `presented`, if one
-    /// does: what a Receive Location resolves a proven claim to.
+    /// The place of the Party that holds the identity `presented` under
+    /// `mechanism` for `purpose`, if one does: what a Receive Location
+    /// resolves a proven claim to.
     #[must_use]
-    pub fn holding(&self, presented: &str) -> Option<usize> {
-        configure::party::place_holding(&self.parties, presented)
+    pub fn holding(&self, mechanism: &str, purpose: Purpose, presented: &str) -> Option<usize> {
+        configure::party::place_holding(&self.parties, mechanism, purpose, presented)
+    }
+
+    /// The identifier the Party at `place` is written with.
+    ///
+    /// # Panics
+    /// Where it has none: [`Parties::of`] refuses such a Party.
+    #[must_use]
+    pub fn id(&self, place: usize) -> PartyId {
+        self.at(place).id.expect("a sound Party has its id")
     }
 
     /// The Party at `place`.
@@ -189,9 +200,16 @@ mod tests {
         );
         assert_eq!(&parties, Parties::configured());
         for (place, party) in parties.all().iter().enumerate() {
-            assert_eq!(parties.holding(&party.identities[0]), Some(place));
+            let first = &party.identities[0];
+            assert_eq!(
+                parties.holding(&first.mechanism, first.purpose, &first.value),
+                Some(place)
+            );
         }
-        assert_eq!(parties.holding("CN=nobody"), None);
+        assert_eq!(
+            parties.holding("mutual-tls", Purpose::Receive, "CN=nobody"),
+            None
+        );
         assert!(
             Parties::of("[service]\nname = \"n\"\n").is_err(),
             "none is refused"

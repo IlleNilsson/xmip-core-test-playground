@@ -50,7 +50,7 @@ impl Facing<'_> {
             .at(self.party)
             .identities
             .first()
-            .map_or("", String::as_str)
+            .map_or("", |identity| identity.value.as_str())
     }
 }
 

@@ -9,27 +9,45 @@
 # 2026-10-13). Each sends into the Playground over its share of the
 # transports and is delivered to over another share, presenting the
 # identity written here; the 50-second fault moves across them. Rename them
-# here: nothing in the Playground's code names a Party.
+# here: nothing in the Playground's code names a Party. Each Party is
+# written with its id, a UUIDv7 minted once with it, and each identity
+# with the mechanism that verifies it and what it is for (the owner,
+# 2026-10-19).
 
 [[parties]]
+id = "01a1577b-4402-7ccf-8dbc-c2e0d7ec5189"
 name = "Party-A"
-identities = ["CN=party-a.example"]
+identities = [
+  { mechanism = "mutual-tls", purpose = "receive", value = "CN=party-a.example" },
+]
 
 [[parties]]
+id = "01a1577b-4418-7c64-8ea4-cd84a22a31f4"
 name = "Party-B"
-identities = ["CN=party-b.example"]
+identities = [
+  { mechanism = "mutual-tls", purpose = "receive", value = "CN=party-b.example" },
+]
 
 [[parties]]
+id = "01a1577b-441a-7aba-9cfa-9328e46f7004"
 name = "Party-C"
-identities = ["CN=party-c.example"]
+identities = [
+  { mechanism = "mutual-tls", purpose = "receive", value = "CN=party-c.example" },
+]
 
 [[parties]]
+id = "01a1577b-441b-7160-af1d-8d6bc087d827"
 name = "Party-D"
-identities = ["CN=party-d.example"]
+identities = [
+  { mechanism = "mutual-tls", purpose = "receive", value = "CN=party-d.example" },
+]
 
 [[parties]]
+id = "01a1577b-441c-7945-a51b-11efd67a0878"
 name = "Party-E"
-identities = ["CN=party-e.example"]
+identities = [
+  { mechanism = "mutual-tls", purpose = "receive", value = "CN=party-e.example" },
+]
 
 # Two Xmip Applications (ADR-0064), each a business flow an ERP runs with
 # its Parties: order to cash and procure to pay. A Stream arrives at a node
