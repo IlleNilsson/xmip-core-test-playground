@@ -128,11 +128,43 @@ A roll spawns the nodes of the cluster file `XMIP_TEST_CLUSTER` names: every
 node under its `[nodes]` is one process, declaring the roles its `roles` key
 says (`Roster::of_cluster`, over `configure::cluster::roles`), and a roll told
 no file is REFUSED. `Start-XmipTest` writes the run's own file from
-`-Cluster`, `-Nodes` and `-NodeRole`, or names the test cluster's,
-`test/xmip.toml`, where `-Nodes` was not given. Nothing is counted or
-numbered (ADR-0056, amendment 2026-10-03). Where no node declares a stage,
-each runs whole tests itself, and both the roll's first line and
+`-Cluster` and the nodes `-Nodes` names, or, where it names none, every node
+of the Playground's own cluster file, [`configuration/xmip.toml`](configuration/xmip.toml),
+each with the roles `-NodeRole` states or that file declares. Nothing is
+counted or numbered (ADR-0056, amendment 2026-10-03). Where no node declares
+a stage, each runs whole tests itself, and both the roll's first line and
 `Start-XmipTest` say so.
+
+### One file, simulated nodes and real ones, 2026-10-21
+
+The owner: *one TOML file that can be run for tests regardless of node
+faking or actual nodes.* `configuration/xmip.toml` is that file (ADR-0028,
+amendment 2026-10-21). It declares the cluster's nine nodes and their roles,
+where each that stores nothing reaches the Storage nodes, by name, where
+every node is operated from, with its certificate's paths relative to its
+configuration, the Parties and the Xmip Applications — and nothing of where
+it runs: no cluster name, no machine's address, no absolute path. The run
+names the cluster, and its node that declared process writes the bindings,
+the run's own directories, slicing through `configure::slice_named` as an
+environment does; on machines of their own the environment templates under
+`deploy/dsc` give each machine its node's slice of the same file.
+
+A node is **simulated** — a process this run spawned — unless the name typed
+for it is real (`src/real.rs`). Only what the operator typed is resolved:
+`-Cluster` and the nodes `-Nodes` named, `XMIP_PLAYGROUND_NAMED`, by this
+machine's resolver, at the port the file says that node is operated on. A
+name that resolves must answer over its operate listener, asked with the
+operator certificate `-Certificate` names (`XMIP_PLAYGROUND_CERTIFICATE`:
+`operator.pem`, `operator.key`, `anchors.pem`), as that node of this cluster
+saying what it can do; it is then **real**, runs by the roles it declared,
+and is never spawned, configured or stopped. Anything else is REFUSED by
+name and nothing spawns. The roll reads each real node's publication every
+round into the run's snapshot, and `<node>/reached` says it answered or why
+not; `[run] real` names them, and the first lines and the board say where
+each answered. The cluster process is given the simulated nodes alone, and
+the scenarios' work is spread over them: a real node is observed, not yet
+driven, until Xmip Storage is reached over the wire in the assembled
+service.
 
 ### Every transport declares its ceiling
 
@@ -394,7 +426,7 @@ owner struck that too: *Rn, Pn and Sn are arbitrary node names* (ADR-0056,
 amendment). **Nowhere in Xmip is a node's name read.** A named node carries
 what `-NodeRole @{ R1 = 'receiving' }` states for it and nothing else; a
 node given none declares none, and `Start-XmipTest` says so in words before it
-spawns anything. Omit `-Nodes` and the test cluster's `xmip.toml` declares
+spawns anything. Omit `-Nodes` and the Playground's own `xmip.toml` declares
 them. What leaves PowerShell is a cluster file, `[nodes.R1] roles =
 "receiving"` — a declaration, not a name.
 The examples here name clusters `C1`, `C2` and nodes `R1`, `P1`, `S1`, as the
@@ -580,8 +612,11 @@ own environment, never yours: `-Stress` is `XMIP_PLAYGROUND_STRESS`
 simulate, one process each, each declaring the roles `-NodeRole` gives it —
 `[nodes.R1] roles = "receiving"`; a node it does not name declares nothing,
 and nothing here is worked out from a name; an empty list is a cluster of no
-nodes; omitted, `XMIP_TEST_CLUSTER` names the test cluster's file as it is,
-and the run record says the nodes and the file), `-OnlineNodes` is
+nodes; omitted, the file holds every node the Playground's own file declares,
+and the run record says the nodes and the file; the names `-Nodes` typed are
+`XMIP_PLAYGROUND_NAMED`, the only ones resolved for a real node), `-Certificate`
+is `XMIP_PLAYGROUND_CERTIFICATE`, the operator certificate a real node is
+asked with, `-OnlineNodes` is
 `XMIP_PLAYGROUND_ONLINE_NODES`
 (which of them may assume the internet, by name, ADR-0045; unset, every node
 reads `XMIP_ONLINE`), `-Duration` is

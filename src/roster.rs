@@ -104,6 +104,21 @@ impl Roster {
         self.nodes.iter().map(|(name, _)| name.as_str()).collect()
     }
 
+    /// The same roster without the nodes named in `real`: what the rig
+    /// simulates where some nodes run on machines of their own and are
+    /// never spawned (ADR-0028, amendment 2026-10-21).
+    #[must_use]
+    pub fn without(&self, real: &[String]) -> Self {
+        Self {
+            nodes: self
+                .nodes
+                .iter()
+                .filter(|(name, _)| !real.iter().any(|one| one.eq_ignore_ascii_case(name)))
+                .cloned()
+                .collect(),
+        }
+    }
+
     /// Whether no node was named at all.
     #[must_use]
     pub fn is_empty(&self) -> bool {

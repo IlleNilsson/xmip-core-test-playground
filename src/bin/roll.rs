@@ -64,6 +64,16 @@
 //! role. A node serving no stage runs the shared-directory tests whole, as
 //! before. A node's name decides none of this.
 //!
+//! **A real node is used where its name resolves** (ADR-0028, amendments
+//! 2026-09-19 and 2026-10-21): the names the operator typed,
+//! `XMIP_PLAYGROUND_NAMED`, and the cluster's, are resolved, and one that
+//! answers as that node of this cluster over its operate listener, asked
+//! with the operator certificate `XMIP_PLAYGROUND_CERTIFICATE` names, is
+//! real — never spawned, configured or stopped, its publication read each
+//! round; one that resolves and does not is REFUSED by name. The cluster
+//! process is given only the simulated nodes, and `[run] real` and the
+//! first lines say which are which (`real.rs`).
+//!
 //! **It audits** (ADR-0062): `start` once the roll knows what it is, `stop`
 //! when its rounds are done, every refusal and failed write as a failure, and
 //! every panic as `unhandled` — into `XMIP_AUDIT_DIRECTORY`, else the
@@ -82,7 +92,8 @@ use xmip_core_test_playground::environment::{self, max_seconds, time_factor};
 use xmip_core_test_playground::in_process::InProcess;
 use xmip_core_test_playground::operator_orders;
 use xmip_core_test_playground::publication::Publication;
-use xmip_core_test_playground::run::announced;
+use xmip_core_test_playground::real;
+use xmip_core_test_playground::run::{announced, found};
 use xmip_core_test_playground::scenario::{ROUND_TRIP, drives};
 use xmip_core_test_playground::{
     Budget, Headroom, Parties, Roster, Spread, Stress, cluster_name, cluster_root,
@@ -98,43 +109,33 @@ fn main() {
     let audit = ProgramAudit::new(&called, None);
     audit.watch_panics();
 
-    // Asked where a cluster publishes, it answers the same way: the names
-    // are decided here (`environment::publish_paths`), and `Start-XmipTest`
-    // records what it is told rather than naming the files again.
-    if std::env::args().nth(1).as_deref() == Some("--publication") {
-        println!(
-            "{}",
-            or_refuse(
-                &audit,
-                the_publication(&std::env::args().skip(2).collect::<Vec<_>>())
-            )
-        );
+    if answered_publication(&audit) {
         return;
     }
 
     let (cluster, root, base) = or_refuse(&audit, this_cluster());
     let root = root.as_str();
-
-    // What this process says of itself while it runs (ADR-0053): the roll is
-    // the test over the cluster it starts, and everything the Playground runs
-    // is test. Every record from here carries the same location, so a reader
-    // knows whose it is (ADR-0062, amendment 2026-09-29).
-    audit.locate(root);
-    let declaration = ::node::Declaration::new(called, root, ::node::Purpose::Test);
-    let _declared = process_audit::declared(&audit, declaration)
-        .and_then(|declaration| declaration.declare().map_err(|error| error.to_string()))
-        .map_err(|error| {
-            let problem = format!("roll: could not declare itself: {error}");
-            process_audit::fail(&audit, "declare", &problem);
-        });
+    let _declared = declared(&audit, called, root);
     let stress = Stress::from_env();
     let chosen = or_refuse(&audit, environment::scenarios());
-    let roster = or_refuse(&audit, environment::roster());
-    let relayed = or_refuse(&audit, relayed(&chosen, &roster));
-    let run = started(&cluster, &chosen, &roster, stress);
+    // A typed name that resolves and answers is a real node; the rest are
+    // simulated, and only they are spawned.
+    let real::Sorted {
+        real: real_nodes,
+        names: real_names,
+        roster,
+        simulated,
+    } = or_refuse(
+        &audit,
+        environment::roster().and_then(|all| real::sorted(&cluster, all)),
+    );
+    let relayed = or_refuse(&audit, relayed(&chosen, &simulated));
+    let run = started(&cluster, &chosen, &roster, stress, &real_names);
 
     let spread = Parties::configured().over_every_transport();
-    for line in announced(&cluster, stress, &roster, &spread) {
+    let mut first = announced(&cluster, stress, &roster, &spread);
+    first.extend(found(&real_nodes));
+    for line in first {
         println!("{line}");
     }
 
@@ -159,7 +160,7 @@ fn main() {
     // own: it spawns and supervises the nodes and publishes beside this
     // roll's snapshot, which merges that one file each round.
     let cluster_path = publication.beside(&format!("{cluster}-cluster.toml"));
-    let orders = Orders::of(stress, roster.clone(), 0).driving(&chosen);
+    let orders = Orders::of(stress, simulated.clone(), 0).driving(&chosen);
     let mut spawned = spawn_cluster(&audit, &cluster, &orders, &base, &cluster_path);
 
     let live = std::io::stdout().is_terminal();
@@ -195,6 +196,7 @@ fn main() {
             drawn
         });
         drawn_before.clone_from(&topology);
+        real::published_into(&real_nodes, root, &mut snapshot, now_unix_nanos());
 
         // Every scope's series, and the rollup at the root that the history
         // file is written from: a scenario counts beneath the node, so a roll
@@ -208,6 +210,9 @@ fn main() {
 
         if live {
             redraw(root, round, &snapshot);
+            if let Some(line) = found(&real_nodes) {
+                println!("{line}");
+            }
             println!("  publishing to {}", publication.snapshot.display());
         } else {
             summarize(root, round, &snapshot);
@@ -245,6 +250,35 @@ fn main() {
     );
 }
 
+/// Asked where a cluster publishes, it answers the same way: the names are
+/// decided here (`environment::publish_paths`), and `Start-XmipTest`
+/// records what it is told rather than naming the files again. Whether it
+/// was asked, and answered.
+fn answered_publication(audit: &ProgramAudit) -> bool {
+    if std::env::args().nth(1).as_deref() != Some("--publication") {
+        return false;
+    }
+    let told: Vec<String> = std::env::args().skip(2).collect();
+    println!("{}", or_refuse(audit, the_publication(&told)));
+    true
+}
+
+/// What this process says of itself while it runs (ADR-0053): the roll is
+/// the test over the cluster it starts, and everything the Playground runs
+/// is test. Every record from here carries the same location, so a reader
+/// knows whose it is (ADR-0062, amendment 2026-09-29). The declaration
+/// stays while what this answers is held.
+fn declared(audit: &ProgramAudit, called: String, root: &str) -> impl Sized {
+    audit.locate(root);
+    let declaration = ::node::Declaration::new(called, root, ::node::Purpose::Test);
+    process_audit::declared(audit, declaration)
+        .and_then(|declaration| declaration.declare().map_err(|error| error.to_string()))
+        .map_err(|error| {
+            let problem = format!("roll: could not declare itself: {error}");
+            process_audit::fail(audit, "declare", &problem);
+        })
+}
+
 /// The roll's `start` record: what the run was started with, as its `[run]`
 /// header says it, the Parties it trades with, how many rounds, and where it
 /// publishes.
@@ -259,6 +293,7 @@ fn say_started(audit: &ProgramAudit, ran: (&Run, &Spread), limit: Option<u64>, s
             ("tests", &run.tests.join(",")),
             ("nodes", &run.roles.join(",")),
             ("online", &run.online.join(",")),
+            ("real", &run.real.join(",")),
             ("parties", &spread.parties().names().join(",")),
             ("rounds", &rounds),
             ("snapshot", &snapshot.display().to_string()),

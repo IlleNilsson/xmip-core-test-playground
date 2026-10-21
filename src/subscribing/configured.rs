@@ -2,7 +2,10 @@
 //! the Playground's cluster configuration with the run's names and the
 //! bindings that place every Application on the run's nodes, sliced as
 //! deployment slices it. Split from `subscribing.rs` on 2026-10-13, when the
-//! bindings came to be written from the sections.
+//! bindings came to be written from the sections. The file names no
+//! cluster: the run's is given to the slice as an environment gives its
+//! own (`configure::slice_named`; ADR-0028, amendment 2026-10-21), and the
+//! bindings' addresses are the run's directories, never the file's.
 
 use std::path::{Path, PathBuf};
 
@@ -73,12 +76,10 @@ pub(super) fn configured(
         }
     }
     let file = format!(
-        "[service]\nname = \"xmip-playground\"\ncluster_name = {}\n\n{}{CLUSTER}\n\
-         [nodes.{name}.service]\nname = \"xmip-playground-{name}\"\n",
-        quoted(cluster),
+        "{}{CLUSTER}\n[nodes.{name}.service]\nname = \"xmip-playground-{name}\"\n",
         bindings.concat(),
     );
-    let text = configure::slice(&file, name)?;
+    let text = configure::slice_named(&file, name, cluster)?;
     let path = directory.join(format!("{name}.node.toml"));
     written(&path, &text)?;
     Ok(path)

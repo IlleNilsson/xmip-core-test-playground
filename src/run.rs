@@ -5,16 +5,24 @@
 use observe::Run;
 
 use crate::parties::Spread;
+use crate::real::RealNode;
 use crate::roster::Roster;
 use crate::scenario::SCENARIOS;
 use crate::stress::Stress;
 
 /// The run of `cluster` driving the `chosen` scenarios (none chosen is every
-/// one) over the nodes of `roster` at `stress`: the tests by the names a
+/// one) over the nodes of `roster` at `stress`, those named in `real` on
+/// machines of their own and the rest simulated: the tests by the names a
 /// person asks for them, and what each node was started with, including its
 /// online capability. The shape is `observe::Run`'s; this only fills it.
 #[must_use]
-pub fn started(cluster: &str, chosen: &[String], roster: &Roster, stress: Stress) -> Run {
+pub fn started(
+    cluster: &str,
+    chosen: &[String],
+    roster: &Roster,
+    stress: Stress,
+    real: &[String],
+) -> Run {
     let scenarios: Vec<&str> = if chosen.is_empty() {
         SCENARIOS.to_vec()
     } else {
@@ -36,7 +44,26 @@ pub fn started(cluster: &str, chosen: &[String], roster: &Roster, stress: Stress
             .collect(),
         stress: stress.name().to_string(),
         hidden: crate::environment::hidden(),
+        real: real.to_vec(),
     }
+}
+
+/// The line that says which nodes are real and where each answered, and
+/// that the rest are simulated; none where every node is simulated, as on
+/// one computer (ADR-0028, amendment 2026-10-21).
+#[must_use]
+pub fn found(real: &[RealNode]) -> Option<String> {
+    if real.is_empty() {
+        return None;
+    }
+    let named: Vec<String> = real
+        .iter()
+        .map(|node| format!("{} at {}", node.name, node.address))
+        .collect();
+    Some(format!(
+        "  real, on machines of their own and never spawned: {}; the rest simulated",
+        named.join(", ")
+    ))
 }
 
 /// The first lines of a run: the level, the cluster and the roster its
@@ -111,14 +138,25 @@ mod tests {
                     .with_online(true),
             );
         let c = cluster.name.as_str();
-        let run = started(c, &["round-trip".to_string()], &roster, Stress::Harsh);
+        let run = started(
+            c,
+            &["round-trip".to_string()],
+            &roster,
+            Stress::Harsh,
+            &[first.to_string()],
+        );
+        assert_eq!(run.real, [first], "the real nodes are said apart");
         assert_eq!(run.tests, ["RoundTrip"]);
         assert_eq!(run.nodes, [first, second, bare]);
         assert_eq!(run.roles, roles);
         assert_eq!(run.online, [first]);
         assert_eq!((run.cluster.as_str(), run.stress.as_str()), (c, "harsh"));
 
-        let every = started(c, &[], &Roster::default(), Stress::Calm);
+        let every = started(c, &[], &Roster::default(), Stress::Calm, &[]);
+        assert!(
+            every.real.is_empty() && found(&[]).is_none(),
+            "all simulated"
+        );
         assert_eq!(
             every.tests,
             [

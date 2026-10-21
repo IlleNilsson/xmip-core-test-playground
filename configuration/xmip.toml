@@ -1,10 +1,82 @@
-# The Playground's cluster configuration: what every node of a run shares
-# (ADR-0031, amendment 2026-10-03: one xmip.toml per cluster). The run names
-# the cluster and its nodes — Start-XmipTest's -Cluster and -Nodes — so
-# [service], [nodes.<name>] and the bindings, whose addresses are the run's
-# own directories, are written by the node that declared process as it
-# starts (src/subscribing.rs), and its slice is what it reads.
+# The Playground's cluster configuration: one file for a run on one computer
+# and for the same cluster on machines of its own (the owner, 2026-10-21:
+# *one TOML file that can be run for tests regardless of node faking or
+# actual nodes*; ADR-0028, amendment 2026-10-21). It says what the cluster
+# is — its nodes and their roles, where each reaches Xmip Storage and is
+# operated from, its Parties and its Xmip Applications — and nothing of
+# where it runs: no address of a machine, no absolute path, no cluster
+# name. Those are the environment's. On one computer the run gives them:
+# Start-XmipTest's -Cluster names the cluster, and the node that declared
+# process writes the bindings, whose addresses are the run's own
+# directories, as it starts (src/subscribing.rs). On machines of their own
+# the environment template gives them (deploy/dsc): `xmip-service
+# --install --cluster` names the cluster, and each machine is given its
+# node's slice of this file.
 #
+# A node finds the others by name: `D1:7443` is the node D1, resolved as
+# every name is, never "this machine". A path is relative to the node's
+# configuration file, so `tls/node.pem` is where the environment put this
+# node's certificate, whatever machine it is on.
+
+# Operated over gRPC at the node's address, on the operate plane's port,
+# inside Xmip's mutual TLS (ADR-0014, ADR-0063); its local endpoint,
+# xmip-<node>, always starts. The certificate is the node's, from the
+# cluster's own authority; the anchors are that authority, which an
+# operator's certificate must reach. Every proven caller operates.
+[operate]
+listen = "0.0.0.0:7401"
+certificate = "tls/node.pem"
+key = "tls/node.key"
+anchors = "tls/anchors.pem"
+role = "operator"
+
+# The nodes, named as the owner names them (ADR-0056, amendment 2026-10-12):
+# Rn receiving, Pn processing, Sn sending, Ln low latency, On operation, Dn
+# Storage. What each does is its roles, never its letter. Only D1 and D2
+# keep Xmip Storage; every other node reaches them by name, round robin
+# (ADR-0056, amendment 2026-10-20).
+
+[nodes.R1]
+roles = "receiving"
+[nodes.R1.storage]
+nodes = ["D1:7443", "D2:7443"]
+
+[nodes.R2]
+roles = "receiving"
+[nodes.R2.storage]
+nodes = ["D1:7443", "D2:7443"]
+
+[nodes.P1]
+roles = "processing"
+[nodes.P1.storage]
+nodes = ["D1:7443", "D2:7443"]
+
+[nodes.S1]
+roles = "sending"
+[nodes.S1.storage]
+nodes = ["D1:7443", "D2:7443"]
+
+[nodes.S2]
+roles = "sending"
+[nodes.S2.storage]
+nodes = ["D1:7443", "D2:7443"]
+
+[nodes.L1]
+roles = "executing"
+[nodes.L1.storage]
+nodes = ["D1:7443", "D2:7443"]
+
+[nodes.O1]
+roles = "operational, monitoring"
+[nodes.O1.storage]
+nodes = ["D1:7443", "D2:7443"]
+
+[nodes.D1]
+roles = "storage"
+
+[nodes.D2]
+roles = "storage"
+
 # The Parties the cluster trades with (ADR-0019; ADR-0028, amendment
 # 2026-10-13). Each sends into the Playground over its share of the
 # transports and is delivered to over another share, presenting the

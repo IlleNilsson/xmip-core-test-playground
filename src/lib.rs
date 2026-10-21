@@ -76,6 +76,7 @@ pub mod operator_orders;
 pub mod parties;
 pub mod process_audit;
 pub mod publication;
+pub mod real;
 pub mod relay;
 pub mod remote;
 pub mod report;

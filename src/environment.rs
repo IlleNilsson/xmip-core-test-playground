@@ -61,6 +61,33 @@ pub fn roster() -> Result<Roster, String> {
     Ok(roster)
 }
 
+/// The nodes the operator typed, `-Nodes`, from `XMIP_PLAYGROUND_NAMED`,
+/// comma separated: the only node names a roll resolves to find a real
+/// node (ADR-0028, amendments 2026-09-19 and 2026-10-21). Unset or empty,
+/// no node was typed — the run took the cluster file's — and none is
+/// resolved.
+#[must_use]
+pub fn named() -> Vec<String> {
+    std::env::var("XMIP_PLAYGROUND_NAMED")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The folder of the operator certificate a roll asks a real node with,
+/// `XMIP_PLAYGROUND_CERTIFICATE`, which `Start-XmipTest -Certificate` sets:
+/// `operator.pem`, the chain the cluster's authority signed, `operator.key`
+/// and `anchors.pem`, that authority. `None` where nothing named one.
+#[must_use]
+pub fn certificate() -> Option<PathBuf> {
+    std::env::var_os("XMIP_PLAYGROUND_CERTIFICATE")
+        .filter(|named| !named.is_empty())
+        .map(PathBuf::from)
+}
+
 /// The directory a roll publishes in: `XMIP_PLAYGROUND_AREA`, where
 /// `Start-XmipTest` keeps the run, else the temp directory.
 #[must_use]
