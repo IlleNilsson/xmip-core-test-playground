@@ -402,7 +402,7 @@ operating system's log.
 Since 2026-09-29 each says whose it is on every record: the location it
 declares — `xmip:///C1` for the roll and its cluster, `xmip:///C1/node/R1`
 for a node — through `ProgramAudit::locate` where it declares itself, so the
-Audit view, `xmip-cli audit` and `Get-XmipAudit` group a run's records by
+Audit view, `xmip audit` and `Get-XmipAudit` group a run's records by
 cluster and node and never read a process name (ADR-0062, amendment
 2026-09-29).
 
