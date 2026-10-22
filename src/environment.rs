@@ -40,6 +40,23 @@ pub const CLUSTER_FILE: &str = "XMIP_TEST_CLUSTER";
 /// When no file is named or it cannot be read, or a word is no role:
 /// REFUSED, naming the file (ADR-0055).
 pub fn roster() -> Result<Roster, String> {
+    let (file, text) = cluster_file()?;
+    let mut roster = Roster::of_cluster(&text)
+        .map_err(|problem| format!("REFUSED: the cluster file {}: {problem}", file.display()))?;
+    let nodes: Vec<String> = roster.names().into_iter().map(str::to_string).collect();
+    for node in &nodes {
+        let capability = roster.capability(node).with_online(node_is_online(node));
+        roster = roster.declared(node, capability);
+    }
+    Ok(roster)
+}
+
+/// The run's cluster file [`CLUSTER_FILE`] names, and its text.
+///
+/// # Errors
+///
+/// When no file is named or it cannot be read: REFUSED, naming the file.
+pub fn cluster_file() -> Result<(PathBuf, String), String> {
     let file = std::env::var_os(CLUSTER_FILE)
         .filter(|named| !named.is_empty())
         .map(PathBuf::from)
@@ -51,14 +68,20 @@ pub fn roster() -> Result<Roster, String> {
         })?;
     let text = std::fs::read_to_string(&file)
         .map_err(|error| format!("REFUSED: the cluster file {}: {error}", file.display()))?;
-    let mut roster = Roster::of_cluster(&text)
-        .map_err(|problem| format!("REFUSED: the cluster file {}: {problem}", file.display()))?;
-    let nodes: Vec<String> = roster.names().into_iter().map(str::to_string).collect();
-    for node in &nodes {
-        let capability = roster.capability(node).with_online(node_is_online(node));
-        roster = roster.declared(node, capability);
-    }
-    Ok(roster)
+    Ok((file, text))
+}
+
+/// The `xmip-service` a roll starts each node it does not simulate as,
+/// `XMIP_PLAYGROUND_SERVICE`, which `Start-XmipTest` builds and sets: every
+/// node of the run then a process of the assembled service, reaching Xmip
+/// Storage over the wire as on machines of its own (ADR-0028, amendment
+/// 2026-10-22). `None` where nothing named one, and every node not real is
+/// simulated as before.
+#[must_use]
+pub fn service() -> Option<PathBuf> {
+    std::env::var_os("XMIP_PLAYGROUND_SERVICE")
+        .filter(|named| !named.is_empty())
+        .map(PathBuf::from)
 }
 
 /// The nodes the operator typed, `-Nodes`, from `XMIP_PLAYGROUND_NAMED`,

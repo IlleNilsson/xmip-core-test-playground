@@ -6,9 +6,10 @@
 # operated from, its Parties and its Xmip Applications — and nothing of
 # where it runs: no address of a machine, no absolute path, no cluster
 # name. Those are the environment's. On one computer the run gives them:
-# Start-XmipTest's -Cluster names the cluster, and the node that declared
-# process writes the bindings, whose addresses are the run's own
-# directories, as it starts (src/subscribing.rs). On machines of their own
+# Start-XmipTest's -Cluster names the cluster, and the run gives each node it
+# starts its addresses on loopback, its certificate from the run's
+# authority and the bindings, whose addresses are the run's own
+# directories (src/served.rs). On machines of their own
 # the environment template gives them (deploy/dsc): `xmip-service
 # --install --cluster` names the cluster, and each machine is given its
 # node's slice of this file.
@@ -30,46 +31,43 @@ key = "tls/node.key"
 anchors = "tls/anchors.pem"
 role = "operator"
 
+# Xmip Storage, reached by name over Xmip's mutual TLS with the node's own
+# certificate (ADR-0063; ADR-0067, amendment 2026-10-13). Only D1 and D2
+# keep it, each serving it on the Storage plane's port; every other node
+# reaches them (ADR-0056, amendment 2026-10-20). They are the primary and
+# its standby, as they settle it, the first listed the first primary
+# (ADR-0056, amendment 2026-10-22).
+[storage]
+nodes = ["D1:7443", "D2:7443"]
+listen = "0.0.0.0:7443"
+certificate = "tls/node.pem"
+key = "tls/node.key"
+anchors = "tls/anchors.pem"
+
 # The nodes, named as the owner names them (ADR-0056, amendment 2026-10-12):
 # Rn receiving, Pn processing, Sn sending, Ln low latency, On operation, Dn
-# Storage. What each does is its roles, never its letter. Only D1 and D2
-# keep Xmip Storage; every other node reaches them by name, round robin
-# (ADR-0056, amendment 2026-10-20).
+# Storage. What each does is its roles, never its letter.
 
 [nodes.R1]
 roles = "receiving"
-[nodes.R1.storage]
-nodes = ["D1:7443", "D2:7443"]
 
 [nodes.R2]
 roles = "receiving"
-[nodes.R2.storage]
-nodes = ["D1:7443", "D2:7443"]
 
 [nodes.P1]
 roles = "processing"
-[nodes.P1.storage]
-nodes = ["D1:7443", "D2:7443"]
 
 [nodes.S1]
 roles = "sending"
-[nodes.S1.storage]
-nodes = ["D1:7443", "D2:7443"]
 
 [nodes.S2]
 roles = "sending"
-[nodes.S2.storage]
-nodes = ["D1:7443", "D2:7443"]
 
 [nodes.L1]
 roles = "executing"
-[nodes.L1.storage]
-nodes = ["D1:7443", "D2:7443"]
 
 [nodes.O1]
 roles = "operational, monitoring"
-[nodes.O1.storage]
-nodes = ["D1:7443", "D2:7443"]
 
 [nodes.D1]
 roles = "storage"
@@ -125,7 +123,9 @@ identities = [
 # its Parties: order to cash and procure to pay. A Stream arrives at a node
 # that declared receive, is published at a node that declared process, and
 # each Subscription picks up the Streams of its family of content contracts
-# and routes them to its Send Port. The names say what moves and with whom;
+# and routes them to its Send Port, by the name each arrives under, which
+# begins with its contract's name (`file.name`, what a file Receive Location
+# gives every Message it takes). The names say what moves and with whom;
 # what it moves over is each Location's transport, which the operation tools
 # show from the configuration (the owner, 2026-10-13). An operator pauses
 # and resumes these Subscriptions in the Subscriptions view (ADR-0013,
@@ -175,19 +175,19 @@ failover = "next"
 [[xmip_applications.subscriptions]]
 id = "order-responses"
 destination = { send-port = "Order responses to Party-A" }
-filter = "MessageType in ('edi-edifact', 'edi-x12', 'hl7-v2')"
+filter = "file.name like 'edi-edifact-%' or file.name like 'edi-x12-%' or file.name like 'hl7-v2-%'"
 
 # Records and lines: text a reader splits.
 [[xmip_applications.subscriptions]]
 id = "despatch-advices"
 destination = { send-port = "Despatch advices to Party-A" }
-filter = "MessageType in ('bytes', 'text', 'csv')"
+filter = "file.name like 'bytes-%' or file.name like 'text-%' or file.name like 'csv-%'"
 
 # Structured documents: JSON, XML and what is written in either.
 [[xmip_applications.subscriptions]]
 id = "invoices"
 destination = { send-port = "Invoices to Party-A" }
-filter = "MessageType in ('json', 'xml', 'html', 'fhir', 'schematron')"
+filter = "file.name like 'json-%' or file.name like 'xml-%' or file.name like 'html-%' or file.name like 'fhir-%' or file.name like 'schematron-%'"
 
 [[xmip_applications]]
 name = "Procure to pay"
@@ -232,16 +232,16 @@ name = "Payments to Party-E"
 [[xmip_applications.subscriptions]]
 id = "purchase-orders"
 destination = { send-port = "Purchase orders to Party-B" }
-filter = "MessageType in ('wsdl', 'openapi', 'asyncapi')"
+filter = "file.name like 'wsdl-%' or file.name like 'openapi-%' or file.name like 'asyncapi-%'"
 
 # Schemas and the formats they describe.
 [[xmip_applications.subscriptions]]
 id = "item-master"
 destination = { send-port = "Item master to Party-D" }
-filter = "MessageType in ('avro', 'protobuf', 'graphql-schema')"
+filter = "file.name like 'avro-%' or file.name like 'protobuf-%' or file.name like 'graphql-schema-%'"
 
 # Fixed records, as a bank's payment files are.
 [[xmip_applications.subscriptions]]
 id = "payments"
 destination = { send-port = "Payments to Party-E" }
-filter = "MessageType in ('fixed-width', 'regex', 'sql')"
+filter = "file.name like 'fixed-width-%' or file.name like 'regex-%' or file.name like 'sql-%'"

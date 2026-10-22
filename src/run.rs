@@ -61,7 +61,8 @@ pub fn found(real: &[RealNode]) -> Option<String> {
         .map(|node| format!("{} at {}", node.name, node.address))
         .collect();
     Some(format!(
-        "  real, on machines of their own and never spawned: {}; the rest simulated",
+        "  real, each read where it answers — on a machine of its own, or started here as \
+         xmip-service: {}; the rest simulated",
         named.join(", ")
     ))
 }

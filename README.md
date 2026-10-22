@@ -161,10 +161,29 @@ and is never spawned, configured or stopped. Anything else is REFUSED by
 name and nothing spawns. The roll reads each real node's publication every
 round into the run's snapshot, and `<node>/reached` says it answered or why
 not; `[run] real` names them, and the first lines and the board say where
-each answered. The cluster process is given the simulated nodes alone, and
-the scenarios' work is spread over them: a real node is observed, not yet
-driven, until Xmip Storage is reached over the wire in the assembled
-service.
+each answered.
+
+Every other node is **started**, a process of the assembled `xmip-service`,
+where the run was given one — `Start-XmipTest` builds it as the
+`personal-computer` site builds it, `XMIP_PLAYGROUND_SERVICE` — and one of
+those nodes declares the Storage role, which the rest reach; else it is
+simulated (`src/served.rs`; ADR-0028, amendment 2026-10-22). The run is
+their environment: each its slice of the file, its certificate from the
+run's own authority, each plane on loopback — the Storage nodes' names in
+`[storage] nodes` resolved to the addresses they serve at — and the
+bindings that place the Applications on them, file Locations over the
+run's folders (`src/bindings.rs`). D1 and D2 keep Xmip Storage, the primary
+and its standby; every other node reaches them over Xmip's mutual TLS. The
+roll reads each at its local endpoint, `xmip-<cluster>-<node>`, as a real
+node, and **drives them** (`src/carried.rs`): each round a file into each
+bound Receive Location, the next content contract each time, named
+`<contract>-<number>`, which the file's Subscriptions route by
+(`file.name`) to a Send Port another node sends; `<cluster>/carried` says
+how many arrived, how long each took, and Done for one lost. The run ends
+their input to stop them, once every file had its time to arrive. The
+cluster process is given the simulated nodes alone, and only they carry the
+relayed scenarios; a node on a machine of its own is driven only through
+the Receive Locations its environment binds.
 
 ### Every transport declares its ceiling
 

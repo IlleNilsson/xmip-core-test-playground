@@ -175,6 +175,15 @@ impl Contract {
         }
     }
 
+    /// The name the `number`th Stream of this contract arrives under: its
+    /// contract's name first, which the cluster's Subscriptions route it by
+    /// (`file.name`, what a file Receive Location gives every Message it
+    /// takes), simulated and real nodes alike.
+    #[must_use]
+    pub fn file_name(self, number: u64) -> String {
+        format!("{}-{number}", self.name())
+    }
+
     /// The payload this contract sends. What comes back must equal it, and the
     /// contract must hold over it.
     #[must_use]

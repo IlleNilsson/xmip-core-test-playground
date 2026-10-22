@@ -148,7 +148,7 @@ impl Subscribing {
     /// it is not handed on.
     pub fn route(&self, handoff: &Handoff) -> Result<bool, String> {
         let promoted = Promoted::new()
-            .set("MessageType", handoff.contract.name())
+            .set("file.name", handoff.contract.file_name(handoff.round))
             .set("Transport", handoff.transport.as_str());
         let routing = publish(&promoted, &self.subscriptions);
         let picked = routing.evaluations.iter().find(|one| one.matched());
@@ -383,7 +383,7 @@ mod tests {
     /// The id of the Subscription the shipped configuration picks up
     /// `contract` by, and the Send Port it routes to.
     fn routing(contract: Contract) -> (String, String) {
-        let promoted = Promoted::new().set("MessageType", contract.name());
+        let promoted = Promoted::new().set("file.name", contract.file_name(0));
         designed()
             .into_iter()
             .flat_map(|application| application.subscriptions)
@@ -399,7 +399,7 @@ mod tests {
             .flat_map(|application| application.subscriptions)
             .collect();
         for contract in CONTRACTS {
-            let promoted = Promoted::new().set("MessageType", contract.name());
+            let promoted = Promoted::new().set("file.name", contract.file_name(0));
             let picking = subscriptions
                 .iter()
                 .filter(|subscription| subscription.filter.evaluate(&promoted).holds())
@@ -464,7 +464,8 @@ mod tests {
             structured.configuration
         );
         assert!(
-            structured.configuration.contains(&port) && structured.configuration.contains("'json'"),
+            structured.configuration.contains(&port)
+                && structured.configuration.contains("'json-%'"),
             "{}",
             structured.configuration
         );

@@ -84,6 +84,22 @@ pub struct RealNode {
 }
 
 impl RealNode {
+    /// The node `name` the run started on this computer (`served`), read at
+    /// its local endpoint `endpoint`, which the operating system proves the
+    /// rig to, declaring `capability`.
+    ///
+    /// # Errors
+    ///
+    /// An endpoint that is no name in the endpoints' folder.
+    pub fn local(name: &str, endpoint: &str, capability: Capability) -> Result<Self, String> {
+        Ok(Self {
+            name: name.to_string(),
+            address: format!("the local endpoint {endpoint}"),
+            capability,
+            remote: Remote::local(endpoint, std::time::Duration::ZERO)?,
+        })
+    }
+
     /// What the node publishes now, read over its operate listener, into
     /// `snapshot`, beneath its own scope; where it does not answer, that is
     /// recorded at `<node>/reached`, with why, and nothing else of it.

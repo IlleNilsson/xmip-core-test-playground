@@ -47,10 +47,12 @@
 //! What it can do grows with the runtime and the transports. Created
 //! 2026-09-05; named by the owner.
 
+pub mod bindings;
 pub mod board;
 pub mod budget;
 pub mod cabinet;
 pub mod capability;
+pub mod carried;
 pub mod cluster;
 pub mod contracts;
 pub mod curve;
@@ -87,6 +89,7 @@ pub mod round_trip;
 pub mod run;
 pub mod scenario;
 pub mod schedule;
+pub mod served;
 pub mod standing;
 pub mod storm;
 pub mod stress;

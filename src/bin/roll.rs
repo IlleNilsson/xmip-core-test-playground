@@ -74,6 +74,13 @@
 //! process is given only the simulated nodes, and `[run] real` and the
 //! first lines say which are which (`real.rs`).
 //!
+//! **Every other node is started as `xmip-service`** where the run was
+//! given one, `XMIP_PLAYGROUND_SERVICE`, and one of those nodes declares the
+//! Storage role (ADR-0028, amendment 2026-10-22): the run gives each its
+//! slice, its certificate, its addresses on loopback and its bindings
+//! (`served.rs`), reads it as a real node, and drives it through its Receive
+//! Locations each round (`carried.rs`); simulated where not.
+//!
 //! **It audits** (ADR-0062): `start` once the roll knows what it is, `stop`
 //! when its rounds are done, every refusal and failed write as a failure, and
 //! every panic as `unhandled` — into `XMIP_AUDIT_DIRECTORY`, else the
@@ -86,15 +93,17 @@ use std::time::Duration;
 use observe::now_unix_nanos;
 use observe::{History, Run};
 use xaudit::program_audit::ProgramAudit;
+use xmip_core_test_playground::carried::Carried;
 use xmip_core_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
 use xmip_core_test_playground::drop_box::Dropping;
 use xmip_core_test_playground::environment::{self, max_seconds, time_factor};
 use xmip_core_test_playground::in_process::InProcess;
 use xmip_core_test_playground::operator_orders;
 use xmip_core_test_playground::publication::Publication;
-use xmip_core_test_playground::real;
+use xmip_core_test_playground::real::{self, RealNode};
 use xmip_core_test_playground::run::{announced, found};
 use xmip_core_test_playground::scenario::{ROUND_TRIP, drives};
+use xmip_core_test_playground::served::{self, Served};
 use xmip_core_test_playground::{
     Budget, Headroom, Parties, Roster, Spread, Stress, cluster_name, cluster_root,
     cluster_topology, record_round, redraw, started, summarize,
@@ -118,17 +127,14 @@ fn main() {
     let _declared = declared(&audit, called, root);
     let stress = Stress::from_env();
     let chosen = or_refuse(&audit, environment::scenarios());
-    // A typed name that resolves and answers is a real node; the rest are
-    // simulated, and only they are spawned.
-    let real::Sorted {
+    let Nodes {
         real: real_nodes,
         names: real_names,
         roster,
         simulated,
-    } = or_refuse(
-        &audit,
-        environment::roster().and_then(|all| real::sorted(&cluster, all)),
-    );
+        served,
+        mut carried,
+    } = or_refuse(&audit, nodes(&cluster, &base));
     let relayed = or_refuse(&audit, relayed(&chosen, &simulated));
     let run = started(&cluster, &chosen, &roster, stress, &real_names);
 
@@ -197,6 +203,9 @@ fn main() {
         });
         drawn_before.clone_from(&topology);
         real::published_into(&real_nodes, root, &mut snapshot, now_unix_nanos());
+        if let Some(carried) = carried.as_mut() {
+            carried.round(root, &mut snapshot, now_unix_nanos());
+        }
 
         // Every scope's series, and the rollup at the root that the history
         // file is written from: a scenario counts beneath the node, so a roll
@@ -225,29 +234,139 @@ fn main() {
         std::thread::sleep(real);
     }
 
-    // The cluster is asked to leave before this process does, so it stops its
-    // own nodes on the way out and nothing is orphaned.
+    let ran = Ran {
+        round,
+        dropping,
+        carried,
+    };
+    leave(
+        &audit,
+        &cluster,
+        &ran,
+        (spawned, served),
+        (&base, &cluster_path),
+    );
+}
+
+/// What a roll did, said as it stops.
+struct Ran {
+    round: u64,
+    dropping: Option<Dropping>,
+    carried: Option<Carried>,
+}
+
+/// The roll of `cluster` leaving, having `ran`: the cluster process asked
+/// to leave first, so it stops its own nodes on the way out and nothing is
+/// orphaned; every file dropped into the nodes the run started given its
+/// time to arrive, then those nodes drained before what they keep goes
+/// with the run's `base`, and the cluster's file at `path`; the images go
+/// with them, and the stop is audited.
+fn leave(
+    audit: &ProgramAudit,
+    cluster: &str,
+    ran: &Ran,
+    (spawned, served): (Option<Spawned>, Option<Served>),
+    (base, path): (&Path, &Path),
+) {
     if let Some(mut spawned) = spawned {
         spawned.stop();
     }
-    std::fs::remove_dir_all(&base).ok();
-    std::fs::remove_file(&cluster_path).ok();
-    // The images the cluster and its nodes ran under go with them. This
-    // process still holds its own, so Stop-XmipTest takes the rest, and the
-    // next roll on this cluster clears the directory before it starts.
+    if let Some(carried) = &ran.carried {
+        carried.settle();
+    }
+    if let Some(served) = served {
+        served.stop();
+    }
+    std::fs::remove_dir_all(base).ok();
+    std::fs::remove_file(path).ok();
+    // This process still holds its own image, so Stop-XmipTest takes the
+    // rest, and the next roll on this cluster clears the directory first.
     image::clear();
-    let rounds = round.to_string();
-    let taken = dropping
-        .map(|dropping| dropping.words())
+    let rounds = ran.round.to_string();
+    let taken = ran
+        .dropping
+        .as_ref()
+        .map(Dropping::words)
         .unwrap_or_default();
+    let carried = ran.carried.as_ref().map(Carried::words).unwrap_or_default();
     process_audit::stop(
-        &audit,
+        audit,
         &[
-            ("cluster", &cluster),
+            ("cluster", cluster),
             ("rounds", &rounds),
             ("drop-box", &taken),
+            ("carried", &carried),
         ],
     );
+}
+
+/// The run's nodes, sorted: the real ones — a typed name that resolves and
+/// answers, and every other node started as `xmip-service` where the run
+/// was given one, driven through its Receive Locations — their names, the
+/// roster, and the simulated nodes alone, which are all the cluster process
+/// spawns.
+struct Nodes {
+    real: Vec<RealNode>,
+    names: Vec<String>,
+    roster: Roster,
+    simulated: Roster,
+    served: Option<Served>,
+    carried: Option<Carried>,
+}
+
+/// The nodes of the run of `cluster` beneath `base`, as [`Nodes`] sorts
+/// them.
+///
+/// # Errors
+///
+/// REFUSED, as [`real::sorted`] and [`serve`] say.
+fn nodes(cluster: &str, base: &Path) -> Result<Nodes, String> {
+    let real::Sorted {
+        mut real,
+        mut names,
+        roster,
+        simulated,
+    } = environment::roster().and_then(|all| real::sorted(cluster, all))?;
+    let (served, started, simulated) = serve(cluster, &roster, simulated, base)?;
+    names.extend(started.iter().map(|node| node.name.clone()));
+    real.extend(started);
+    let carried = served
+        .as_ref()
+        .map(|served| Carried::new(&served.bindings))
+        .transpose()?;
+    Ok(Nodes {
+        real,
+        names,
+        roster,
+        simulated,
+        served,
+        carried,
+    })
+}
+
+/// Every node of `simulated` started as the `xmip-service` the run was
+/// given (`environment::service`), and the real nodes the rig reads them
+/// as; none, and every one still simulated, where it was given none or none
+/// of them declares the Storage role, which the rest would reach.
+///
+/// # Errors
+///
+/// REFUSED where a node does not start, as [`Served::start`] says.
+fn serve(
+    cluster: &str,
+    roster: &Roster,
+    simulated: Roster,
+    base: &Path,
+) -> Result<(Option<Served>, Vec<RealNode>, Roster), String> {
+    let Some(service) = environment::service() else {
+        return Ok((None, Vec::new(), simulated));
+    };
+    let names: Vec<String> = simulated.names().into_iter().map(str::to_string).collect();
+    if names.is_empty() || !served::stores(&names)? {
+        return Ok((None, Vec::new(), simulated));
+    }
+    let (served, real) = Served::start((cluster, roster), &names, (base, &service))?;
+    Ok((Some(served), real, simulated.without(&names)))
 }
 
 /// Asked where a cluster publishes, it answers the same way: the names are
