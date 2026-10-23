@@ -55,37 +55,56 @@ fn found(variable: &str, stem: &str) -> io::Result<PathBuf> {
         })
 }
 
-/// Build one of this crate's binaries now, so a test never runs a stale one.
-/// Cargo sets `CARGO_BIN_EXE_<name>` for integration tests only, never for a
-/// library's unit tests, so a unit test builds the binary itself: a no-op when
-/// it is fresh, and cargo has released the build lock by the time tests run.
-/// Under a landing it builds through the landing's patch, which
-/// `XMIP_CARGO_CONFIG` names, as the test itself was built.
+/// Build this crate's two binaries now, once for the whole test process, so
+/// a test never runs a stale one. Cargo sets `CARGO_BIN_EXE_<name>` for
+/// integration tests only, never for a library's unit tests, so a unit test
+/// builds them itself: one cargo call for both, made by the first test that
+/// needs them while every other waits for it, and none after — where every
+/// test built its own, four builds ran at once on every core and spoiled the
+/// timing tests beside them (2026-10-23). The jobs are `CARGO_BUILD_JOBS`
+/// where the run sets it, else two, as everywhere in the estate. Under a
+/// landing it builds through the landing's patch, which `XMIP_CARGO_CONFIG`
+/// names, as the test itself was built.
 #[cfg(test)]
-fn build(stem: &str) {
-    let mut cargo = std::process::Command::new(env!("CARGO"));
-    cargo.args(["build", "-q", "--bin", stem]);
-    if let Some(config) = std::env::var_os("XMIP_CARGO_CONFIG").filter(|it| !it.is_empty()) {
-        cargo.arg("--config").arg(config);
-    }
-    let status = cargo
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .status()
-        .expect("cargo runs");
-    assert!(status.success(), "{stem} builds");
+fn built() {
+    static BUILT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let built = BUILT.get_or_init(|| {
+        let jobs = std::env::var("CARGO_BUILD_JOBS")
+            .ok()
+            .filter(|jobs| !jobs.is_empty())
+            .unwrap_or_else(|| "2".to_string());
+        let mut cargo = std::process::Command::new(env!("CARGO"));
+        cargo.args(["build", "-q", "-j", &jobs]);
+        cargo.args([
+            "--bin",
+            "xmip-playground-node",
+            "--bin",
+            "xmip-playground-cluster",
+        ]);
+        if let Some(config) = std::env::var_os("XMIP_CARGO_CONFIG").filter(|it| !it.is_empty()) {
+            cargo.arg("--config").arg(config);
+        }
+        cargo
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .status()
+            .is_ok_and(|status| status.success())
+    });
+    assert!(
+        *built,
+        "xmip-playground-node and xmip-playground-cluster build"
+    );
 }
 
 /// The node binary, built now.
 #[cfg(test)]
 pub(crate) fn built_node_binary() -> PathBuf {
-    build("xmip-playground-node");
+    built();
     node_binary().expect("the node binary is beside the test executable")
 }
 
 /// The cluster binary, built now, and the node binary it will spawn with it.
 #[cfg(test)]
 pub(crate) fn built_cluster_binary() -> PathBuf {
-    build("xmip-playground-cluster");
-    build("xmip-playground-node");
+    built();
     cluster_binary().expect("the cluster binary is beside the test executable")
 }

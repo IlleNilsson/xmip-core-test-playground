@@ -11,13 +11,14 @@ use std::path::{Path, PathBuf};
 
 use node::Stage;
 
+use configure::placed::{self, Placed};
+
 use super::CLUSTER;
-use crate::bindings::{self, Bound, Placed};
 use crate::roster::Roster;
 
 /// Write this node's configuration, sliced from the Playground's cluster
 /// configuration with the run's names and the bindings that place every
-/// Application `designed` holds on the run's nodes — each Receive Location
+/// Application the file designs on the run's nodes (`configure::placed`) — each Receive Location
 /// on the first node that declared receive, each Send Port on the first
 /// that declared send — into `<shared>/configuration`, and say where it is.
 pub(super) fn configured(
@@ -25,7 +26,6 @@ pub(super) fn configured(
     name: &str,
     roster: &Roster,
     shared: &Path,
-    designed: &[configure::XmipApplication],
 ) -> Result<PathBuf, String> {
     let cluster = observe::Scope::new(node)
         .segments()
@@ -45,20 +45,22 @@ pub(super) fn configured(
     let directory = shared.join("configuration");
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let (inbox, outbox) = (inbox(&receives, Stage::Process), inbox(&sends, Stage::Send));
-    let bound = bindings::written(designed, |placed, _| match placed {
-        Placed::Receive => Bound {
-            node: receives.clone(),
-            address: inbox.clone(),
-            accepting: false,
+    let nodes = [
+        (receives, vec!["receiving".to_string()]),
+        (sends, vec!["sending".to_string()]),
+    ];
+    let placements = placed::placements(CLUSTER, &nodes)?;
+    let bound = placed::written(&placements, |placement| placed::Binding {
+        transport: "xmip-core-transport-file".to_string(),
+        address: match placement.placed {
+            Placed::Receive => inbox.clone(),
+            Placed::Send => outbox.clone(),
         },
-        Placed::Send => Bound {
-            node: sends.clone(),
-            address: outbox.clone(),
-            accepting: false,
-        },
+        settings: Vec::new(),
+        accepting: false,
     });
     let file =
-        format!("{bound}{CLUSTER}\n[nodes.{name}.service]\nname = \"xmip-playground-{name}\"\n");
+        format!("{CLUSTER}\n{bound}\n[nodes.{name}.service]\nname = \"xmip-playground-{name}\"\n");
     let text = configure::slice_named(&file, name, cluster)?;
     let path = directory.join(format!("{name}.node.toml"));
     std::fs::write(&path, &text).map_err(|error| format!("{}: {error}", path.display()))?;

@@ -21,15 +21,14 @@
 mod given;
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use crate::bindings::Placed;
+pub use crate::carried::Binding;
 use crate::real::RealNode;
 use crate::roster::Roster;
-use crate::subscribing::CLUSTER;
 
 pub use given::endpoint;
 use given::{cluster_text, configured, placed};
@@ -40,16 +39,6 @@ const STARTING: Duration = Duration::from_secs(60);
 
 /// How long a node may take to drain once its input ends.
 const STOPPING: Duration = Duration::from_secs(30);
-
-/// One Receive Location or Send Port bound to a node the run started, and
-/// the folder it takes from or writes to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Binding {
-    pub placed: Placed,
-    pub name: String,
-    pub node: String,
-    pub folder: PathBuf,
-}
 
 /// The nodes the run started, and where their Applications are bound.
 pub struct Served {
@@ -103,18 +92,7 @@ impl Served {
             .into_iter()
             .filter(|(name, _)| names.contains(name))
             .collect();
-        let receivers: Vec<String> = declared
-            .iter()
-            .filter(|node| holding(node, &["receiving", "executing"]))
-            .map(|(name, _)| name.clone())
-            .collect();
-        let senders: Vec<String> = declared
-            .iter()
-            .filter(|node| holding(node, &["sending", "executing"]))
-            .map(|(name, _)| name.clone())
-            .collect();
-        let designed = configure::applications(CLUSTER)?;
-        let placed = placed(&designed, (&receivers, &senders), &area);
+        let placed = placed(&declared, &area)?;
         let text = cluster_text(cluster, &declared, &placed)?;
         let mut started = Vec::new();
         let stores: Vec<&(String, Vec<String>)> = declared

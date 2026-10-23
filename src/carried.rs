@@ -1,32 +1,37 @@
-//! Carried: the rig drives the nodes the run started (`served`) through
-//! their Receive Locations, and holds them to what Xmip promises — an
-//! accepted Message is never lost — over the wire to Xmip Storage (ADR-0028,
-//! amendment 2026-10-22). Each round it drops a file into each bound drop
-//! folder, the next of the Playground's content contracts each time, under
-//! a name its contract's name begins (`Contract::file_name`), which the
-//! cluster's Subscriptions route by to a Send Port another node sends; the
-//! file arrives in that Send Port's folder under its name. The receiving
+//! Carried: the rig drives nodes through their Receive Locations, and holds
+//! them to what Xmip promises — an accepted Message is never lost — over the
+//! wire to Xmip Storage (ADR-0028, amendments 2026-10-22). Each round it
+//! drops a file into each Receive Location placed (`configure::placed`),
+//! the next of the Playground's content contracts each time, under a name
+//! its contract's name begins (`Contract::file_name`), which the cluster's
+//! Subscriptions route by to a Send Port another node sends; the file
+//! arrives where that Send Port is placed, under its name. The receiving
 //! node writes it to the Ledger on a Storage node, the sending node takes
 //! its Journey from there: neither keeps Xmip Storage itself.
+//!
+//! Where it drops and reads is a [`Spot`]: a folder of the run's for the
+//! nodes it starts on this computer (`served`), and on the Parties' far
+//! end for the nodes on machines of their own, each Location a user's
+//! directory there (`far_end`) — the same placement either way.
 //!
 //! What it publishes at `<cluster>/carried`: Fine while every file dropped
 //! arrived, or is younger than [`GRACE`]; Stressed while one is older and
 //! not yet [`LOST`]; Done, naming it, once one is — and how long a file took
 //! from its drop to its arrival, the fastest and the median of the round's.
-//! The folders are watched, never looked in on a timer: an arrival is told
-//! by the file system.
+//! Arrivals are told — by the file system for a folder, by the far end as a
+//! client closes what it wrote — never looked for on a timer.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use configure::placed::{Placed, Placement};
 use observe::{Health, HealthRecord, Snapshot};
 use runtime::directory_watch::DirectoryWatch;
+use transport_sftp::directory::{Shared, Told};
 
-use crate::bindings::Placed;
 use crate::schedule::CONTRACTS;
-use crate::served::Binding;
 
 /// How long a file may take before it is overdue: a bound on the test,
 /// never on Xmip.
@@ -36,9 +41,25 @@ pub const GRACE: Duration = Duration::from_secs(5);
 pub const LOST: Duration = Duration::from_secs(60);
 
 /// Each file arrived, by name, and when it was first seen whole.
-type Arrived = Arc<Mutex<BTreeMap<String, Instant>>>;
+pub type Arrived = Arc<Mutex<BTreeMap<String, Instant>>>;
 
-/// The drop folders, the files dropped into them, and what arrived.
+/// Where a placed Location takes its files from, or a Send Port puts them.
+#[derive(Clone)]
+pub enum Spot {
+    /// A folder on this computer.
+    Folder(PathBuf),
+    /// A user's directory on the Parties' far end.
+    FarEnd(Shared),
+}
+
+/// One Receive Location or Send Port placed, and its spot.
+#[derive(Clone)]
+pub struct Binding {
+    pub placement: Placement,
+    pub spot: Spot,
+}
+
+/// The drops, the files dropped into them, and what arrived.
 pub struct Carried {
     drops: Vec<Binding>,
     dropped: BTreeMap<String, Instant>,
@@ -62,32 +83,48 @@ fn seen(folder: &Path, arrived: &Arrived, now: Instant) {
     }
 }
 
+/// What a far end tells of a file a Send Location finished writing: its
+/// arrival, now.
+#[must_use]
+pub fn told(arrived: &Arrived) -> Told {
+    let arrived = Arc::clone(arrived);
+    Arc::new(move |name: &str| {
+        arrived
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(name.to_string())
+            .or_insert_with(Instant::now);
+    })
+}
+
 impl Carried {
-    /// Drive the bindings `bindings` the run gave the nodes it started:
-    /// each drop folder and each Send Port's folder made, every Send Port's
-    /// watched.
+    /// Drive `bindings`: each folder made and each Send Port's watched; a
+    /// far end's Send Port directories tell `arrived`, which they were made
+    /// with ([`told`]).
     ///
     /// # Errors
     ///
     /// A folder that cannot be made or watched, in words.
-    pub fn new(bindings: &[Binding]) -> Result<Self, String> {
-        let arrived: Arrived = Arc::default();
+    pub fn new(bindings: &[Binding], arrived: Arrived) -> Result<Self, String> {
         let mut watching = Vec::new();
         for binding in bindings {
-            std::fs::create_dir_all(&binding.folder)
-                .map_err(|error| format!("{}: {error}", binding.folder.display()))?;
-            if binding.placed == Placed::Send {
-                let (folder, told) = (binding.folder.clone(), Arc::clone(&arrived));
-                let watch = DirectoryWatch::spawn(&binding.folder, move || {
-                    seen(&folder, &told, Instant::now());
+            let Spot::Folder(folder) = &binding.spot else {
+                continue;
+            };
+            std::fs::create_dir_all(folder)
+                .map_err(|error| format!("{}: {error}", folder.display()))?;
+            if binding.placement.placed == Placed::Send {
+                let (seeing, telling) = (folder.clone(), Arc::clone(&arrived));
+                let watch = DirectoryWatch::spawn(folder, move || {
+                    seen(&seeing, &telling, Instant::now());
                 })
-                .map_err(|error| format!("{}: {error}", binding.folder.display()))?;
+                .map_err(|error| format!("{}: {error}", folder.display()))?;
                 watching.push(watch);
             }
         }
         let drops = bindings
             .iter()
-            .filter(|binding| binding.placed == Placed::Receive)
+            .filter(|binding| binding.placement.placed == Placed::Receive)
             .cloned()
             .collect();
         Ok(Self {
@@ -99,24 +136,46 @@ impl Carried {
         })
     }
 
-    /// One round: a file dropped into each drop folder, written beside it
-    /// and renamed in as a producer that means it whole drops one, and the
-    /// judgment so far recorded at `<root>/carried`.
+    /// What arrives is recorded in: a new, empty record.
+    #[must_use]
+    pub fn arrivals() -> Arrived {
+        Arc::default()
+    }
+
+    /// One round: a file dropped into each drop — into a folder written
+    /// beside it and renamed in, as a producer that means it whole drops
+    /// one; onto a far end whole at once — and the judgment so far recorded
+    /// at `<root>/carried`.
     pub fn round(&mut self, root: &str, snapshot: &mut Snapshot, now: i64) {
         let mut failed = Vec::new();
         for binding in &self.drops {
             let contract = CONTRACTS[usize::try_from(self.next).unwrap_or(0) % CONTRACTS.len()];
             let name = contract.file_name(self.next);
             self.next += 1;
-            let beside = binding.folder.with_extension("beside");
-            let written = std::fs::create_dir_all(&beside)
-                .and_then(|()| std::fs::write(beside.join(&name), contract.payload()))
-                .and_then(|()| std::fs::rename(beside.join(&name), binding.folder.join(&name)));
+            let written = match &binding.spot {
+                Spot::Folder(folder) => {
+                    let beside = folder.with_extension("beside");
+                    std::fs::create_dir_all(&beside)
+                        .and_then(|()| std::fs::write(beside.join(&name), contract.payload()))
+                        .and_then(|()| std::fs::rename(beside.join(&name), folder.join(&name)))
+                        .map_err(|error| error.to_string())
+                }
+                Spot::FarEnd(directory) => {
+                    directory
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .files
+                        .insert(name.clone(), contract.payload());
+                    Ok(())
+                }
+            };
             match written {
                 Ok(()) => {
                     self.dropped.insert(name, Instant::now());
                 }
-                Err(error) => failed.push(format!("{name} into {}: {error}", binding.name)),
+                Err(error) => {
+                    failed.push(format!("{name} into {}: {error}", binding.placement.name));
+                }
             }
         }
         snapshot.record_health(self.record(root, &failed, now));

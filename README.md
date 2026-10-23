@@ -172,7 +172,7 @@ their environment: each its slice of the file, its certificate from the
 run's own authority, each plane on loopback — the Storage nodes' names in
 `[storage] nodes` resolved to the addresses they serve at — and the
 bindings that place the Applications on them, file Locations over the
-run's folders (`src/bindings.rs`). D1 and D2 keep Xmip Storage, the primary
+run's folders, placed by configure's one placement (`configure::placed`). D1 and D2 keep Xmip Storage, the primary
 and its standby; every other node reaches them over Xmip's mutual TLS. The
 roll reads each at its local endpoint, `xmip-<cluster>-<node>`, as a real
 node, and **drives them** (`src/carried.rs`): each round a file into each
@@ -182,8 +182,12 @@ bound Receive Location, the next content contract each time, named
 how many arrived, how long each took, and Done for one lost. The run ends
 their input to stop them, once every file had its time to arrive. The
 cluster process is given the simulated nodes alone, and only they carry the
-relayed scenarios; a node on a machine of its own is driven only through
-the Receive Locations its environment binds.
+relayed scenarios. A node on a machine of its own is driven through the
+Parties' far end (`src/far_end.rs`): the roll serves SFTP on this computer,
+port 7422, each Location the environment placed on the real nodes a user of
+its own, drops into the Receive Locations' and is told of what the Send
+Ports put; no node is started beside real ones (ADR-0028, amendment
+2026-10-22).
 
 ### Every transport declares its ceiling
 
@@ -231,6 +235,15 @@ one adapter over it. "A new transport is a new adapter, not a new scenario"
 becomes "a new transport is its own loopback, and a line in the list".
 
 ### Nodes are processes, now
+
+The library's own tests spawn those binaries too, and build them first:
+once for the whole test process, both in one cargo call, made by the first
+test that needs them while the others wait (`cluster/binary.rs`, a
+once-guard), with `CARGO_BUILD_JOBS` where the run sets it and two jobs
+else. Until 2026-10-23 each test built its own, four builds ran at once on
+every core, and a timing test beside them,
+`low_latency::tests::spikes_push_a_pair_over_its_budget`, failed under a
+landing for the load alone.
 
 Decision 2 said nodes run as System Processes, and until this day no scenario
 spawned one. The **cluster** does (`cluster.rs`): `node`, a second binary, is

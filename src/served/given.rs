@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 
 use toml::{Table, Value};
 
-use super::Binding;
-use crate::bindings::{self, Bound, Placed};
+use configure::placed::{self, Placed, Placement};
+
+use crate::carried::{Binding, Spot};
 use crate::subscribing::CLUSTER;
 
 /// A port no one holds on loopback now.
@@ -20,58 +21,31 @@ fn free() -> Result<u16, String> {
         .map_err(|error| format!("no port on loopback: {error}"))
 }
 
-/// A folder's name for a Location's or a Port's.
-fn folded(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
+/// Each Receive Location and Send Port the file designs placed over the
+/// run's nodes `declared` (`configure::placed`), a Receive Location a drop
+/// folder of its own, a Send Port a folder the rig reads.
+pub(super) fn placed(
+    declared: &[(String, Vec<String>)],
+    area: &Path,
+) -> Result<Vec<Binding>, String> {
+    Ok(placed::placements(CLUSTER, declared)?
+        .into_iter()
+        .map(|placement| {
+            let under = match placement.placed {
+                Placed::Receive => "drop",
+                Placed::Send => "out",
+            };
+            let folder = area.join(under).join(placement.folded());
+            Binding {
+                placement,
+                spot: Spot::Folder(folder),
             }
         })
-        .collect()
-}
-
-/// Each Receive Location of `designed` bound to the next of `receivers`,
-/// round robin, a drop folder of its own; each Send Port to the next of
-/// `senders`, a folder the rig reads.
-pub(super) fn placed(
-    designed: &[configure::XmipApplication],
-    (receivers, senders): (&[String], &[String]),
-    area: &Path,
-) -> Vec<Binding> {
-    let mut bound = Vec::new();
-    let (mut receiving, mut sending) = (0, 0);
-    for application in designed {
-        for location in &application.receive_locations {
-            if let Some(node) = receivers.get(receiving % receivers.len().max(1)) {
-                bound.push(Binding {
-                    placed: Placed::Receive,
-                    name: location.name.clone(),
-                    node: node.clone(),
-                    folder: area.join("drop").join(folded(&location.name)),
-                });
-            }
-            receiving += 1;
-        }
-        for port in &application.send_ports {
-            if let Some(node) = senders.get(sending % senders.len().max(1)) {
-                bound.push(Binding {
-                    placed: Placed::Send,
-                    name: port.name.clone(),
-                    node: node.clone(),
-                    folder: area.join("out").join(folded(&port.name)),
-                });
-            }
-            sending += 1;
-        }
-    }
-    bound
+        .collect())
 }
 
 /// The cluster's file as the run gives it to the nodes it starts: the
-/// bindings `placed` says before the Playground's own, each node's roles as
+/// Playground's own with the `bindings` the run placed, each node's roles as
 /// the run declares them, each Storage node's name resolved to the address
 /// on loopback it serves at, each node its own data folder, its local
 /// endpoint named for the run's cluster and its operate listener on
@@ -79,27 +53,25 @@ pub(super) fn placed(
 pub(super) fn cluster_text(
     cluster: &str,
     declared: &[(String, Vec<String>)],
-    placed: &[Binding],
+    bindings: &[Binding],
 ) -> Result<String, String> {
-    let designed = configure::applications(CLUSTER)?;
-    let bound = bindings::written(&designed, |kind, name| {
-        let binding = placed
+    let placements: Vec<Placement> = bindings.iter().map(|one| one.placement.clone()).collect();
+    let bound = placed::written(&placements, |placement| {
+        let folder = bindings
             .iter()
-            .find(|one| one.placed == kind && one.name == name);
-        binding.map_or_else(
-            || Bound {
-                node: String::new(),
-                address: String::new(),
-                accepting: false,
-            },
-            |one| Bound {
-                node: one.node.clone(),
-                address: one.folder.display().to_string().replace('\\', "/"),
-                accepting: kind == Placed::Receive,
-            },
-        )
+            .find(|one| one.placement == *placement)
+            .and_then(|one| match &one.spot {
+                Spot::Folder(folder) => Some(folder.display().to_string().replace('\\', "/")),
+                Spot::FarEnd(_) => None,
+            });
+        placed::Binding {
+            transport: "xmip-core-transport-file".to_string(),
+            address: folder.unwrap_or_default(),
+            settings: Vec::new(),
+            accepting: placement.placed == Placed::Receive,
+        }
     });
-    let mut file: Table = format!("{bound}{CLUSTER}")
+    let mut file: Table = format!("{CLUSTER}\n{bound}")
         .parse()
         .map_err(|error| format!("the cluster's file: {error}"))?;
     let mut serving: Vec<(String, String)> = Vec::new();

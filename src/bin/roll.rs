@@ -81,6 +81,13 @@
 //! (`served.rs`), reads it as a real node, and drives it through its Receive
 //! Locations each round (`carried.rs`); simulated where not.
 //!
+//! **A run with real nodes drives them through the Parties' far end**
+//! (ADR-0028, amendment 2026-10-22): the rig serves SFTP on this computer
+//! (`far_end.rs`), each Location the real nodes' environment placed on them
+//! a user of its own there (`xmip-service --slice --bind`), drops into the
+//! Receive Locations' and is told of what the Send Ports put
+//! (`carried.rs`); no node is started as `xmip-service` beside them.
+//!
 //! **It audits** (ADR-0062): `start` once the roll knows what it is, `stop`
 //! when its rounds are done, every refusal and failed write as a failure, and
 //! every panic as `unhandled` — into `XMIP_AUDIT_DIRECTORY`, else the
@@ -97,6 +104,7 @@ use xmip_core_test_playground::carried::Carried;
 use xmip_core_test_playground::cluster::{Orders, Spawned, cluster_binary, merge};
 use xmip_core_test_playground::drop_box::Dropping;
 use xmip_core_test_playground::environment::{self, max_seconds, time_factor};
+use xmip_core_test_playground::far_end::FarEnd;
 use xmip_core_test_playground::in_process::InProcess;
 use xmip_core_test_playground::operator_orders;
 use xmip_core_test_playground::publication::Publication;
@@ -134,6 +142,7 @@ fn main() {
         simulated,
         served,
         mut carried,
+        far_end,
     } = or_refuse(&audit, nodes(&cluster, &base));
     let relayed = or_refuse(&audit, relayed(&chosen, &simulated));
     let run = started(&cluster, &chosen, &roster, stress, &real_names);
@@ -141,6 +150,7 @@ fn main() {
     let spread = Parties::configured().over_every_transport();
     let mut first = announced(&cluster, stress, &roster, &spread);
     first.extend(found(&real_nodes));
+    first.extend(far_end.as_ref().map(FarEnd::said));
     for line in first {
         println!("{line}");
     }
@@ -312,6 +322,8 @@ struct Nodes {
     simulated: Roster,
     served: Option<Served>,
     carried: Option<Carried>,
+    /// What the real nodes fetch from and put on, kept served for the run.
+    far_end: Option<FarEnd>,
 }
 
 /// The nodes of the run of `cluster` beneath `base`, as [`Nodes`] sorts
@@ -327,12 +339,32 @@ fn nodes(cluster: &str, base: &Path) -> Result<Nodes, String> {
         roster,
         simulated,
     } = environment::roster().and_then(|all| real::sorted(cluster, all))?;
+    // Nodes on machines of their own: driven through the Parties' far end
+    // their environment bound them to, and none started here, which could
+    // reach no Storage node of theirs (ADR-0028, amendment 2026-10-22).
+    if !real.is_empty() {
+        let arrived = Carried::arrivals();
+        let far = FarEnd::serve(&names, &arrived)?;
+        let carried = far
+            .as_ref()
+            .map(|far| Carried::new(&far.bindings, arrived))
+            .transpose()?;
+        return Ok(Nodes {
+            real,
+            names,
+            roster,
+            simulated,
+            served: None,
+            carried,
+            far_end: far,
+        });
+    }
     let (served, started, simulated) = serve(cluster, &roster, simulated, base)?;
     names.extend(started.iter().map(|node| node.name.clone()));
     real.extend(started);
     let carried = served
         .as_ref()
-        .map(|served| Carried::new(&served.bindings))
+        .map(|served| Carried::new(&served.bindings, Carried::arrivals()))
         .transpose()?;
     Ok(Nodes {
         real,
@@ -341,6 +373,7 @@ fn nodes(cluster: &str, base: &Path) -> Result<Nodes, String> {
         simulated,
         served,
         carried,
+        far_end: None,
     })
 }
 

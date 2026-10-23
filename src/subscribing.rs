@@ -102,7 +102,7 @@ impl Subscribing {
         audit: &ProgramAudit,
     ) -> Result<Self, String> {
         let designed = configure::applications(CLUSTER)?;
-        let path = configured::configured(node, name, roster, shared, &designed)?;
+        let path = configured::configured(node, name, roster, shared)?;
         let text = path.display().to_string();
         let (document, applications, files) =
             runtime::start::read(&text).map_err(|unread| unread.reason)?;

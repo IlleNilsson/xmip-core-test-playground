@@ -47,7 +47,6 @@
 //! What it can do grows with the runtime and the transports. Created
 //! 2026-09-05; named by the owner.
 
-pub mod bindings;
 pub mod board;
 pub mod budget;
 pub mod cabinet;
@@ -63,6 +62,7 @@ pub mod environment;
 pub mod eventing;
 pub mod exchange;
 pub mod exclusive_claim;
+pub mod far_end;
 pub mod fault;
 pub mod filing;
 pub mod handoff;
