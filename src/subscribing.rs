@@ -37,11 +37,11 @@ use std::time::Duration;
 use codec::cursor::Cursor;
 use codec::field::{read_text, text};
 use context::MessageContext;
-use journey::{Journey, JourneyState};
+use journey::{Journey, JourneyState, Received};
 use message::{Message, MessageSection, MessageTreatment};
 use observe::{Act, Snapshot};
 use persist::storage::{Embedded, XmipStorage};
-use route::{Promoted, publish};
+use route::{Gathering, Promoted, publish};
 use runtime::configured_subscription::ConfiguredSubscription;
 use runtime::dead_message::Unmatched;
 use runtime::ledger::{CHUNK, Publisher, write_stream};
@@ -75,6 +75,10 @@ pub struct Subscribing {
     /// It sends nothing itself: the send stage is a node of its own.
     send: SendStep,
     sends: Sends,
+    /// What a sequence's keys read, and the cluster they are named in:
+    /// it names none, its Sends holding no sequence.
+    gathering: Gathering,
+    cluster: String,
 }
 
 /// A held pair let go of to hand on, and the Journey it is.
@@ -133,9 +137,11 @@ impl Subscribing {
             pickup,
             storage,
             origin: runtime::running::origin(Some(audit), node),
+            gathering: Gathering::of(&[], &tree.subscriptions),
             subscriptions: tree.subscriptions,
             send,
             sends: Sends::default(),
+            cluster,
         })
     }
 
@@ -183,11 +189,21 @@ impl Subscribing {
             origin: &self.origin,
             send: &self.send,
             sends: &self.sends,
+            gathering: &self.gathering,
+            cluster: &self.cluster,
+        };
+        // Published at the Location, holding no sequence there.
+        let received = Received {
+            location: location.to_string(),
+            port: String::new(),
+            origin: message.message_id().value(),
+            sequences: Vec::new(),
+            skips: false,
         };
         let published = runtime::ledger::publish(
             &through,
             &self.pickup,
-            location,
+            (location, (received, Vec::new())),
             &message,
             &routing,
             &Unmatched {
