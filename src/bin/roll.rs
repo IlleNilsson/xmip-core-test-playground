@@ -198,21 +198,20 @@ fn main() {
         let headroom = Headroom::refresh();
 
         let mut snapshot = in_process.tick(budget.simulated_elapsed());
-        // The cluster's own file, and from it what the topology draws.
-        // Each link's rate is its rise since the round before (ADR-0052,
-        // amendment 2026-09-25).
-        let topology = spawned.as_mut().map(|spawned| {
+        // The cluster's own file, and what the real nodes and those started
+        // as xmip-service published, from both of which the topology draws.
+        if let Some(spawned) = spawned.as_mut() {
             merge(&mut snapshot, spawned.tick());
-            let hops = spawned.hops();
-            let now = now_unix_nanos();
-            let mut drawn = cluster_topology(&snapshot, &roster, relayed, hops, &spread, now);
-            if let Some(before) = &drawn_before {
-                drawn.rate_since(before);
-            }
-            drawn
-        });
-        drawn_before.clone_from(&topology);
+        }
         real::published_into(&real_nodes, root, &mut snapshot, now_unix_nanos());
+        let drawing = (spawned.as_ref(), !real_nodes.is_empty());
+        let topology = drawn(
+            &snapshot,
+            drawing,
+            (&roster, relayed, &spread),
+            drawn_before.as_ref(),
+        );
+        drawn_before.clone_from(&topology);
         if let Some(carried) = carried.as_mut() {
             carried.round(root, &mut snapshot, now_unix_nanos());
         }
@@ -374,6 +373,29 @@ fn nodes(cluster: &str, base: &Path) -> Result<Nodes, String> {
         served,
         carried,
         far_end: None,
+    })
+}
+
+/// The topology of this round's `snapshot`, where a cluster process ran
+/// (`spawned`) or nodes real or started as xmip-service published
+/// (`real`): a run with no cluster process too, whose every node is one of
+/// those. The handoffs are the cluster process's alone. Each link's rate is
+/// its rise since the round `before` (ADR-0052, amendment 2026-09-25).
+fn drawn(
+    snapshot: &observe::Snapshot,
+    (spawned, real): (Option<&Spawned>, bool),
+    (roster, relayed, spread): (&Roster, bool, &Spread),
+    before: Option<&observe::Topology>,
+) -> Option<observe::Topology> {
+    (spawned.is_some() || real).then(|| {
+        let hops = spawned.map_or(&[][..], Spawned::hops);
+        let handed = relayed && spawned.is_some();
+        let now = now_unix_nanos();
+        let mut drawn = cluster_topology(snapshot, roster, handed, hops, spread, now);
+        if let Some(before) = before {
+            drawn.rate_since(before);
+        }
+        drawn
     })
 }
 

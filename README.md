@@ -169,7 +169,9 @@ where the run was given one — `Start-XmipTest` builds it as the
 those nodes declares the Storage role, which the rest reach; else it is
 simulated (`src/served.rs`; ADR-0028, amendment 2026-10-22). The run is
 their environment: each its slice of the file, its certificate from the
-run's own authority, each plane on loopback — the Storage nodes' names in
+Playground's own authority, the one the web host is served under, kept
+across runs in .local-work/playground/authority (ADR-0028, amendment
+2026-10-27), each plane on loopback — the Storage nodes' names in
 `[storage] nodes` resolved to the addresses they serve at — and the
 bindings that place the Applications on them, file Locations over the
 run's folders, placed by configure's one placement (`configure::placed`). D1 and D2 keep Xmip Storage, the primary

@@ -4,7 +4,8 @@
 //! their own (ADR-0028, amendment 2026-10-22). The run is their environment
 //! and gives each what an environment gives a machine's node: its slice of
 //! the Playground's cluster file under the run's cluster name, its
-//! certificate from the run's own authority (`provision::node`), each of
+//! certificate from the Playground's authority, kept across runs
+//! (`environment::authority`, `provision::node`), each of
 //! its planes an address on loopback where a machine's has its own, the
 //! name of each Storage node resolved to the address it serves on, and the
 //! bindings that place the file's Applications on the run's nodes — each

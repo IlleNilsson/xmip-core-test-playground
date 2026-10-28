@@ -120,6 +120,18 @@ pub fn publish_area() -> PathBuf {
         .map_or_else(std::env::temp_dir, PathBuf::from)
 }
 
+/// The Playground's own certificate authority, `authority` in the area a
+/// roll publishes in: the one `Get-XmipPlaygroundLayout` names, which the
+/// web host is served under and a tester's operator certificate is signed
+/// by. The nodes a run starts are issued under it too, so it outlives the
+/// run, and a phone or browser that trusts it keeps trusting the next run's
+/// nodes (ADR-0028, amendment 2026-10-27). `Start-XmipTest` makes it, as
+/// `Initialize-XmipPlaygroundAuthority`, before the run starts any node.
+#[must_use]
+pub fn authority() -> PathBuf {
+    publish_area().join("authority")
+}
+
 /// Where the roll of `cluster` publishes its snapshot, history and activity
 /// in `area`: `<cluster>-snapshot.toml`, `-history.toml` and
 /// `-activity.toml`. The one place the names are decided; `Start-XmipTest`

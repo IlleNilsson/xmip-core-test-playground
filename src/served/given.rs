@@ -139,8 +139,9 @@ pub fn endpoint(cluster: &str, node: &str) -> String {
 }
 
 /// `node`'s configuration, sliced from `text` under `cluster` into a folder
-/// of its own in `area`, with its certificate from the run's authority
-/// beside it: the configuration's path.
+/// of its own in `area`, with its certificate from the Playground's
+/// authority (`environment::authority`) beside it: the configuration's
+/// path.
 pub(super) fn configured(
     text: &str,
     (cluster, node): (&str, &str),
@@ -152,9 +153,10 @@ pub(super) fn configured(
     let path = folder.join(format!("{node}.toml"));
     std::fs::write(&path, sliced).map_err(|error| format!("{}: {error}", path.display()))?;
     let now = observe::now_unix_nanos() / 1_000_000_000;
+    let authority = crate::environment::authority();
     provision::node::issue_into(
-        &area.join("authority"),
-        &format!("Xmip cluster {cluster} authority"),
+        &authority,
+        &authority_name(&authority)?,
         node,
         &["127.0.0.1".to_string(), "localhost".to_string()],
         &folder.join("tls"),
@@ -162,4 +164,83 @@ pub(super) fn configured(
     )
     .map_err(|error| format!("{node}'s certificate: {error}"))?;
     Ok(path)
+}
+
+/// The name the Playground's authority kept in `place` was made under, read
+/// from its certificate: `Initialize-XmipPlaygroundAuthority` alone names
+/// it, and makes it before a run starts any node.
+///
+/// # Errors
+///
+/// Where no authority is kept there, or its certificate names nothing.
+fn authority_name(place: &Path) -> Result<String, String> {
+    let path = place.join(provision::issuer::CERTIFICATE);
+    let text = std::fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "no Playground authority at {}: {error}; Start-XmipTest makes it",
+            path.display()
+        )
+    })?;
+    provision::Parsed::first(&text)
+        .and_then(|parsed| parsed.common_name())
+        .map_err(|error| format!("{}: {error}", path.display()))?
+        .ok_or_else(|| {
+            format!(
+                "the Playground's authority at {} names nothing",
+                path.display()
+            )
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_runs_issue_their_nodes_under_the_one_playground_authority() {
+        // A node that keeps Xmip Storage and one that does not, as the
+        // Playground's own file declares them, and the test cluster's name.
+        let roles = configure::cluster::roles(CLUSTER).expect("the file's roles");
+        let storage = |node: &&(String, Vec<String>)| node.1.iter().any(|role| role == "storage");
+        let declared: Vec<(String, Vec<String>)> = [
+            roles.iter().find(storage),
+            roles.iter().find(|node| !storage(node)),
+        ]
+        .into_iter()
+        .map(|node| node.expect("a node of each kind").clone())
+        .collect();
+        let cluster = crate::cluster_name().expect("the test cluster is named");
+        let base = std::env::temp_dir().join(format!("xmip-given-{}", std::process::id()));
+        let now = observe::now_unix_nanos() / 1_000_000_000;
+        provision::Issuer::kept_or_made(
+            &crate::environment::authority(),
+            "Xmip Playground test authority",
+            now,
+            3600,
+        )
+        .expect("the authority Start-XmipTest makes");
+        let mut anchors = Vec::new();
+        for run in ["first", "second"] {
+            let area = base.join(run);
+            let text = cluster_text(
+                &cluster,
+                &declared,
+                &placed(&declared, &area).expect("placed"),
+            )
+            .expect("the cluster's text");
+            for (node, _) in &declared {
+                configured(&text, (&cluster, node), &area).expect("configured");
+                let tls = area.join(node).join("tls");
+                anchors
+                    .push(std::fs::read(tls.join(provision::node::ANCHORS_FILE)).expect("anchors"));
+            }
+        }
+        let authority = crate::environment::authority().join(provision::issuer::CERTIFICATE);
+        let kept = std::fs::read(authority).expect("the Playground's authority");
+        assert!(
+            anchors.iter().all(|anchor| *anchor == kept),
+            "one authority for every run"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
