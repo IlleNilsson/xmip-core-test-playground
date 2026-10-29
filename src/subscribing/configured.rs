@@ -51,7 +51,6 @@ pub(super) fn configured(
     ];
     let placements = placed::placements(CLUSTER, &nodes)?;
     let bound = placed::written(&placements, |placement| placed::Binding {
-        transport: "xmip-core-transport-file".to_string(),
         address: match placement.placed {
             Placed::Receive => inbox.clone(),
             Placed::Send => outbox.clone(),

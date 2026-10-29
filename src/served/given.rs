@@ -65,7 +65,6 @@ pub(super) fn cluster_text(
                 Spot::FarEnd(_) => None,
             });
         placed::Binding {
-            transport: "xmip-core-transport-file".to_string(),
             address: folder.unwrap_or_default(),
             settings: Vec::new(),
             accepting: placement.placed == Placed::Receive,
