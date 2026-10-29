@@ -143,19 +143,16 @@ name = "Remittance advices"
 [[xmip_applications.receive_locations]]
 name = "Sales orders from Party-A"
 receive_port = "Sales orders"
-interaction = "data-transfer"
 depth = "light"
 
 [[xmip_applications.receive_locations]]
 name = "Sales orders from Party-C"
 receive_port = "Sales orders"
-interaction = "data-transfer"
 depth = "light"
 
 [[xmip_applications.receive_locations]]
 name = "Remittance advices from Party-E"
 receive_port = "Remittance advices"
-interaction = "data-transfer"
 depth = "light"
 
 [[xmip_applications.send_ports]]
@@ -204,19 +201,16 @@ name = "Inventory"
 [[xmip_applications.receive_locations]]
 name = "Purchase order responses from Party-B"
 receive_port = "Purchase order responses"
-interaction = "data-transfer"
 depth = "light"
 
 [[xmip_applications.receive_locations]]
 name = "Goods receipts from Party-C"
 receive_port = "Goods receipts"
-interaction = "data-transfer"
 depth = "light"
 
 [[xmip_applications.receive_locations]]
 name = "Inventory reports from Party-D"
 receive_port = "Inventory"
-interaction = "batch-load"
 depth = "light"
 
 [[xmip_applications.send_ports]]
