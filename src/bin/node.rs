@@ -27,7 +27,7 @@
 //!     the whole path: that stage of the message path, handing each pair on
 //!     to a node serving the next through the inboxes under
 //!     `<shared>/handoff/` (`relay.rs`) — to itself when it is executing,
-//!     whose Journey takes no process hop. A node serving no stage runs no
+//!     whose Message takes no process hop. A node serving no stage runs no
 //!     part of it; the roll runs it whole.
 //!   - **`ExclusiveClaim`** and **`DailyBacklog`**, over a directory the whole
 //!     cluster shares — `<shared>/exclusive-claim` and

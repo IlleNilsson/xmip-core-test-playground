@@ -11,7 +11,7 @@
 //! node takes (its index modulo the count of nodes that can receive), and
 //! which node a pair is handed to next (a stable hash of the stage and the
 //! pair over the nodes serving it — or the handing node itself when it is
-//! executing, whose Journey takes no process hop).
+//! executing, whose Message takes no process hop).
 //!
 //! A roster is written as the `--nodes` flag takes it: `name`, or
 //! `name=role`, or `name=role+role`, comma separated —
@@ -238,7 +238,7 @@ impl Roster {
     }
 
     /// The node `from` hands a pair on to for `stage`: `from` itself when it
-    /// is executing, so its Journey takes no process hop (ADR-0018 clause
+    /// is executing, so its Message takes no process hop (ADR-0018 clause
     /// 10a; the owner, 2026-10-01: *Executing would be used for Low
     /// Latency*); otherwise a stable hash of the stage and the pair over the
     /// nodes serving it, so every sender picks the same one.
