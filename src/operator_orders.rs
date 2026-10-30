@@ -53,7 +53,7 @@ pub fn take(
                 (Noun::DeadMessage, Some(subscribing)) => {
                     subscribing.replay(&order.target, &order.who)
                 }
-                (Noun::Journey, _) => Err(format!(
+                (Noun::Message, _) => Err(format!(
                     "REFUSED: {node} sends no Journey from the Ledger, so the Journey {} \
                      is retried or dismissed on the node that sends it",
                     order.target
