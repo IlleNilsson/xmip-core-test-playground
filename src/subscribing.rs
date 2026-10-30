@@ -17,7 +17,7 @@
 //! bytes a Stream in chunks, a Message, a Journey per matched Subscription
 //! (`runtime::ledger::publish`) — and the runtime's pickup decides, as it
 //! does on a running node, whether a pair is picked up — handed to the send
-//! stage — or held, its Journey kept in its Subscription's queue in the
+//! stage — or held, its Message kept in its Subscription's queue in the
 //! Ledger, because the Subscription is paused. The node is its own embedded
 //! Storage node, `<shared>/storage/<node>`: `RocksDB` for the Ledger,
 //! `SQLite` for the administration database its pause is kept in, sealed
@@ -81,7 +81,7 @@ pub struct Subscribing {
     cluster: String,
 }
 
-/// A held pair let go of to hand on, and the Journey it is.
+/// A held pair let go of to hand on, and its Journey.
 pub struct Picked {
     pub handoff: Handoff,
     released: Released,
@@ -212,7 +212,7 @@ impl Subscribing {
             },
             || said(handoff),
         )?;
-        // Some Journey no paused Subscription holds goes on to be sent.
+        // Some Message no paused Subscription holds goes on to be sent.
         let departing = published.journeys.len() > published.holding.holds().len();
         Ok(departing)
     }

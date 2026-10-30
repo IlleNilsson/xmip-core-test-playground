@@ -66,7 +66,7 @@ route = { package = "xmip-core-route", git = "https://github.com/IlleNilsson/xmi
 # survive the node: the node's own embedded Storage node — RocksDB for the
 # Ledger, SQLite for the administration database — sealed under a
 # key-encryption key of the machine's key store: DPAPI on Windows, a
-# private file on Unix. And the Journey a held pair is, read back.
+# private file on Unix. And the Journey of a held pair, read back.
 persist = { package = "xmip-core-persist", git = "https://github.com/IlleNilsson/xmip-core-persist", branch = "main" }
 rocksdb = { package = "xmip-core-persist-rocksdb", git = "https://github.com/IlleNilsson/xmip-core-persist-rocksdb", branch = "main" }
 sqlite = { package = "xmip-core-persist-sqlite", git = "https://github.com/IlleNilsson/xmip-core-persist-sqlite", branch = "main" }

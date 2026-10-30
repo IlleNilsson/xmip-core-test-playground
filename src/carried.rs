@@ -7,7 +7,7 @@
 //! Subscriptions route by to a Send Port another node sends; the file
 //! arrives where that Send Port is placed, under its name. The receiving
 //! node writes it to the Ledger on a Storage node, the sending node takes
-//! its Journey from there: neither keeps Xmip Storage itself.
+//! its Message from there: neither keeps Xmip Storage itself.
 //!
 //! Where it drops and reads is a [`Spot`]: a folder of the run's for the
 //! nodes it starts on this computer (`served`), and on the Parties' far
