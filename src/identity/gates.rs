@@ -7,7 +7,7 @@ use authenticate::{
     Acceptance, AuthenticateError, Authenticator, PartyRegistry, Refusal, authenticate,
 };
 use authorize::{Action, Attempt, Authorizer, Decision, authorize};
-use context::{Alignment, AuthenticatedIdentity, IdentityFacts, OnMisalignment, Verified};
+use context::{Alignment, AuthenticatedIdentity, IdentityFacts, Minimum, OnMisalignment, Verified};
 use identify::{IdentifyError, Presented, StreamArrival, TransportIdentifier, identify_transport};
 use xcore::{Arriving, Layer, Mechanism, PartyId, Purpose, mechanism};
 
@@ -136,5 +136,11 @@ pub(super) fn authorization(
     let policy = LocationPolicy { permits };
     let policies: [&dyn Authorizer; 1] = [&policy];
     let attempt = Attempt::new(action, facing.name());
-    authorize(&policies, &facts, &attempt, OnMisalignment::Accept)
+    authorize(
+        &policies,
+        &facts,
+        &attempt,
+        OnMisalignment::Accept,
+        Minimum::default(),
+    )
 }
